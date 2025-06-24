@@ -172,6 +172,69 @@ void main() {
     );
 
     testUsingContext(
+      'correctly provides upgrade version on verify only with identical Git revisions',
+      () async {
+        const String revision = 'abc123';
+        const String upstreamRevision = 'abc123';
+        const String version = '1.2.3';
+        const String upstreamVersion = '4.5.6';
+        const GitTagVersion gitTagVersion = GitTagVersion(
+          x: 1,
+          y: 2,
+          z: 3,
+          hotfix: 4,
+          commits: 5,
+          hash: 'abc123',
+        );
+        const GitTagVersion upstreamGitTagVersion = GitTagVersion(
+          x: 4,
+          y: 5,
+          z: 6,
+          hotfix: 4,
+          commits: 5,
+          hash: 'abc123',
+        );
+
+        final FakeFlutterVersion flutterVersion = FakeFlutterVersion(
+          branch: 'stable',
+          frameworkRevision: revision,
+          frameworkRevisionShort: revision,
+          frameworkVersion: version,
+          gitTagVersion: gitTagVersion,
+        );
+
+        final FakeFlutterVersion latestVersion = FakeFlutterVersion(
+          branch: 'stable',
+          frameworkRevision: upstreamRevision,
+          frameworkRevisionShort: upstreamRevision,
+          frameworkVersion: upstreamVersion,
+          gitTagVersion: upstreamGitTagVersion,
+        );
+
+        fakeCommandRunner.alreadyUpToDate = false;
+        fakeCommandRunner.remoteVersion = latestVersion;
+
+        final Future<FlutterCommandResult> result = fakeCommandRunner.runCommand(
+          force: false,
+          continueFlow: false,
+          testFlow: false,
+          gitTagVersion: gitTagVersion,
+          flutterVersion: flutterVersion,
+          verifyOnly: true,
+        );
+        expect(await result, FlutterCommandResult.success());
+        expect(testLogger.statusText, contains('A new version of Flutter is available'));
+        expect(testLogger.statusText, contains('The latest version: 4.5.6 (revision abc123)'));
+        expect(testLogger.statusText, contains('Your current version: 1.2.3 (revision abc123)'));
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        ProcessManager: () => processManager,
+        Platform: () => fakePlatform,
+      },
+    );
+
+    testUsingContext(
       'fetchLatestVersion returns version if git succeeds',
       () async {
         const String revision = 'abc123';

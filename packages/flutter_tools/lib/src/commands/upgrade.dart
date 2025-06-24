@@ -124,7 +124,8 @@ class UpgradeCommandRunner {
     required bool verifyOnly,
   }) async {
     final FlutterVersion upstreamVersion = await fetchLatestVersion(localVersion: flutterVersion);
-    if (flutterVersion.frameworkRevision == upstreamVersion.frameworkRevision) {
+    if (flutterVersion.frameworkRevision == upstreamVersion.frameworkRevision &&
+        flutterVersion.gitTagVersion == upstreamVersion.gitTagVersion) {
       globals.printStatus('Flutter is already up to date on channel ${flutterVersion.channel}');
       globals.printStatus('$flutterVersion');
       return;
