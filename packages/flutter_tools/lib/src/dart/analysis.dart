@@ -412,6 +412,14 @@ class AnalysisError implements Comparable<AnalysisError> {
       return writtenError.startColumn - other.writtenError.startColumn;
     }
 
+    if (writtenError.startLine != other.writtenError.startLine) {
+      return writtenError.startLine - other.writtenError.startLine;
+    }
+
+    if (writtenError.startColumn != other.writtenError.startColumn) {
+      return writtenError.startColumn - other.writtenError.startColumn;
+    }
+
     final int diff = other.writtenError.severityLevel.index - writtenError.severityLevel.index;
     if (diff != 0) {
       return diff;

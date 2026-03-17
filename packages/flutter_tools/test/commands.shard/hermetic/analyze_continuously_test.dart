@@ -333,8 +333,8 @@ void main() {
     final stdin = StreamController<List<int>>();
     final processManager = FakeProcessManager.list(<FakeCommand>[
       FakeCommand(
-        command: <String>[
-          fileSystem.path.join('Artifact.engineDartSdkPath', 'bin', 'dart'),
+        command: const <String>[
+          'Artifact.engineDartSdkPath/bin/dart',
           'language-server',
           '--dart-sdk',
           'Artifact.engineDartSdkPath',
@@ -350,6 +350,10 @@ void main() {
             '"value":{"kind":"begin"}}}'
             'Content-Length: ${diagnosticsJson.length}\r\n\r\n'
             '$diagnosticsJson'
+            '"character":4},"end":{"line":99,"character":4}},"severity":2,"code":"500",'
+            '"message":"It\'s an error."}]}}'
+            '"character":4},"end":{"line":99,"character":4}},"severity":2,"code":"500",'
+            '"message":"It\'s an error."}]}}'
             'Content-Length: 91\r\n\r\n'
             r'{"jsonrpc":"2.0","method":"$/progress","params":{"token":"analyze",'
             '"value":{"kind":"end"}}}',
