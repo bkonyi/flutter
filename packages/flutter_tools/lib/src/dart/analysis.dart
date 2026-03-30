@@ -154,7 +154,8 @@ class AnalysisServer {
   Future<int?>? _onExit;
 
   void _writeMessage({required String message}) {
-    _process?.stdin.write('Content-Length: ${message.length}\r\n\r\n$message');
+    _process?.stdin.write('Content-Length: ${message.length}\r\n\r\n$message\n');
+    print('Content-Length: ${message.length}\r\n\r\n$message\n');
   }
 
   Future<Map<String, Object?>?> sendRequest(String method, Map<String, Object?> params) async {

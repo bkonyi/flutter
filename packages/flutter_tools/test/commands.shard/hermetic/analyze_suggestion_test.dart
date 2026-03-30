@@ -15,6 +15,8 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/project_validator.dart';
 import 'package:flutter_tools/src/project_validator_result.dart';
 
+import 'package:flutter_tools/src/cache.dart';
+
 import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/test_flutter_command_runner.dart';
