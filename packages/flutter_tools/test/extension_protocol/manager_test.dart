@@ -10,7 +10,7 @@ import 'package:flutter_tools/extension_protocol.dart';
 import 'package:test/test.dart';
 
 void testExtensionEntryPoint(SendPort hostSendPort) {
-  final provider = ToolExtensionProvider(hostSendPort);
+  final provider = ToolExtensionProvider(name: 'test', sendPort: hostSendPort);
   Map<String, Object?>? lastNotification;
 
   provider
@@ -56,7 +56,7 @@ void testExtensionEntryPoint(SendPort hostSendPort) {
 
 void slowHandshakeEntryPoint(SendPort hostSendPort) {
   Timer(const Duration(milliseconds: 500), () {
-    final provider = ToolExtensionProvider(hostSendPort);
+    final provider = ToolExtensionProvider(name: 'slow', sendPort: hostSendPort);
     provider.initialize();
   });
 }
@@ -74,22 +74,25 @@ void main() {
     });
 
     test('start and handshake success', () async {
-      await manager.start(testExtensionEntryPoint);
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
       const params = <String, Object?>{'val': 1};
-      final Object? result = await manager.callMethod('echo', params: params);
+      final Object? result = await extension.callMethod('echo', params: params);
       expect(result, params);
     });
 
     test('handshake timeout', () async {
       expect(
-        () => manager.start(slowHandshakeEntryPoint, timeout: const Duration(milliseconds: 100)),
+        () => manager.startExtension(
+          slowHandshakeEntryPoint,
+          timeout: const Duration(milliseconds: 100),
+        ),
         throwsA(isA<TimeoutException>()),
       );
     });
 
     test('callMethod success', () async {
-      await manager.start(testExtensionEntryPoint);
-      final Object? result = await manager.callMethod(
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
+      final Object? result = await extension.callMethod(
         'echo',
         params: const <String, Object?>{'foo': 'bar'},
       );
@@ -97,15 +100,15 @@ void main() {
     });
 
     test('callMethod success with null result', () async {
-      await manager.start(testExtensionEntryPoint);
-      final Object? result = await manager.callMethod('nullResult');
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
+      final Object? result = await extension.callMethod('nullResult');
       expect(result, isNull);
     });
 
     test('callMethod returns error', () async {
-      await manager.start(testExtensionEntryPoint);
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
       expect(
-        () => manager.callMethod('error'),
+        () => extension.callMethod('error'),
         throwsA(
           isA<RpcException>()
               .having((RpcException e) => e.code, 'code', 999)
@@ -115,9 +118,9 @@ void main() {
     });
 
     test('callMethod exception in handler returns internal error', () async {
-      await manager.start(testExtensionEntryPoint);
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
       expect(
-        () => manager.callMethod('throw'),
+        () => extension.callMethod('throw'),
         throwsA(
           isA<RpcException>()
               .having(
@@ -137,17 +140,16 @@ void main() {
           notifyCompleter.complete(n);
         }
       });
+      addTearDown(sub.cancel);
 
-      await manager.start(testExtensionEntryPoint);
+      await manager.startExtension(testExtensionEntryPoint);
       final Notification n = await notifyCompleter.future.timeout(const Duration(seconds: 2));
       expect(n.method, 'ready');
       expect(n.params, const <String, Object?>{'status': 'go'});
-
-      await sub.cancel();
     });
 
     test('bi-directional notification: tool to extension with pong verification', () async {
-      await manager.start(testExtensionEntryPoint);
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
 
       final pongCompleter = Completer<Notification>();
       final StreamSubscription<Notification> sub = manager.notifications.listen((Notification n) {
@@ -155,28 +157,27 @@ void main() {
           pongCompleter.complete(n);
         }
       });
+      addTearDown(sub.cancel);
 
-      manager.sendNotification('ping', params: const <String, Object?>{'foo': 'bar'});
+      extension.sendNotification('ping', params: const <String, Object?>{'foo': 'bar'});
 
       final Notification pong = await pongCompleter.future.timeout(const Duration(seconds: 2));
       expect(pong.params, const <String, Object?>{'foo': 'bar'});
 
-      final Object? lastNotification = await manager.callMethod('getLastNotification');
+      final Object? lastNotification = await extension.callMethod('getLastNotification');
       expect(lastNotification, const <String, Object?>{
         'method': 'ping',
         'params': <String, Object?>{'foo': 'bar'},
       });
-
-      await sub.cancel();
     });
 
     test('callMethod with TransferableTypedData parameter and return value', () async {
-      await manager.start(testExtensionEntryPoint);
+      final ToolExtension extension = await manager.startExtension(testExtensionEntryPoint);
 
       final inputBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
       final inputData = TransferableTypedData.fromList(<Uint8List>[inputBytes]);
 
-      final Object? result = await manager.callMethod(
+      final Object? result = await extension.callMethod(
         'transferBytes',
         params: <String, Object?>{'data': inputData},
       );

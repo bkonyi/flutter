@@ -16,11 +16,19 @@ import 'service.dart';
 /// This class is used by the extension to communicate with the host Flutter tool.
 /// It implements [RpcRegistrar] to allow services to register their RPC handlers.
 class ToolExtensionProvider implements RpcRegistrar {
-  /// Creates a [ToolExtensionProvider] that communicates with the tool via [_toolSendPort].
-  ToolExtensionProvider(this._toolSendPort);
+  /// Creates a [ToolExtensionProvider] that communicates with the tool via [sendPort].
+  ToolExtensionProvider({required String name, required SendPort sendPort})
+    : _name = name,
+      _toolSendPort = sendPort {
+    _receivePort = ReceivePort(name);
+  }
 
+  final String _name;
   final SendPort _toolSendPort;
-  final ReceivePort _receivePort = ReceivePort();
+
+  /// The name of this extension.
+  String get name => _name;
+  late final ReceivePort _receivePort;
   final _registeredMethods = <String, Function>{};
   final _notificationsController = StreamController<Notification>.broadcast();
 

@@ -19,7 +19,7 @@ void main() {
     setUp(() {
       hostReceivePort = ReceivePort();
       queue = StreamQueue<Object?>(hostReceivePort);
-      provider = ToolExtensionProvider(hostReceivePort.sendPort);
+      provider = ToolExtensionProvider(name: 'test', sendPort: hostReceivePort.sendPort);
     });
 
     tearDown(() async {
@@ -173,6 +173,7 @@ void main() {
       final StreamSubscription<Notification> sub = provider.notifications.listen(
         notificationReceived.complete,
       );
+      addTearDown(sub.cancel);
 
       final hostNotification = <String, Object?>{
         'jsonrpc': '2.0',
@@ -187,7 +188,6 @@ void main() {
       expect(received.method, 'host.event');
       expect(received.params, const <String, Object?>{'x': 1});
 
-      await sub.cancel();
       await channel.sink.close();
     });
   });
