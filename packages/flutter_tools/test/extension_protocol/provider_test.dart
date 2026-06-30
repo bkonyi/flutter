@@ -29,7 +29,7 @@ void main() {
     });
 
     test('initialize sends SendPort to host', () async {
-      provider.initialize();
+      unawaited(provider.initialize());
       final Object? message = await queue.next;
       expect(message, isA<SendPort>());
 
@@ -47,7 +47,7 @@ void main() {
         return <String, Object?>{'echo': params['input'].value};
       });
 
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);
@@ -71,7 +71,7 @@ void main() {
     });
 
     test('handler not found sends error', () async {
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);
@@ -102,7 +102,7 @@ void main() {
         throw Exception('something went wrong');
       });
 
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);
@@ -124,7 +124,7 @@ void main() {
     });
 
     test('invalid request map from host sends parse error', () async {
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);
@@ -146,7 +146,7 @@ void main() {
     });
 
     test('sendNotification pushes notification to host', () async {
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);
@@ -165,7 +165,7 @@ void main() {
     });
 
     test('receiving notification from host pushes to notifications stream', () async {
-      provider.initialize();
+      unawaited(provider.initialize());
       final providerSendPort = (await queue.next)! as SendPort;
 
       final channel = IsolateChannel<Object?>.connectSend(providerSendPort);

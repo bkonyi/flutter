@@ -267,6 +267,17 @@ class ToolExtension {
     peer.sendNotification(method, params);
   }
 
+  /// Returns the capabilities (i.e. supported services) reported by the extension.
+  ///
+  /// Throws a [StateError] if the extension is disposed.
+  Future<ToolExtensionCapabilities> getCapabilities() async {
+    final Object? result = await callMethod('extension.getCapabilities');
+    if (result is Map) {
+      return ToolExtensionCapabilities.fromJson(result.cast<String, Object?>());
+    }
+    throw StateError('Invalid capabilities response from extension.');
+  }
+
   /// Disposes of the extension, killing its isolate and closing ports.
   Future<void> dispose() async {
     if (_isDisposed) {

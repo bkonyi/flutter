@@ -188,5 +188,38 @@ void main() {
 
       expect(outputBytes, Uint8List.fromList(<int>[2, 3, 4, 5]));
     });
+
+    test('register service and discover capabilities', () async {
+      final ToolExtension extension = await manager.startExtension(serviceExtensionEntryPoint);
+
+      // Verify capabilities are correctly exposed
+      final ToolExtensionCapabilities capabilities = await extension.getCapabilities();
+      expect(capabilities.services, const <String>['platform']);
+
+      // Verify namespaced RPC method works
+      final Object? result = await extension.callMethod('platform.ping');
+      expect(result, 'pong');
+    });
   });
+}
+
+class MockPlatformService extends ToolExtensionService {
+  @override
+  String get namespace => 'platform';
+
+  @override
+  Future<Map<String, Function>> initialize() async {
+    return <String, Function>{
+      'ping': (Map<String, Object?> params) => 'pong',
+    };
+  }
+
+  @override
+  Future<void> shutdown() async {}
+}
+
+void serviceExtensionEntryPoint(SendPort hostSendPort) {
+  final provider = ToolExtensionProvider(name: 'service_test', sendPort: hostSendPort);
+  provider.registerService(MockPlatformService());
+  provider.initialize();
 }

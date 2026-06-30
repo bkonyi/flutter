@@ -17,9 +17,11 @@ import 'service.dart';
 /// It implements [RpcRegistrar] to allow services to register their RPC handlers.
 class ToolExtensionProvider implements RpcRegistrar {
   /// Creates a [ToolExtensionProvider] that communicates with the tool via [sendPort].
-  ToolExtensionProvider({required String name, required SendPort sendPort})
-    : _name = name,
-      _toolSendPort = sendPort {
+  ToolExtensionProvider({
+    required String name,
+    required SendPort sendPort,
+  }) : _name = name,
+       _toolSendPort = sendPort {
     _receivePort = ReceivePort(name);
   }
 
@@ -31,12 +33,26 @@ class ToolExtensionProvider implements RpcRegistrar {
   late final ReceivePort _receivePort;
   final _registeredMethods = <String, Function>{};
   final _notificationsController = StreamController<Notification>.broadcast();
+  final List<ToolExtensionService> _services = <ToolExtensionService>[];
 
   StreamSubscription<Object?>? _subscription;
   rpc.Peer? _peer;
 
   /// A stream of notifications sent from the host Flutter tool to this extension.
   Stream<Notification> get notifications => _notificationsController.stream;
+
+  /// The set of services registered with this provider.
+  List<ToolExtensionService> get services => List.unmodifiable(_services);
+
+  /// Registers a [service] with the extension, making it available to the tool.
+  ///
+  /// Throws a [StateError] if the provider is already initialized.
+  void registerService(ToolExtensionService service) {
+    if (_peer != null) {
+      throw StateError('Cannot register service after initialization.');
+    }
+    _services.add(service);
+  }
 
   /// Registers a handler for the given RPC [method].
   ///
@@ -56,12 +72,12 @@ class ToolExtensionProvider implements RpcRegistrar {
   /// Initializes the provider, establishing the connection with the host tool.
   ///
   /// This must be called after registering all services and RPC handlers.
-  void initialize() {
+  ///
+  /// Returns a [ToolExtensionCapabilities] representing the supported services.
+  Future<ToolExtensionCapabilities> initialize() async {
     if (_peer != null) {
       throw StateError('ToolExtensionProvider is already initialized.');
     }
-    // Handshake: send our ReceivePort's SendPort to the tool.
-    _toolSendPort.send(_receivePort.sendPort);
 
     // Set up the JSON-RPC peer over the IsolateChannel.
     final channel = IsolateChannel<Object?>.connectReceive(_receivePort);
@@ -80,11 +96,43 @@ class ToolExtensionProvider implements RpcRegistrar {
     final peer = rpc.Peer.withoutJson(peerChannel);
     _peer = peer;
 
+    // Initialize registered services and register their methods namespaces.
+    final serviceNamespaces = <String>[];
+    for (final ToolExtensionService service in _services) {
+      serviceNamespaces.add(service.namespace);
+      final Map<String, Function> methods = await service.initialize();
+      methods.forEach((methodName, handler) {
+        final namespacedMethod = '${service.namespace}.$methodName';
+        Object? callback(rpc.Parameters params) {
+          if (handler is Object? Function(Map<String, Object?>)) {
+            final Map<dynamic, dynamic> map = params.value is Map ? params.asMap : <dynamic, dynamic>{};
+            return handler(map.cast<String, Object?>());
+          }
+          if (handler is Object? Function()) {
+            return handler();
+          }
+          final Map<dynamic, dynamic> map = params.value is Map ? params.asMap : <dynamic, dynamic>{};
+          return Function.apply(handler, <Object?>[map.cast<String, Object?>()]);
+        }
+        peer.registerMethod(namespacedMethod, callback);
+      });
+    }
+
     // Register all cached methods.
     _registeredMethods.forEach(peer.registerMethod);
 
+    // Register standard capabilities RPC.
+    peer.registerMethod('extension.getCapabilities', () {
+      return ToolExtensionCapabilities(services: serviceNamespaces).toMap();
+    });
+
+    // Handshake: send our ReceivePort's SendPort to the tool.
+    _toolSendPort.send(_receivePort.sendPort);
+
     // Start listening.
     unawaited(peer.listen());
+
+    return ToolExtensionCapabilities(services: serviceNamespaces);
   }
 
   void _interceptNotifications(Object? message) {
@@ -112,6 +160,14 @@ class ToolExtensionProvider implements RpcRegistrar {
       throw StateError('Provider is not initialized.');
     }
     peer.sendNotification(method, parameters);
+  }
+
+  /// Cleanly shuts down the extension, shutting down all services.
+  Future<void> shutdown() async {
+    for (final ToolExtensionService service in _services) {
+      await service.shutdown();
+    }
+    await close();
   }
 
   /// Closes the communication channels and releases resources.
