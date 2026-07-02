@@ -16,7 +16,7 @@ import 'base/user_messages.dart';
 import 'custom_devices/custom_device.dart';
 import 'custom_devices/custom_devices_config.dart';
 import 'device.dart';
-import 'extension_protocol/devices.dart';
+import 'experimental/devices.dart';
 import 'features.dart';
 import 'ios/devices.dart';
 import 'ios/ios_workflow.dart';

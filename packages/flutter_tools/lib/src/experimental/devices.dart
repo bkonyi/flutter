@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../../extension_protocol.dart';
 import '../application_package.dart';
 import '../base/common.dart';
 import '../base/logger.dart';
@@ -16,8 +17,6 @@ import '../linux/application_package.dart';
 import '../linux/build_linux.dart';
 import '../project.dart';
 import '../vmservice.dart';
-import 'manager.dart';
-import 'service.dart';
 
 /// A [DeviceDiscovery] implementation that delegates discovery to active tool extensions.
 class ExtensionDeviceDiscovery extends DeviceDiscovery {
