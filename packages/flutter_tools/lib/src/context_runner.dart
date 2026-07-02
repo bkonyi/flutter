@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:process/process.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
+import '../extension_protocol.dart';
 import 'android/android_builder.dart';
 import 'android/android_sdk.dart';
 import 'android/android_studio.dart';
@@ -201,6 +202,7 @@ Future<T> runInContext<T>(FutureOr<T> Function() runner, {Map<Type, Generator>? 
         operatingSystemUtils: globals.os,
         customDevicesConfig: globals.customDevicesConfig,
         nativeAssetsBuilder: globals.nativeAssetsBuilder,
+        extensionManager: context.get<ToolExtensionManager>(),
       ),
       DevtoolsLauncher: () => DevtoolsServerLauncher(
         processManager: globals.processManager,
@@ -209,6 +211,7 @@ Future<T> runInContext<T>(FutureOr<T> Function() runner, {Map<Type, Generator>? 
         botDetector: globals.botDetector,
       ),
       Doctor: () => Doctor(logger: globals.logger, clock: globals.systemClock),
+      ToolExtensionManager: () => ToolExtensionManager(),
       DoctorValidatorsProvider: () => DoctorValidatorsProvider.defaultInstance,
       EmulatorManager: () => EmulatorManager(
         java: globals.java,

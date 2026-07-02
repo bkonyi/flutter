@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'package:flutter_tools/extension_protocol.dart';
+import '../../extension_protocol.dart';
 
 /// Abstract representation of a target device in the extensibility package.
 abstract class Device {
@@ -13,9 +13,10 @@ abstract class Device {
   bool get isEmulator;
 
   Future<void> installApp(Uri appBundlePath);
-  Future<void> launchApp(Uri appBundlePath);
+  Future<void> launchApp(Uri appBundlePath, List<String> args);
   Stream<String> getLogReader();
   Future<Uri> getVmServiceUri();
+  Future<void> stopApp();
 }
 
 /// Abstract representation of the Device Service in the extensibility package.
@@ -44,6 +45,7 @@ abstract base class DeviceService extends ToolExtensionService {
       'installApp': _installAppRpc,
       'launchApp': _launchAppRpc,
       'getVmServiceUri': _getVmServiceUriRpc,
+      'stopApp': _stopAppRpc,
     };
   }
 
@@ -76,19 +78,17 @@ abstract base class DeviceService extends ToolExtensionService {
   Future<void> _launchAppRpc(Map<String, Object?> params) async {
     final id = params['deviceId']! as String;
     final path = params['appBundlePath']! as String;
+    final List<String> args = (params['args'] as List?)?.cast<String>() ?? const <String>[];
     final Device? device = _devices[id];
     if (device == null) {
       throw StateError('Device $id not found.');
     }
 
-    await device.launchApp(Uri.file(path));
+    await device.launchApp(Uri.file(path), args);
 
     // Forward the log reader stream to the host via notifications
     device.getLogReader().listen((String line) {
-      onNotification('device.log', <String, Object?>{
-        'deviceId': id,
-        'message': line,
-      });
+      onNotification('device.log', <String, Object?>{'deviceId': id, 'message': line});
     });
   }
 
@@ -100,5 +100,14 @@ abstract base class DeviceService extends ToolExtensionService {
     }
     final Uri uri = await device.getVmServiceUri();
     return uri.toString();
+  }
+
+  Future<void> _stopAppRpc(Map<String, Object?> params) async {
+    final id = params['deviceId']! as String;
+    final Device? device = _devices[id];
+    if (device == null) {
+      throw StateError('Device $id not found.');
+    }
+    await device.stopApp();
   }
 }

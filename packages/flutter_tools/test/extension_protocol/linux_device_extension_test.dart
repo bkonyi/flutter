@@ -5,9 +5,8 @@
 import 'dart:async';
 
 import 'package:flutter_tools/extension_protocol.dart';
+import 'package:flutter_tools/src/extension_prototypes/linux_device_extension.dart';
 import 'package:test/test.dart';
-
-import 'linux_device_extension_prototype.dart';
 
 void main() {
   group('Linux Device Extension Prototype', () {
@@ -35,8 +34,9 @@ void main() {
       final devices = devicesResult! as List<Object?>;
       expect(devices, hasLength(1));
 
-      final Map<String, Object?> device = (devices[0]! as Map<dynamic, dynamic>).cast<String, Object?>();
-      expect(device['id'], 'linux');
+      final Map<String, Object?> device = (devices[0]! as Map<dynamic, dynamic>)
+          .cast<String, Object?>();
+      expect(device['id'], 'linux-proto-1');
       expect(device['name'], 'Linux Desktop Target');
       expect(device['category'], 'desktop');
 
@@ -57,16 +57,22 @@ void main() {
       });
       addTearDown(sub.cancel);
 
-      await extension.callMethod('device.installApp', params: <String, Object?>{
-        'deviceId': 'linux',
-        'appBundlePath': '/build/linux/x64/debug/bundle',
-      });
+      await extension.callMethod(
+        'device.installApp',
+        params: <String, Object?>{
+          'deviceId': 'linux-proto-1',
+          'appBundlePath': '/build/linux/x64/debug/bundle',
+        },
+      );
 
       // 5. Launch app
-      await extension.callMethod('device.launchApp', params: <String, Object?>{
-        'deviceId': 'linux',
-        'appBundlePath': '/build/linux/x64/debug/bundle',
-      });
+      await extension.callMethod(
+        'device.launchApp',
+        params: <String, Object?>{
+          'deviceId': 'linux-proto-1',
+          'appBundlePath': '/build/linux/x64/debug/bundle',
+        },
+      );
 
       // Wait for app logs to be streamed back
       await logCompleter.future.timeout(const Duration(seconds: 3));
@@ -78,9 +84,10 @@ void main() {
       expect(logLines, contains('stdout log line #3 from application.'));
 
       // 6. Query VM Service URI
-      final Object? vmServiceUri = await extension.callMethod('device.getVmServiceUri', params: <String, Object?>{
-        'deviceId': 'linux',
-      });
+      final Object? vmServiceUri = await extension.callMethod(
+        'device.getVmServiceUri',
+        params: <String, Object?>{'deviceId': 'linux-proto-1'},
+      );
       expect(vmServiceUri, 'http://127.0.0.1:9090/auth-token-123/');
     });
   });
