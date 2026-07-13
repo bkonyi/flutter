@@ -230,7 +230,7 @@ List<FlutterCommand> generateCommands({
   ),
   ChannelCommand(verboseHelp: verboseHelp),
   CleanCommand(verbose: verbose),
-  ConfigCommand(verboseHelp: verboseHelp),
+  ConfigCommand(verboseHelp: verboseHelp, extensionManager: extensionManager),
   CustomDevicesCommand(
     customDevicesConfig: globals.customDevicesConfig,
     operatingSystemUtils: globals.os,

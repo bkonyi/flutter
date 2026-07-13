@@ -46,6 +46,25 @@ void main() {
     expect(result.exitCode, 0);
   });
 
+  testWithoutContext('flutter config outputs extension settings when enabled', () async {
+    final ProcessResult result = await processManager.run(
+      <String>[flutterBin, 'config', '--list'],
+      environment: <String, String>{
+        ...baseEnv,
+        'FLUTTER_TOOL_EXTENSIONS': 'true',
+      },
+    );
+
+    if (isLinux) {
+      expect(result.stdout, contains('Extension Settings:'));
+      expect(result.stdout, contains('  Linux Custom Extension Prototype:'));
+      expect(result.stdout, contains('    enable-linux-custom-prototype:'));
+    } else {
+      expect(result.stdout, isNot(contains('Extension Settings:')));
+    }
+    expect(result.exitCode, 0);
+  });
+
   testWithoutContext('tool extensions are disabled by default', () async {
     final ProcessResult doctorResult = await processManager.run(
       <String>[flutterBin, 'doctor', '-v'],
@@ -53,5 +72,12 @@ void main() {
     );
     expect(doctorResult.stdout, isNot(contains('Linux Custom Extension Prototype')));
     expect(doctorResult.exitCode, 0);
+
+    final ProcessResult configResult = await processManager.run(
+      <String>[flutterBin, 'config', '--list'],
+      environment: baseEnv,
+    );
+    expect(configResult.stdout, isNot(contains('Extension Settings:')));
+    expect(configResult.exitCode, 0);
   });
 }
