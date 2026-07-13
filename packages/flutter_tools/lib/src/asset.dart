@@ -1425,7 +1425,11 @@ class ManifestAssetBundle implements AssetBundle {
     required Set<String> platforms,
     required List<AssetTransformerEntry> transformers,
   }) {
-    _ensureAssetPathIsValid(assetsBaseDir: assetsBaseDir, assetUri: assetUri, packageName: packageName);
+    _ensureAssetPathIsValid(
+      assetsBaseDir: assetsBaseDir,
+      assetUri: assetUri,
+      packageName: packageName,
+    );
     if (assetUri.pathSegments.first == 'packages' &&
         !_fileSystem.isFileSync(
           _fileSystem.path.join(assetsBaseDir, _fileSystem.path.fromUri(assetUri)),

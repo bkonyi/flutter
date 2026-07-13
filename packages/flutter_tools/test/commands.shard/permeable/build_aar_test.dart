@@ -224,11 +224,7 @@ void main() {
         expect(buildInfo.flavor, isNull);
         expect(buildInfo.splitDebugInfoPath, isNull);
         expect(buildInfo.dartObfuscation, isFalse);
-        expect(androidBuildInfo.targetArchs, <CpuArch>[
-          CpuArch.armv7,
-          CpuArch.arm64,
-          CpuArch.x64,
-        ]);
+        expect(androidBuildInfo.targetArchs, <CpuArch>[CpuArch.armv7, CpuArch.arm64, CpuArch.x64]);
       }
       expect(buildModes, hasLength(3));
       expect(

@@ -361,39 +361,35 @@ void main() {
         },
       );
 
-      testUsingContext(
-        '$CleanCommand handles missing delete permissions',
-        () async {
-          final handler = FileExceptionHandler();
+      testUsingContext('$CleanCommand handles missing delete permissions', () async {
+        final handler = FileExceptionHandler();
 
-          // Ensures we handle ErrorHandlingFileSystem appropriately in prod.
-          // See https://github.com/flutter/flutter/issues/108978.
-          final FileSystem fileSystem = ErrorHandlingFileSystem(
-            delegate: MemoryFileSystem.test(opHandle: handler.opHandle),
-            platform: windowsPlatform,
-          );
-          final File throwingFile = fileSystem.file('bad')..createSync();
-          handler.addError(
-            throwingFile,
-            FileSystemOp.delete,
-            const FileSystemException('OS error: Access Denied'),
-          );
+        // Ensures we handle ErrorHandlingFileSystem appropriately in prod.
+        // See https://github.com/flutter/flutter/issues/108978.
+        final FileSystem fileSystem = ErrorHandlingFileSystem(
+          delegate: MemoryFileSystem.test(opHandle: handler.opHandle),
+          platform: windowsPlatform,
+        );
+        final File throwingFile = fileSystem.file('bad')..createSync();
+        handler.addError(
+          throwingFile,
+          FileSystemOp.delete,
+          const FileSystemException('OS error: Access Denied'),
+        );
 
-          xcodeProjectInterpreter.isInstalled = false;
+        xcodeProjectInterpreter.isInstalled = false;
 
-          final command = CleanCommand();
-          await command.deleteFile(throwingFile);
+        final command = CleanCommand();
+        await command.deleteFile(throwingFile);
 
-          expect(
-            testLogger.errorText,
-            contains(
-              'Failed to remove bad. A background process (e.g. Gradle daemon or Java) is locking files',
-            ),
-          );
-          expect(throwingFile, exists);
-        },
-        overrides: <Type, Generator>{Platform: () => windowsPlatform, Xcode: () => xcode},
-      );
+        expect(
+          testLogger.errorText,
+          contains(
+            'Failed to remove bad. A background process (e.g. Gradle daemon or Java) is locking files',
+          ),
+        );
+        expect(throwingFile, exists);
+      }, overrides: <Type, Generator>{Platform: () => windowsPlatform, Xcode: () => xcode});
 
       testUsingContext(
         '$CleanCommand invokes gradlew --stop and retries deletion when --stop-gradle flag is passed',

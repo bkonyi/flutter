@@ -98,16 +98,13 @@ class DiagnosticsExtensionClient extends DiagnosticsExtension {
     _logger.printTrace(
       'DiagnosticsExtensionClient running diagnostics via RPC ("${DiagnosticsExtension.runDiagnosticsMethod}")...',
     );
-    final rawResult = (await connection.sendRequest(
-      DiagnosticsExtension.runDiagnosticsMethod,
-    ))! as List<Object?>;
+    final rawResult =
+        (await connection.sendRequest(DiagnosticsExtension.runDiagnosticsMethod))! as List<Object?>;
     final List<ValidationResult> results = rawResult
         .cast<Map<String, Object?>>()
         .map(ValidationResult.fromJson)
         .toList();
-    _logger.printTrace(
-      'DiagnosticsExtensionClient received ${results.length} result(s) via RPC.',
-    );
+    _logger.printTrace('DiagnosticsExtensionClient received ${results.length} result(s) via RPC.');
     return results;
   }
 }
