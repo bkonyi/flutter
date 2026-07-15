@@ -253,7 +253,7 @@ List<FlutterCommand> generateCommands({
   CreateCommand(verboseHelp: verboseHelp, extensionTemplateManager: extensionTemplateManager),
   DaemonCommand(hidden: !verboseHelp),
   DebugAdapterCommand(verboseHelp: verboseHelp),
-  DevicesCommand(verboseHelp: verboseHelp),
+  DevicesCommand(verboseHelp: verboseHelp, extensionManager: extensionManager),
   DoctorCommand(verbose: verbose, extensionManager: extensionManager),
   DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
   DriveCommand(

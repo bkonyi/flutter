@@ -17,18 +17,11 @@ class FeatureFlag {
 
   /// Deserializes a [FeatureFlag] from a JSON-serializable map.
   factory FeatureFlag.fromJson(Map<String, Object?> json) {
-    final Object? nameObj = json['name'];
-    final String name = nameObj is String ? nameObj : '';
-    final Object? helpObj = json['help'];
-    final String help = helpObj is String ? helpObj : '';
-    final environmentVariable = json['environmentVariable'] as String?;
-    final enabledByDefault = json['enabledByDefault'] == true;
-
     return FeatureFlag(
-      name: name,
-      help: help,
-      environmentVariable: environmentVariable,
-      enabledByDefault: enabledByDefault,
+      name: json['name'] as String? ?? '',
+      help: json['help'] as String? ?? '',
+      environmentVariable: json['environmentVariable'] as String?,
+      enabledByDefault: json['enabledByDefault'] == true,
     );
   }
 
@@ -73,13 +66,11 @@ class ConfigOption {
 
   /// Deserializes a [ConfigOption] from a JSON-serializable map.
   factory ConfigOption.fromJson(Map<String, Object?> json) {
-    final Object? nameObj = json['name'];
-    final String name = nameObj is String ? nameObj : '';
-    final Object? helpObj = json['help'];
-    final String help = helpObj is String ? helpObj : '';
-    final value = json['value'] as String?;
-
-    return ConfigOption(name: name, help: help, value: value);
+    return ConfigOption(
+      name: json['name'] as String? ?? '',
+      help: json['help'] as String? ?? '',
+      value: json['value'] as String?,
+    );
   }
 
   /// The configuration key name used in `flutter config --<name>=<value>`.

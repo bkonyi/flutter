@@ -12,6 +12,7 @@ import '../base/os.dart';
 import '../features.dart';
 import 'config.dart';
 import 'diagnostics.dart';
+import 'extension_device_manager.dart';
 import 'extension_discovery.dart';
 
 /// Manages active tool extension isolate connections and exposes capability proxies.
@@ -114,6 +115,18 @@ class ExtensionManager {
         .map<ConfigurationExtension>(
           (ExtensionConnection c) => ConfigurationExtensionClient(c, logger: _logger),
         )
+        .toList();
+  }
+
+  /// Active [DeviceService] proxies for extensions supporting `'device'`.
+  List<DeviceService> get deviceExtensions {
+    _logger.printTrace('ExtensionManager querying active deviceExtensions.');
+    return _discovery.connections
+        .where(
+          (ExtensionConnection c) =>
+              c.capabilities.services.contains(DeviceService.serviceNamespace),
+        )
+        .map<DeviceService>((ExtensionConnection c) => ExtensionDeviceClient(c, logger: _logger))
         .toList();
   }
 
