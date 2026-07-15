@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:args/args.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/executable.dart';
 import 'package:flutter_tools/runner.dart' as runner;
@@ -19,9 +20,12 @@ import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/devices.dart';
+import 'package:flutter_tools/src/experimental/extension_arg_parser.dart';
+import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/reporting/crash_reporting.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/runner/flutter_command_runner.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/testing.dart';
 import 'package:unified_analytics/unified_analytics.dart';
@@ -845,6 +849,51 @@ void main() {
       },
     );
   });
+
+  group('ExtensionArgParserMixin', () {
+    late MemoryFileSystem fileSystem;
+    late BufferLogger logger;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      logger = BufferLogger.test();
+      Cache.disableLocking();
+    });
+
+    tearDown(() {
+      Cache.enableLocking();
+    });
+
+    testUsingContext(
+      'runner dynamically rebuilds parser when ExtensionArgParserMixin command is initialized',
+      () async {
+        final command = MockExtensionArgParserCommand();
+        final runner = FlutterCommandRunner();
+        runner.addCommand(command);
+
+        expect(command.argParser.options.containsKey('static-option'), isTrue);
+        expect(command.argParser.options.containsKey('dynamic-option'), isFalse);
+        expect(
+          runner.argParser.commands[command.name]?.options.containsKey('dynamic-option'),
+          isFalse,
+        );
+
+        await runner.run(<String>[command.name]);
+
+        expect(command.argParser.options.containsKey('dynamic-option'), isTrue);
+        expect(
+          runner.argParser.commands[command.name]?.options.containsKey('dynamic-option'),
+          isTrue,
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => FakeProcessManager.any(),
+        Logger: () => logger,
+        FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+      },
+    );
+  });
 }
 
 class CrashingFlutterCommand extends FlutterCommand {
@@ -967,5 +1016,64 @@ class FakeCache extends Fake implements Cache {
   @override
   Future<void> updateAll(Set<DevelopmentArtifact> requiredArtifacts, {bool offline = false}) async {
     globals.logger.startProgress('Downloading package Foo').stop();
+  }
+}
+
+class MockExtensionArgParserCommand extends FlutterCommand with ExtensionArgParserMixin {
+  @override
+  String get name => 'mock-ext-command';
+
+  @override
+  String get description => 'A mock command with dynamic argument parsing';
+
+  bool _initialized = false;
+
+  @override
+  Future<void> initializeDynamicOptions() async {
+    _initialized = true;
+  }
+
+  @override
+  void populateBaseArgParser(ArgParser parser) {
+    parser.addOption('static-option', help: 'A static option');
+  }
+
+  @override
+  String? get extensionArgParserCacheKey => _initialized ? 'dynamic-key' : null;
+
+  @override
+  ArgParser buildDynamicArgParser(ArgParser baseParser) {
+    final newParser = ArgParser(
+      allowTrailingOptions: baseParser.allowTrailingOptions,
+      usageLineLength: baseParser.usageLineLength,
+    );
+    for (final Option opt in baseParser.options.values) {
+      if (opt.isFlag) {
+        newParser.addFlag(
+          opt.name,
+          abbr: opt.abbr,
+          help: opt.help,
+          defaultsTo: opt.defaultsTo as bool?,
+          negatable: opt.negatable ?? true,
+          hide: opt.hide,
+        );
+      } else {
+        newParser.addOption(
+          opt.name,
+          abbr: opt.abbr,
+          help: opt.help,
+          allowed: opt.allowed,
+          defaultsTo: opt.defaultsTo as String?,
+          hide: opt.hide,
+        );
+      }
+    }
+    newParser.addOption('dynamic-option', help: 'A dynamic option');
+    return newParser;
+  }
+
+  @override
+  Future<FlutterCommandResult> runCommand() async {
+    return FlutterCommandResult.success();
   }
 }
