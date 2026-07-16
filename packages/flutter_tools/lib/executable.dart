@@ -47,6 +47,7 @@ import 'src/commands/update_packages.dart';
 import 'src/commands/upgrade.dart';
 import 'src/commands/widget_preview.dart';
 import 'src/devtools_launcher.dart';
+import 'src/experimental/extension_build_manager.dart';
 import 'src/experimental/extension_discovery.dart';
 import 'src/experimental/extension_manager.dart';
 import 'src/experimental/templates.dart';
@@ -120,11 +121,17 @@ Future<void> main(List<String> args) async {
         logger: globals.logger,
         featureFlags: featureFlags,
       );
+      final buildManager = ExtensionBuildManager(
+        extensionManager: manager,
+        logger: globals.logger,
+        featureFlags: featureFlags,
+      );
       return generateCommands(
         verboseHelp: verboseHelp,
         verbose: verbose,
         extensionManager: manager,
         extensionTemplateManager: templateManager,
+        extensionBuildManager: buildManager,
       );
     },
     verbose: verbose,
@@ -185,6 +192,7 @@ List<FlutterCommand> generateCommands({
   required bool verbose,
   ExtensionManager? extensionManager,
   ExtensionTemplateManager? extensionTemplateManager,
+  ExtensionBuildManager? extensionBuildManager,
 }) => <FlutterCommand>[
   AnalyzeCommand(
     verboseHelp: verboseHelp,
@@ -236,6 +244,7 @@ List<FlutterCommand> generateCommands({
     artifacts: globals.artifacts!,
     cache: globals.cache,
     flutterVersion: globals.flutterVersion,
+    extensionBuildManager: extensionBuildManager,
   ),
   ChannelCommand(verboseHelp: verboseHelp),
   CleanCommand(verbose: verbose),
