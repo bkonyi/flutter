@@ -10,6 +10,7 @@
 /// bindings shared across host tools and extension packages.
 library flutter_tools_core;
 
+export 'src/build.dart';
 export 'src/config.dart';
 export 'src/device.dart';
 export 'src/diagnostics.dart';

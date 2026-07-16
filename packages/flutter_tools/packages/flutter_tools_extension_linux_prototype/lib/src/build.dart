@@ -1,0 +1,33 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'package:flutter_tools_core/flutter_tools_core.dart';
+import 'package:flutter_tools_extension/flutter_tools_extension.dart';
+
+/// Prototype Linux [BuildService] implementation.
+final class LinuxBuildService extends BuildService {
+  @override
+  Future<List<ExtensionBuildTarget>> getBuildTargets() async {
+    return <ExtensionBuildTarget>[
+      const ExtensionBuildTarget(
+        name: 'custom-linux-build',
+        targetPlatform: 'linux-x64',
+        description: 'A custom Linux build target from prototype extension.',
+      ),
+    ];
+  }
+
+  @override
+  Future<ExtensionBuildResult> build({
+    required String targetName,
+    required String projectRoot,
+    required String mainPath,
+    required String buildMode,
+  }) async {
+    if (targetName == 'custom-linux-build') {
+      return const ExtensionBuildResult(success: true);
+    }
+    return ExtensionBuildResult(success: false, errorMessage: 'Unknown build target: $targetName');
+  }
+}
