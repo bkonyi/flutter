@@ -122,6 +122,9 @@ class AzureDetector {
     } on OSError {
       // The HttpClient might be running in a WSL1 environment.
       return _isRunningOnAzure = false;
+    } on Object {
+      // If we encounter any other exception or error, assume we are not on Azure.
+      return _isRunningOnAzure = false;
     }
     // We got a response. We're running on Azure.
     return _isRunningOnAzure = true;

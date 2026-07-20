@@ -175,6 +175,16 @@ void main() {
       expect(await azureDetector.isRunningOnAzure, isFalse);
     });
 
+    testWithoutContext('isRunningOnAzure returns false when unexpected error is thrown', () async {
+      final azureDetector = AzureDetector(
+        httpClientFactory: () => FakeHttpClient.list(<FakeRequest>[
+          FakeRequest(azureUrl, responseError: ArgumentError('No host specified in URI')),
+        ]),
+      );
+
+      expect(await azureDetector.isRunningOnAzure, isFalse);
+    });
+
     testWithoutContext('isRunningOnAzure returns true when azure metadata is reachable', () async {
       final azureDetector = AzureDetector(
         httpClientFactory: () => FakeHttpClient.list(<FakeRequest>[FakeRequest(azureUrl)]),
