@@ -15,6 +15,7 @@ class TargetDevice {
     required this.platformType,
     this.targetPlatform,
     this.sdkNameAndVersion,
+    this.buildTarget,
     this.ephemeral = true,
     this.isSupported = true,
     this.isSupportedForProject = true,
@@ -28,6 +29,7 @@ class TargetDevice {
       category: json['category']! as String,
       platformType: json['platformType']! as String,
       targetPlatform: json['targetPlatform'] as String?,
+      buildTarget: json['buildTarget'] as String?,
       sdkNameAndVersion: json['sdkNameAndVersion'] as String?,
       ephemeral: json['ephemeral']! as bool,
       isSupported: json['isSupported']! as bool,
@@ -53,6 +55,9 @@ class TargetDevice {
   /// Operating system SDK name and version string (e.g. `'Custom Linux 1.0.0'`).
   final String? sdkNameAndVersion;
 
+  /// Target build assembly identifier.
+  final String? buildTarget;
+
   /// Whether the device is ephemeral.
   final bool ephemeral;
 
@@ -69,6 +74,7 @@ class TargetDevice {
     'category': category,
     'platformType': platformType,
     'targetPlatform': ?targetPlatform,
+    'buildTarget': ?buildTarget,
     'sdkNameAndVersion': ?sdkNameAndVersion,
     'ephemeral': ephemeral,
     'isSupported': isSupported,
@@ -84,6 +90,7 @@ class TargetDevice {
             other.category == category &&
             other.platformType == platformType &&
             other.targetPlatform == targetPlatform &&
+            other.buildTarget == buildTarget &&
             other.sdkNameAndVersion == sdkNameAndVersion &&
             other.ephemeral == ephemeral &&
             other.isSupported == isSupported &&
@@ -98,6 +105,7 @@ class TargetDevice {
     platformType,
     targetPlatform,
     sdkNameAndVersion,
+    buildTarget,
     ephemeral,
     isSupported,
     isSupportedForProject,

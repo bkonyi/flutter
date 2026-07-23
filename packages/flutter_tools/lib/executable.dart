@@ -266,7 +266,12 @@ List<FlutterCommand> generateCommands({
   CreateCommand(verboseHelp: verboseHelp, extensionTemplateManager: extensionTemplateManager),
   DaemonCommand(hidden: !verboseHelp),
   DebugAdapterCommand(verboseHelp: verboseHelp),
-  DevicesCommand(verboseHelp: verboseHelp, extensionManager: extensionManager),
+  DevicesCommand(
+    verboseHelp: verboseHelp,
+    extensionManager: extensionManager,
+    cache: globals.cache,
+    platform: globals.platform,
+  ),
   DoctorCommand(verbose: verbose, extensionManager: extensionManager),
   DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
   DriveCommand(
@@ -296,7 +301,12 @@ List<FlutterCommand> generateCommands({
     platform: globals.platform,
     featureFlags: featureFlags,
   ),
-  RunCommand(verboseHelp: verboseHelp),
+  RunCommand(
+    verboseHelp: verboseHelp,
+    extensionManager: extensionManager,
+    cache: globals.cache,
+    platform: globals.platform,
+  ),
   ScreenshotCommand(fs: globals.fs),
   ShellCompletionCommand(),
   TestCommand(

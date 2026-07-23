@@ -118,13 +118,13 @@ class SourceVisitor implements ResolvedFiles, core.SourceVisitor {
       ...environment.fileSystem.path.split(switch (rawParts.first) {
         // flutter root will not contain a symbolic link.
         Environment.kFlutterRootDirectory => environment.flutterRootDir.absolute.path,
-        Environment.kProjectDirectory => environment.projectDir.resolveSymbolicLinksSync(),
+        Environment.kProjectDirectory => _safeResolveSymbolicLinks(environment.projectDir),
         Environment.kWorkspaceDirectory => environment.fileSystem.path.dirname(
           environment.fileSystem.path.dirname(environment.packageConfigPath),
         ),
-        Environment.kBuildDirectory => environment.buildDir.resolveSymbolicLinksSync(),
-        Environment.kCacheDirectory => environment.cacheDir.resolveSymbolicLinksSync(),
-        Environment.kOutputDirectory => environment.outputDir.resolveSymbolicLinksSync(),
+        Environment.kBuildDirectory => _safeResolveSymbolicLinks(environment.buildDir),
+        Environment.kCacheDirectory => _safeResolveSymbolicLinks(environment.cacheDir),
+        Environment.kOutputDirectory => _safeResolveSymbolicLinks(environment.outputDir),
         // If the pattern does not start with an env variable, then we have nothing
         // to resolve it to, error out.
         _ => throw InvalidPatternException(pattern),
@@ -272,4 +272,21 @@ class ProjectSource implements core.Source {
 
   @override
   Map<String, Object?> toJson() => throw StateError('Project sources cannot be serialized.');
+}
+
+/// Resolves symbolic links for the given directory if it exists.
+///
+/// If the directory does not exist yet (which can happen for build or output
+/// directories during environment initialization before the build runs),
+/// resolveSymbolicLinksSync would throw a FileSystemException. In that case,
+/// this falls back to returning the normalized absolute path to avoid crashing.
+String _safeResolveSymbolicLinks(Directory dir) {
+  try {
+    if (dir.existsSync()) {
+      return dir.resolveSymbolicLinksSync();
+    }
+  } on FileSystemException {
+    // Fall back to normalized absolute path if the directory does not exist yet.
+  }
+  return dir.fileSystem.path.normalize(dir.absolute.path);
 }

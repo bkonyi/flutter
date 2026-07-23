@@ -357,26 +357,6 @@ class ExtensionBackedDevice extends Device {
         }
       }
 
-      final FlutterProject project = FlutterProject.fromDirectory(
-        _fileSystem.directory(projectDirectory),
-      );
-      final String platformName = _targetDevice.targetPlatform ?? _targetDevice.platformType;
-
-      final String pluginPlatformKey = matchedTarget?.pluginPlatformKey ?? platformName;
-      final plugins = <ExtensionPlugin>[];
-      await refreshPluginsList(project);
-      final List<Plugin> allPlugins = await findPlugins(project);
-      final List<Plugin> resolved = resolvePluginImplementationsForPlatform(
-        allPlugins,
-        pluginPlatformKey,
-      );
-      for (final p in resolved) {
-        final PluginPlatform platformConfig = p.platforms[pluginPlatformKey]!;
-        plugins.add(
-          ExtensionPlugin(name: p.name, path: p.path, configuration: platformConfig.toMap()),
-        );
-      }
-
       final Object? buildResult = await connection
           .sendRequest(BuildService.buildMethod, <String, Object?>{
             'targetName': buildTarget,
@@ -386,7 +366,6 @@ class ExtensionBackedDevice extends Device {
             'outputDir': resolvedOutputDir,
             'buildDir': _fileSystem.path.join(projectDirectory, '.dart_tool', 'flutter_build'),
             'resolvedArtifacts': resolvedArtifacts,
-            'plugins': plugins.map((ExtensionPlugin p) => p.toMap()).toList(),
           }, const Duration(minutes: 5));
 
       final buildResultMap = buildResult! as Map<String, Object?>;

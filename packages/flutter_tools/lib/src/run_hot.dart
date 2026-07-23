@@ -287,18 +287,20 @@ class HotRunner extends ResidentRunner {
     try {
       final List<Uri?> baseUris = await _initDevFS();
       if (connectionInfoCompleter != null) {
-        final FlutterVmService vmService = flutterDevices.first.vmService!;
-        final DartDevelopmentService dds = flutterDevices.first.device!.dds;
-        // Only handle one debugger connection.
-        connectionInfoCompleter.complete(
-          DebugConnectionInfo(
-            httpUri: vmService.httpAddress,
-            wsUri: vmService.wsAddress,
-            baseUri: baseUris.first.toString(),
-            devToolsUri: dds.devToolsUri,
-            dtdUri: dds.dtdUri,
-          ),
-        );
+        final FlutterVmService? vmService = flutterDevices.first.vmService;
+        if (vmService != null) {
+          final DartDevelopmentService dds = flutterDevices.first.device!.dds;
+          // Only handle one debugger connection.
+          connectionInfoCompleter.complete(
+            DebugConnectionInfo(
+              httpUri: vmService.httpAddress,
+              wsUri: vmService.wsAddress,
+              baseUri: baseUris.first.toString(),
+              devToolsUri: dds.devToolsUri,
+              dtdUri: dds.dtdUri,
+            ),
+          );
+        }
       }
     } on DevFSException catch (error) {
       globals.printError('Error initializing DevFS: $error');
@@ -327,9 +329,11 @@ class HotRunner extends ResidentRunner {
       if (device!.generator != null) {
         device.generator!.accept();
       }
-      final List<FlutterView> views = await device.vmService!.getFlutterViews();
-      for (final view in views) {
-        globals.printTrace('Connected to $view.');
+      if (device.vmService != null) {
+        final List<FlutterView> views = await device.vmService!.getFlutterViews();
+        for (final view in views) {
+          globals.printTrace('Connected to $view.');
+        }
       }
     }
 
@@ -507,7 +511,10 @@ class HotRunner extends ResidentRunner {
 
     final Stopwatch findInvalidationTimer = _stopwatchFactory.createStopwatch('updateDevFS')
       ..start();
-    final DevFS devFS = flutterDevices[0].devFS!;
+    final DevFS? devFS = flutterDevices[0].devFS;
+    if (devFS == null) {
+      return UpdateFSReport(success: true);
+    }
     final InvalidationResult invalidationResult = await projectFileInvalidator.findInvalidated(
       lastCompiled: devFS.lastCompiled,
       urisToMonitor: devFS.sources,
