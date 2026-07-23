@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/experimental/extension_device_manager.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools_extension_linux_prototype/flutter_tools_extension_linux_prototype.dart';
 
 import '../../src/context.dart';
@@ -33,7 +34,14 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final discovery = ExtensionDeviceDiscovery(extensionManager: manager, logger: testLogger);
+        final discovery = ExtensionDeviceDiscovery(
+          extensionManager: manager,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          artifacts: globals.artifacts!,
+          cache: globals.cache,
+          platform: globals.platform,
+        );
 
         final List<Device> devices = await discovery.devices();
         expect(devices, isEmpty);
@@ -54,7 +62,10 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final devicesCommand = DevicesCommand();
+        final devicesCommand = DevicesCommand(
+          cache: globals.cache,
+          platform: globals.platform,
+        );
         final CommandRunner<void> commandRunner = createTestCommandRunner(devicesCommand);
 
         await commandRunner.run(<String>['devices']);
@@ -66,7 +77,14 @@ void main() {
         FeatureFlags: () => TestFeatureFlags(),
         DeviceManager: () => TestDeviceManager(
           discoverers: <DeviceDiscovery>[
-            ExtensionDeviceDiscovery(extensionManager: disabledManager!, logger: testLogger),
+            ExtensionDeviceDiscovery(
+              extensionManager: disabledManager!,
+              logger: testLogger,
+              fileSystem: globals.fs,
+              artifacts: globals.artifacts!,
+              cache: globals.cache,
+              platform: globals.platform,
+            ),
           ],
         ),
       },
@@ -84,7 +102,14 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final discovery = ExtensionDeviceDiscovery(extensionManager: manager, logger: testLogger);
+        final discovery = ExtensionDeviceDiscovery(
+          extensionManager: manager,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          artifacts: globals.artifacts!,
+          cache: globals.cache,
+          platform: globals.platform,
+        );
 
         final List<Device> devices = await discovery.devices();
         expect(devices, hasLength(1));
@@ -109,11 +134,32 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final devicesCommand = DevicesCommand();
+        final discovery = ExtensionDeviceDiscovery(
+          extensionManager: enabledManager!,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          artifacts: globals.artifacts!,
+          cache: globals.cache,
+          platform: globals.platform,
+        );
+        final devicesCommand = DevicesCommand(
+          cache: globals.cache,
+          platform: globals.platform,
+        );
         final CommandRunner<void> commandRunner = createTestCommandRunner(devicesCommand);
 
         await commandRunner.run(<String>['devices']);
         expect(testLogger.statusText, contains('Linux Custom Extension Prototype Device'));
+
+        final List<Device> devices = await discovery.devices();
+        expect(devices, hasLength(1));
+        final device = devices.first as ExtensionBackedDevice;
+        expect(device.name, equals('Linux Custom Extension Prototype Device'));
+        expect(await device.isSupported(), isTrue);
+        expect(await device.sdkNameAndVersion, equals('Custom Linux 1.0.0'));
+
+        final LaunchResult failedResultNoOptions = await device.startApp(null);
+        expect(failedResultNoOptions.started, isFalse);
 
         await enabledManager?.dispose();
       },
@@ -121,7 +167,14 @@ void main() {
         FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
         DeviceManager: () => TestDeviceManager(
           discoverers: <DeviceDiscovery>[
-            ExtensionDeviceDiscovery(extensionManager: enabledManager!, logger: testLogger),
+            ExtensionDeviceDiscovery(
+              extensionManager: enabledManager!,
+              logger: testLogger,
+              fileSystem: globals.fs,
+              artifacts: globals.artifacts!,
+              cache: globals.cache,
+              platform: globals.platform,
+            ),
           ],
         ),
       },

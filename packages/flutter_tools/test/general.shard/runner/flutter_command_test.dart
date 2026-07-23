@@ -2073,6 +2073,7 @@ class FakeClock extends Fake implements SystemClock {
 }
 
 class _TestRunCommandThatOnlyValidates extends RunCommand {
+  _TestRunCommandThatOnlyValidates({Cache? cache, Platform? platform}) : super(cache: cache ?? globals.cache, platform: platform ?? globals.platform);
   @override
   Future<FlutterCommandResult> runCommand() async {
     return FlutterCommandResult.success();

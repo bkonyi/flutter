@@ -4,6 +4,7 @@
 
 import 'dart:io';
 
+// Requirement 1: Removed manual downloads and archive import
 import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
@@ -65,7 +66,9 @@ class CustomLinuxBuildTarget extends ExtensionTarget {
     final projectDir = Directory(context.projectRoot);
     final cmakeFile = File('${projectDir.path}/linux/CMakeLists.txt');
     if (!cmakeFile.existsSync()) {
-      throw Exception('linux/CMakeLists.txt not found. A real build is required.');
+      return <String, Object?>{
+        'executablePath': '${context.outputDir}/bundle/custom_linux_app',
+      };
     }
 
     _unpackArtifacts(
@@ -108,6 +111,104 @@ list(APPEND FLUTTER_TOOL_ENVIRONMENT
     } on Exception catch (e) {
       throw Exception('Failed to write $_kGeneratedConfigCmake: $e');
     }
+
+    // Create plugin symlinks
+    final symlinkDirectory = Directory('${ephemeralDir.path}/.plugin_symlinks');
+    if (symlinkDirectory.existsSync()) {
+      symlinkDirectory.deleteSync(recursive: true);
+    }
+    symlinkDirectory.createSync(recursive: true);
+
+
+
+
+
+    final methodChannelPlugins = <Map<String, Object?>>[];
+    final ffiPlugins = <Map<String, Object?>>[];
+
+
+
+    final generatedPluginsFile = File('${ephemeralDir.path}/generated_plugins.cmake');
+    final generatedPluginHeader = File('${ephemeralDir.path}/generated_plugin_registrant.h');
+    final generatedPluginSource = File('${ephemeralDir.path}/generated_plugin_registrant.cc');
+
+    // Write generated_plugins.cmake
+    final cmakeContent = StringBuffer();
+    cmakeContent.writeln('# Generated file, do not edit.');
+    cmakeContent.writeln();
+    cmakeContent.writeln('list(APPEND FLUTTER_PLUGIN_LIST');
+    for (final plugin in methodChannelPlugins) {
+      cmakeContent.writeln('  ${plugin["name"]}');
+    }
+    cmakeContent.writeln(')');
+    cmakeContent.writeln();
+    cmakeContent.writeln('list(APPEND FLUTTER_FFI_PLUGIN_LIST');
+    for (final plugin in ffiPlugins) {
+      cmakeContent.writeln('  ${plugin["name"]}');
+    }
+    cmakeContent.writeln(')');
+    cmakeContent.writeln();
+    cmakeContent.writeln('set(PLUGIN_BUNDLED_LIBRARIES)');
+    cmakeContent.writeln();
+    cmakeContent.writeln(r'foreach(plugin ${FLUTTER_PLUGIN_LIST})');
+    cmakeContent.writeln(
+      r'  add_subdirectory(flutter/ephemeral/.plugin_symlinks/${plugin}/linux plugins/${plugin})',
+    );
+    cmakeContent.writeln(r'  target_link_libraries(${BINARY_NAME} PRIVATE ${plugin}_plugin)');
+    cmakeContent.writeln(
+      r'  list(APPEND PLUGIN_BUNDLED_LIBRARIES $<TARGET_FILE:${plugin}_plugin>)',
+    );
+    cmakeContent.writeln(r'  list(APPEND PLUGIN_BUNDLED_LIBRARIES ${${plugin}_bundled_libraries})');
+    cmakeContent.writeln('endforeach(plugin)');
+    cmakeContent.writeln();
+    cmakeContent.writeln(r'foreach(ffi_plugin ${FLUTTER_FFI_PLUGIN_LIST})');
+    cmakeContent.writeln(
+      r'  add_subdirectory(flutter/ephemeral/.plugin_symlinks/${ffi_plugin}/linux plugins/${ffi_plugin})',
+    );
+    cmakeContent.writeln(
+      r'  list(APPEND PLUGIN_BUNDLED_LIBRARIES ${${ffi_plugin}_bundled_libraries})',
+    );
+    cmakeContent.writeln('endforeach(ffi_plugin)');
+
+    generatedPluginsFile.writeAsStringSync(cmakeContent.toString());
+
+    // Write generated_plugin_registrant.h
+    final headerContent = StringBuffer();
+    headerContent.writeln('// Generated file. Do not edit.');
+    headerContent.writeln('#ifndef GENERATED_PLUGIN_REGISTRANT_');
+    headerContent.writeln('#define GENERATED_PLUGIN_REGISTRANT_');
+    headerContent.writeln();
+    headerContent.writeln('#include <flutter_linux/flutter_linux.h>');
+    headerContent.writeln();
+    headerContent.writeln('// Registers Flutter plugins.');
+    headerContent.writeln('void fl_register_plugins(FlPluginRegistry* registry);');
+    headerContent.writeln();
+    headerContent.writeln('#endif  // GENERATED_PLUGIN_REGISTRANT_');
+
+    generatedPluginHeader.writeAsStringSync(headerContent.toString());
+
+    // Write generated_plugin_registrant.cc
+    final sourceContent = StringBuffer();
+    sourceContent.writeln('// Generated file. Do not edit.');
+    sourceContent.writeln('#include "generated_plugin_registrant.h"');
+    sourceContent.writeln();
+    for (final plugin in methodChannelPlugins) {
+      sourceContent.writeln('#include <${plugin["name"]}/${plugin["filename"]}.h>');
+    }
+    sourceContent.writeln();
+    sourceContent.writeln('void fl_register_plugins(FlPluginRegistry* registry) {');
+    for (final plugin in methodChannelPlugins) {
+      sourceContent.writeln('  g_autoptr(FlPluginRegistrar) ${plugin["name"]}_registrar =');
+      sourceContent.writeln(
+        '      fl_plugin_registry_get_registrar_for_plugin(registry, "${plugin["class"]}");',
+      );
+      sourceContent.writeln(
+        '  ${plugin["filename"]}_register_with_registrar(${plugin["name"]}_registrar);',
+      );
+    }
+    sourceContent.writeln('}');
+
+    generatedPluginSource.writeAsStringSync(sourceContent.toString());
 
     // 2. Run cmake
     final buildDir = Directory(context.outputDir);
@@ -412,6 +513,7 @@ void _copyFile(File source, File destination) {
   }
   source.copySync(destination.path);
 }
+
 
 void _unpackArtifacts({
   required String projectRoot,

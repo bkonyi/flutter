@@ -7,6 +7,7 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -36,7 +37,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags();
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
@@ -60,7 +61,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags();
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
@@ -122,7 +123,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
@@ -182,7 +183,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
@@ -235,7 +236,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
@@ -287,7 +288,7 @@ void main() {
       () async {
         final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
         final manager = ExtensionManager(
-          hostPlatform: 'linux',
+          hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,

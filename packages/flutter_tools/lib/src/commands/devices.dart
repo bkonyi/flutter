@@ -7,6 +7,7 @@ import '../base/logger.dart';
 import '../base/platform.dart';
 import '../base/terminal.dart';
 import '../base/utils.dart';
+import '../cache.dart';
 import '../convert.dart';
 import '../device.dart';
 import '../experimental/extension_device_manager.dart';
@@ -15,8 +16,14 @@ import '../globals.dart' as globals;
 import '../runner/flutter_command.dart';
 
 class DevicesCommand extends FlutterCommand {
-  DevicesCommand({bool verboseHelp = false, ExtensionManager? extensionManager})
-    : _extensionManager = extensionManager {
+  DevicesCommand({
+    required Cache cache,
+    required Platform platform,
+    bool verboseHelp = false,
+    ExtensionManager? extensionManager,
+  }) : _cache = cache,
+       _platform = platform,
+       _extensionManager = extensionManager {
     addMachineOutputFlag(verboseHelp: verboseHelp);
     argParser.addOption(
       'timeout',
@@ -28,7 +35,9 @@ class DevicesCommand extends FlutterCommand {
     usesDeviceConnectionOption();
   }
 
+  final Cache _cache;
   final ExtensionManager? _extensionManager;
+  final Platform _platform;
 
   @override
   final name = 'devices';
@@ -73,7 +82,14 @@ class DevicesCommand extends FlutterCommand {
 
     if (_extensionManager case final extensionManager?) {
       globals.deviceManager?.deviceDiscoverers.add(
-        ExtensionDeviceDiscovery(extensionManager: extensionManager, logger: globals.logger),
+        ExtensionDeviceDiscovery(
+          extensionManager: extensionManager,
+          logger: globals.logger,
+          fileSystem: globals.fs,
+          artifacts: globals.artifacts!,
+          cache: _cache,
+          platform: _platform,
+        ),
       );
     }
 

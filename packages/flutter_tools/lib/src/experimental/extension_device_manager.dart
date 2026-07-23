@@ -13,6 +13,7 @@ import '../base/file_system.dart';
 import '../base/logger.dart';
 import '../base/platform.dart';
 import '../build_info.dart';
+import '../build_system/targets/extension.dart';
 import '../cache.dart';
 import '../device.dart';
 import '../device_port_forwarder.dart';
@@ -43,18 +44,67 @@ final class ExtensionDeviceClient extends DeviceService {
     _logger.printTrace('ExtensionDeviceClient received ${devices.length} device(s) via RPC.');
     return devices;
   }
+
+  @override
+  Future<Map<String, Object?>> launchApp({
+    required String deviceId,
+    required String executablePath,
+    Map<String, Object?>? debuggingOptions,
+  }) async {
+    return (await connection.sendRequest(DeviceService.launchAppMethod, <String, Object?>{
+          'deviceId': deviceId,
+          'executablePath': executablePath,
+          'debuggingOptions': ?debuggingOptions,
+        }))!
+        as Map<String, Object?>;
+  }
+
+  @override
+  Future<String?> getVmServiceUri({
+    required String deviceId,
+    required String executablePath,
+  }) async {
+    final Object? result = await connection.sendRequest(
+      DeviceService.getVmServiceUriMethod,
+      <String, Object?>{'deviceId': deviceId, 'executablePath': executablePath},
+    );
+    return result as String?;
+  }
+
+  @override
+  Future<bool> stopApp({required String deviceId, required String executablePath}) async {
+    final Object? result = await connection.sendRequest(
+      DeviceService.stopAppMethod,
+      <String, Object?>{'deviceId': deviceId, 'executablePath': executablePath},
+    );
+    return result as bool? ?? false;
+  }
 }
 
 /// A host-side [DeviceDiscovery] mechanism that discovers devices registered by active extensions.
 class ExtensionDeviceDiscovery extends PollingDeviceDiscovery {
   /// Creates an [ExtensionDeviceDiscovery] instance.
-  ExtensionDeviceDiscovery({required ExtensionManager extensionManager, required Logger logger})
-    : _extensionManager = extensionManager,
-      _logger = logger,
-      super('tool_extension');
+  ExtensionDeviceDiscovery({
+    required ExtensionManager extensionManager,
+    required Logger logger,
+    required FileSystem fileSystem,
+    required Artifacts artifacts,
+    required Cache cache,
+    required Platform platform,
+  }) : _extensionManager = extensionManager,
+       _logger = logger,
+       _fileSystem = fileSystem,
+       _artifacts = artifacts,
+       _cache = cache,
+       _platform = platform,
+       super('tool_extension');
 
   final ExtensionManager _extensionManager;
   final Logger _logger;
+  final FileSystem _fileSystem;
+  final Artifacts _artifacts;
+  final Cache _cache;
+  final Platform _platform;
 
   @override
   bool get supportsPlatform => true;
@@ -86,8 +136,12 @@ class ExtensionDeviceDiscovery extends PollingDeviceDiscovery {
               .map(
                 (targetDevice) => ExtensionBackedDevice(
                   logger: _logger,
+                  fileSystem: _fileSystem,
                   targetDevice: targetDevice,
                   connection: service.connection,
+                  artifacts: _artifacts,
+                  cache: _cache,
+                  platform: _platform,
                 ),
               )
               .toList();
@@ -115,9 +169,18 @@ class ExtensionBackedDevice extends Device {
   /// Creates an [ExtensionBackedDevice] wrapping a [TargetDevice].
   ExtensionBackedDevice({
     required super.logger,
+    required FileSystem fileSystem,
     required TargetDevice targetDevice,
     required this.connection,
+    required Artifacts artifacts,
+    required Cache cache,
+    required Platform platform,
   }) : _targetDevice = targetDevice,
+       _logger = logger,
+       _fileSystem = fileSystem,
+       _artifacts = artifacts,
+       _cache = cache,
+       _platform = platform,
        super(
          targetDevice.id,
          category: Category.fromString(targetDevice.category) ?? Category.desktop,
@@ -127,6 +190,12 @@ class ExtensionBackedDevice extends Device {
 
   final TargetDevice _targetDevice;
   final ExtensionConnection connection;
+  final Logger _logger;
+  final FileSystem _fileSystem;
+  final Artifacts _artifacts;
+  final Cache _cache;
+  final Platform _platform;
+  final Map<String, String> _launchedExecutablePaths = <String, String>{};
 
   @override
   String get name => _targetDevice.name;
@@ -200,15 +269,265 @@ class ExtensionBackedDevice extends Device {
     bool ipv6 = false,
     String? userIdentifier,
   }) async {
-    return LaunchResult.failed();
+    if (debuggingOptions == null) {
+      return LaunchResult.failed();
+    }
+    try {
+      final String? buildTarget = _targetDevice.buildTarget;
+      if (buildTarget == null) {
+        return LaunchResult.failed();
+      }
+      String projectDirectory = _fileSystem.currentDirectory.path;
+      if (mainPath != null) {
+        final Directory? resolvedProjectDir = _findProjectRoot(_fileSystem.file(mainPath));
+        if (resolvedProjectDir != null) {
+          projectDirectory = resolvedProjectDir.path;
+        }
+      }
+
+      String? outputDirPattern;
+      ExtensionBuildTarget? matchedTarget;
+      try {
+        final targetsResult =
+            (await connection.sendRequest(BuildService.getBuildTargetsMethod))! as List<Object?>;
+        for (final Map<String, Object?> targetMap in targetsResult.cast<Map<String, Object?>>()) {
+          if (targetMap['name'] == buildTarget) {
+            matchedTarget = ExtensionBuildTarget.fromJson(targetMap);
+            outputDirPattern = matchedTarget.outputDir;
+            break;
+          }
+        }
+      } on Object catch (e) {
+        _logger.printTrace('Failed to query build targets from extension: $e');
+      }
+
+      outputDirPattern ??=
+          '$kProjectDirPlaceholder/build/$kTargetPlatformPlaceholder/$kBuildModePlaceholder';
+
+      final String resolvedOutputDir = _fileSystem.path.normalize(
+        outputDirPattern
+            .replaceAll(kProjectDirPlaceholder, projectDirectory)
+            .replaceAll(kBuildModePlaceholder, debuggingOptions.buildInfo.modeName)
+            .replaceAll(kTargetPlatformPlaceholder, _targetDevice.targetPlatform ?? ''),
+      );
+
+      final resolvedArtifacts = <String, String>{};
+      if (matchedTarget != null) {
+        final mode = BuildMode.fromCliName(debuggingOptions.buildInfo.modeName);
+        final resolver = ArtifactResolver(
+          artifacts: _artifacts,
+          targetPlatform: TargetPlatform.fromName(matchedTarget.targetPlatform),
+          buildMode: mode,
+        );
+        for (final Source input in matchedTarget.inputs) {
+          input.accept(resolver);
+        }
+        resolvedArtifacts.addAll(resolver.resolvedArtifacts);
+
+        final Set<DevelopmentArtifact> requiredDevArtifacts =
+            _mapArtifactNamesToDevelopmentArtifacts(resolvedArtifacts.keys);
+        try {
+          final platformVal = TargetPlatform.fromName(matchedTarget.targetPlatform);
+          final DevelopmentArtifact? platformDevArtifact = _artifactFromTargetPlatform(platformVal);
+          if (platformDevArtifact != null) {
+            requiredDevArtifacts.add(platformDevArtifact);
+          }
+        } on Object catch (_) {
+          // Ignore if TargetPlatform.fromName fails.
+        }
+
+        if (requiredDevArtifacts.isNotEmpty) {
+          _logger.printTrace(
+            'Pre-downloading artifacts for extension build target: $requiredDevArtifacts',
+          );
+          final shouldLock = _platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true';
+          if (shouldLock) {
+            await _cache.lock();
+          }
+          try {
+            await _cache.updateAll(requiredDevArtifacts);
+          } finally {
+            if (shouldLock) {
+              _cache.releaseLock();
+            }
+          }
+        }
+      }
+
+      final Object? buildResult = await connection
+          .sendRequest(BuildService.buildMethod, <String, Object?>{
+            'targetName': buildTarget,
+            'projectRoot': projectDirectory,
+            'mainPath': mainPath ?? 'lib/main.dart',
+            'buildMode': debuggingOptions.buildInfo.modeName,
+            'outputDir': resolvedOutputDir,
+            'buildDir': _fileSystem.path.join(projectDirectory, '.dart_tool', 'flutter_build'),
+            'resolvedArtifacts': resolvedArtifacts,
+          }, const Duration(minutes: 5));
+
+      final buildResultMap = buildResult! as Map<String, Object?>;
+      final executablePath = buildResultMap['executablePath'] as String?;
+
+      if (executablePath == null) {
+        return LaunchResult.failed();
+      }
+      if (package != null) {
+        _launchedExecutablePaths[package.id] = executablePath;
+      }
+
+      final Object? launchResult = await connection.sendRequest(
+        DeviceService.launchAppMethod,
+        <String, Object?>{
+          'deviceId': _targetDevice.id,
+          'executablePath': _fileSystem.path.absolute(executablePath),
+          if (debuggingOptions.debuggingEnabled)
+            'debuggingOptions': <String, Object?>{
+              if (debuggingOptions.buildInfo.isDebug) 'buildInfo.isDebug': true,
+              if (debuggingOptions.buildInfo.isProfile) 'buildInfo.isProfile': true,
+              if (debuggingOptions.buildInfo.isRelease) 'buildInfo.isRelease': true,
+              if (debuggingOptions.dartEntrypointArgs.isNotEmpty)
+                'dartEntrypointArgs': debuggingOptions.dartEntrypointArgs,
+              'deviceVmServicePort': ?debuggingOptions.deviceVmServicePort,
+              if (debuggingOptions.disablePortPublication) 'disablePortPublication': true,
+              if (debuggingOptions.disableServiceAuthCodes) 'disableServiceAuthCodes': true,
+              if (debuggingOptions.enableDartProfiling) 'enableDartProfiling': true,
+              if (debuggingOptions.enableImpeller.name != 'none')
+                'enableImpeller': debuggingOptions.enableImpeller.name,
+              if (debuggingOptions.enableSoftwareRendering) 'enableSoftwareRendering': true,
+              if (debuggingOptions.endlessTraceBuffer) 'endlessTraceBuffer': true,
+              'hostVmServicePort': ?debuggingOptions.hostVmServicePort,
+              if (debuggingOptions.ipv6) 'ipv6': true,
+              if (debuggingOptions.skiaDeterministicRendering) 'skiaDeterministicRendering': true,
+              if (debuggingOptions.startPaused) 'startPaused': true,
+              'traceAllowlist': ?debuggingOptions.traceAllowlist,
+              if (debuggingOptions.traceSkia) 'traceSkia': true,
+              'traceSkiaAllowlist': ?debuggingOptions.traceSkiaAllowlist,
+              if (debuggingOptions.traceSystrace) 'traceSystrace': true,
+              if (debuggingOptions.useTestFonts) 'useTestFonts': true,
+              if (debuggingOptions.verboseSystemLogs) 'verboseSystemLogs': true,
+            },
+        },
+      );
+
+      final launchResultMap = launchResult! as Map<String, Object?>;
+      final vmServiceUriStringInitial = launchResultMap['vmServiceUri'] as String?;
+      final Uri? vmServiceUri = vmServiceUriStringInitial != null
+          ? Uri.tryParse(vmServiceUriStringInitial)
+          : null;
+      if (vmServiceUri != null) {
+        _logger.printTrace('Parsed VM Service URI: $vmServiceUri');
+      }
+
+      if (debuggingOptions.debuggingEnabled && vmServiceUri == null) {
+        _logger.printError('Failed to connect to the VM Service.');
+        return LaunchResult.failed();
+      }
+
+      return LaunchResult.succeeded(vmServiceUri: vmServiceUri);
+    } on Object catch (e, st) {
+      _logger.printError('Failed to launch application on device: $e\n$st');
+      return LaunchResult.failed();
+    }
+  }
+
+  Directory? _findProjectRoot(FileSystemEntity entity) {
+    Directory parent = entity is Directory ? entity : entity.parent;
+    while (true) {
+      if (parent.childFile('pubspec.yaml').existsSync()) {
+        return parent;
+      }
+      final Directory next = parent.parent;
+      if (next.path == parent.path) {
+        break; // Reached filesystem root
+      }
+      parent = next;
+    }
+    return null;
   }
 
   @override
-  Future<bool> stopApp(ApplicationPackage? app, {String? userIdentifier}) async => true;
+  Future<bool> stopApp(ApplicationPackage? app, {String? userIdentifier}) async {
+    if (app == null) {
+      return false;
+    }
+    final String? executablePath = _launchedExecutablePaths[app.id];
+    if (executablePath == null) {
+      _logger.printTrace(
+        'ExtensionBackedDevice.stopApp: No launched executable path found for ${app.id}',
+      );
+      return false;
+    }
+    try {
+      final Object? result = await connection.sendRequest(
+        DeviceService.stopAppMethod,
+        <String, Object?>{'deviceId': id, 'executablePath': executablePath},
+      );
+      _launchedExecutablePaths.remove(app.id);
+      return result as bool? ?? false;
+    } on Object catch (e) {
+      _logger.printTrace('Failed to stop app via extension: $e');
+      return false;
+    }
+  }
 
   @override
   Future<bool> uninstallApp(ApplicationPackage app, {String? userIdentifier}) async => true;
 
   @override
   Future<bool> isAppInstalled(ApplicationPackage app, {String? userIdentifier}) async => false;
+
+  Set<DevelopmentArtifact> _mapArtifactNamesToDevelopmentArtifacts(Iterable<String> artifactNames) {
+    final requiredDevArtifacts = <DevelopmentArtifact>{};
+    for (final artifactName in artifactNames) {
+      switch (artifactName) {
+        case 'linuxDesktopPath':
+        case 'linuxHeaders':
+          requiredDevArtifacts.add(DevelopmentArtifact.linux);
+        case 'windowsDesktopPath':
+        case 'windowsCppClientWrapper':
+          requiredDevArtifacts.add(DevelopmentArtifact.windows);
+        case 'flutterMacOSFramework':
+        case 'flutterMacOSFrameworkDsym':
+        case 'flutterMacOSXcframework':
+          requiredDevArtifacts.add(DevelopmentArtifact.macOS);
+        case 'flutterFramework':
+        case 'flutterFrameworkDsym':
+        case 'flutterXcframework':
+        case 'ios-sdk':
+          requiredDevArtifacts.add(DevelopmentArtifact.iOS);
+        case 'icuData':
+          requiredDevArtifacts.add(DevelopmentArtifact.universal);
+      }
+    }
+    return requiredDevArtifacts;
+  }
+
+  DevelopmentArtifact? _artifactFromTargetPlatform(TargetPlatform targetPlatform) {
+    switch (targetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.android_arm:
+      case TargetPlatform.android_arm64:
+      case TargetPlatform.android_x64:
+        return DevelopmentArtifact.androidGenSnapshot;
+      case TargetPlatform.web_javascript:
+        return DevelopmentArtifact.web;
+      case TargetPlatform.ios:
+        return DevelopmentArtifact.iOS;
+      case TargetPlatform.darwin:
+        return DevelopmentArtifact.macOS;
+      case TargetPlatform.windows_x64:
+      case TargetPlatform.windows_arm64:
+        return DevelopmentArtifact.windows;
+      case TargetPlatform.linux_x64:
+      case TargetPlatform.linux_arm64:
+      case TargetPlatform.linux_riscv64:
+        return DevelopmentArtifact.linux;
+      case TargetPlatform.fuchsia_arm64:
+      case TargetPlatform.fuchsia_x64:
+        return null;
+      case TargetPlatform.tester:
+      case TargetPlatform.unsupported:
+        return null;
+    }
+  }
 }

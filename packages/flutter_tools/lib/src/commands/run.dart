@@ -13,8 +13,12 @@ import '../android/android_device.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
+import '../base/platform.dart';
 import '../build_info.dart';
+import '../cache.dart';
 import '../device.dart';
+import '../experimental/extension_device_manager.dart';
+import '../experimental/extension_manager.dart';
 import '../features.dart';
 import '../globals.dart' as globals;
 import '../hook_runner.dart' show hookRunner;
@@ -455,7 +459,15 @@ abstract class RunCommandBase extends FlutterCommand with DeviceBasedDevelopment
 }
 
 class RunCommand extends RunCommandBase {
-  RunCommand({bool verboseHelp = false}) : super(verboseHelp: verboseHelp) {
+  RunCommand({
+    required Cache cache,
+    required Platform platform,
+    bool verboseHelp = false,
+    ExtensionManager? extensionManager,
+  }) : _cache = cache,
+       _platform = platform,
+       _extensionManager = extensionManager,
+       super(verboseHelp: verboseHelp) {
     requiresPubspecYaml();
     usesFilesystemOptions(hide: !verboseHelp);
     usesExtraDartFlagOptions(verboseHelp: verboseHelp);
@@ -702,12 +714,29 @@ class RunCommand extends RunCommandBase {
   bool get stayResident => boolArg('resident');
   bool get awaitFirstFrameWhenTracing => boolArg('await-first-frame-when-tracing');
 
+  final Cache _cache;
+  final ExtensionManager? _extensionManager;
+  final Platform _platform;
+
   @override
   Future<void> validateCommand() async {
     // When running with a prebuilt application, no command validation is
     // necessary.
     if (!runningWithPrebuiltApplication) {
       await super.validateCommand();
+    }
+
+    if (_extensionManager case final extensionManager?) {
+      globals.deviceManager?.deviceDiscoverers.add(
+        ExtensionDeviceDiscovery(
+          extensionManager: extensionManager,
+          logger: globals.logger,
+          fileSystem: globals.fs,
+          artifacts: globals.artifacts!,
+          cache: _cache,
+          platform: _platform,
+        ),
+      );
     }
 
     devices = await findAllTargetDevices();
