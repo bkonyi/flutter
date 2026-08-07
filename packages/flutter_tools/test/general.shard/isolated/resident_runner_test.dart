@@ -9,6 +9,7 @@ import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/run_hot.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../../src/common.dart';
 import '../../src/context.dart';

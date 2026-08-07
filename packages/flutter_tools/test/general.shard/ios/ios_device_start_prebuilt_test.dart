@@ -31,6 +31,7 @@ import 'package:flutter_tools/src/ios/xcode_debug.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/vmservice.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:test/fake.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 

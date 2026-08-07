@@ -112,6 +112,12 @@ class ConfigurationExtensionClient extends ConfigurationExtension {
 
   /// Fetches the extension title from the remote extension isolate.
   Future<String> fetchTitle() async {
+    if (_titleCache != null) {
+      return _titleCache!;
+    }
+    _logger.printTrace(
+      'ConfigurationExtensionClient fetching title via RPC ("${ConfigurationExtension.getTitleMethod}")...',
+    );
     _titleCache = (await connection.sendRequest(ConfigurationExtension.getTitleMethod))! as String;
     _logger.printTrace('ConfigurationExtensionClient received title: "$_titleCache".');
     return _titleCache!;

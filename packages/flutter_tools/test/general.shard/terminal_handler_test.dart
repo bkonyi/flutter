@@ -20,6 +20,7 @@ import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/vmservice.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:test/fake.dart';
 import 'package:vm_service/vm_service.dart' as vm_service;
 

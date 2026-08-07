@@ -23,6 +23,7 @@ import 'package:flutter_tools/src/ios/xcresult.dart';
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/plugins.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:test/fake.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 import 'package:yaml/yaml.dart';

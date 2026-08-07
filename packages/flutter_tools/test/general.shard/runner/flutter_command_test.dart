@@ -30,6 +30,7 @@ import 'package:flutter_tools/src/pre_run_validator.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/version.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/testing.dart';

@@ -22,6 +22,7 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/test/coverage_collector.dart';
 import 'package:flutter_tools/src/test/runner.dart';
 import 'package:flutter_tools/src/test/test_wrapper.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:unified_analytics/unified_analytics.dart';
 
 const _kOptionPackages = 'packages';

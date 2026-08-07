@@ -16,6 +16,7 @@ import 'package:flutter_tools/src/web/chrome.dart';
 import 'package:flutter_tools/src/web/compile.dart';
 import 'package:flutter_tools/src/web/memory_fs.dart';
 import 'package:flutter_tools/src/web/module_metadata.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:shelf/shelf.dart' as shelf;
 
 import '../../src/common.dart';

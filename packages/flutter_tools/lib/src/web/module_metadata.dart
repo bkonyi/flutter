@@ -10,6 +10,8 @@
 /// Module reader always creates the current version but is able to read
 /// metadata files with later versions as long as the changes are backward
 /// compatible, i.e. only minor or patch versions have changed.
+library;
+
 class ModuleMetadataVersion {
   const ModuleMetadataVersion(this.majorVersion, this.minorVersion, this.patchVersion);
 

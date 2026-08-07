@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show Source;
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 
@@ -74,6 +75,6 @@ class DartPluginRegistrantTarget extends Target {
 
   @override
   List<Source> get outputs => <Source>[
-    Source.fromProject((FlutterProject project) => project.dartPluginRegistrant, optional: true),
+    ProjectSource((FlutterProject project) => project.dartPluginRegistrant, optional: true),
   ];
 }

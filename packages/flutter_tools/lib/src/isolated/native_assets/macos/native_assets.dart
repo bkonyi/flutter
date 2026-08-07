@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:code_assets/code_assets.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:hooks_runner/hooks_runner.dart';
 
 import '../../../base/file_system.dart';

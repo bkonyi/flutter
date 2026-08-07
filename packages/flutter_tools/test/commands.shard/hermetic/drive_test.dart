@@ -25,6 +25,7 @@ import 'package:flutter_tools/src/drive/drive_service.dart';
 import 'package:flutter_tools/src/ios/devices.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/web/web_device.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:package_config/package_config.dart';
 import 'package:test/fake.dart';
 

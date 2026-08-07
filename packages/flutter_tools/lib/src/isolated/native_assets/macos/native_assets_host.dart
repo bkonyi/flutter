@@ -5,12 +5,12 @@
 // Shared logic between iOS and macOS implementations of native assets.
 
 import 'package:code_assets/code_assets.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:hooks_runner/hooks_runner.dart';
 
 import '../../../base/common.dart';
 import '../../../base/file_system.dart';
 import '../../../base/process.dart';
-import '../../../build_info.dart';
 import '../../../build_system/targets/darwin.dart';
 import '../../../globals.dart' as globals;
 import '../native_assets.dart';

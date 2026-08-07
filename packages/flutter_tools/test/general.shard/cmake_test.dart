@@ -9,6 +9,7 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cmake.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../src/common.dart';
 

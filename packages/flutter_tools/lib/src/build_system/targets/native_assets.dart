@@ -12,6 +12,8 @@
 /// need to be run in the `Target`s in `flutter assemble`.
 library;
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
+
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config_types.dart';
 

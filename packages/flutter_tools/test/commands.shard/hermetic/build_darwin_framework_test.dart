@@ -18,6 +18,7 @@ import 'package:flutter_tools/src/darwin/darwin.dart';
 import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/version.dart';
 import 'package:flutter_tools/src/xcode_project.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:test/fake.dart';
 
 import '../../src/common.dart';

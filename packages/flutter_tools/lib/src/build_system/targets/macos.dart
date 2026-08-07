@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import 'package:unified_analytics/unified_analytics.dart';
 
 import '../../artifacts.dart';
@@ -362,7 +363,7 @@ class CompileMacOSFramework extends Target {
   List<Source> get inputs => const <Source>[
     Source.pattern('{BUILD_DIR}/app.dill'),
     Source.pattern('{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/macos.dart'),
-    Source.artifact(Artifact.genSnapshot, mode: BuildMode.release, platform: TargetPlatform.darwin),
+    Source.artifact(Artifact.genSnapshot, mode: BuildMode.release, platform: 'darwin'),
   ];
 
   @override
@@ -584,12 +585,12 @@ class DebugMacOSBundleFlutterAssets extends MacOSBundleFlutterAssets {
     const Source.pattern('{BUILD_DIR}/app.dill'),
     const Source.artifact(
       Artifact.isolateSnapshotData,
-      platform: TargetPlatform.darwin,
+      platform: 'darwin',
       mode: BuildMode.debug,
     ),
     const Source.artifact(
       Artifact.vmSnapshotData,
-      platform: TargetPlatform.darwin,
+      platform: 'darwin',
       mode: BuildMode.debug,
     ),
   ];

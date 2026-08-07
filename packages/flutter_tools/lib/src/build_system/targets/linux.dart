@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import '../../artifacts.dart';
 import '../../base/file_system.dart';
 import '../../build_info.dart';
@@ -30,7 +31,7 @@ class UnpackLinux extends Target {
   final TargetPlatform targetPlatform;
 
   @override
-  String get name => 'unpack_linux';
+  String get name => 'unpack_linux_${targetPlatform.getName()}';
 
   @override
   List<Source> get inputs => const <Source>[

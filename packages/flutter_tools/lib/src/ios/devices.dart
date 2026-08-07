@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
 import 'package:unified_analytics/unified_analytics.dart';
@@ -35,6 +36,7 @@ import '../macos/xcode.dart';
 import '../mdns_discovery.dart';
 import '../project.dart';
 import '../protocol_discovery.dart';
+import '../resident_runner.dart' show FlutterDevice;
 import '../vmservice.dart';
 import 'application_package.dart';
 import 'core_devices.dart';

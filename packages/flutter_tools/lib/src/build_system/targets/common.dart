@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import 'package:package_config/package_config.dart';
 
 import '../../artifacts.dart';
@@ -423,7 +424,7 @@ class AotElfProfile extends AotElfBase {
   const AotElfProfile(this.targetPlatform);
 
   @override
-  String get name => 'aot_elf_profile';
+  String get name => 'aot_elf_profile_${targetPlatform.getName()}';
 
   @override
   List<Source> get inputs => <Source>[
@@ -433,7 +434,11 @@ class AotElfProfile extends AotElfBase {
     const Source.pattern('{BUILD_DIR}/app.dill'),
     const Source.artifact(Artifact.engineDartBinary),
     const Source.artifact(Artifact.skyEnginePath),
-    Source.artifact(Artifact.genSnapshot, platform: targetPlatform, mode: BuildMode.profile),
+    Source.artifact(
+      Artifact.genSnapshot,
+      platform: targetPlatform.getName(),
+      mode: BuildMode.profile,
+    ),
   ];
 
   @override
@@ -450,7 +455,7 @@ class AotElfRelease extends AotElfBase {
   const AotElfRelease(this.targetPlatform);
 
   @override
-  String get name => 'aot_elf_release';
+  String get name => 'aot_elf_release_${targetPlatform.getName()}';
 
   @override
   List<Source> get inputs => <Source>[
@@ -460,7 +465,11 @@ class AotElfRelease extends AotElfBase {
     const Source.pattern('{BUILD_DIR}/app.dill'),
     const Source.artifact(Artifact.engineDartBinary),
     const Source.artifact(Artifact.skyEnginePath),
-    Source.artifact(Artifact.genSnapshot, platform: targetPlatform, mode: BuildMode.release),
+    Source.artifact(
+      Artifact.genSnapshot,
+      platform: targetPlatform.getName(),
+      mode: BuildMode.release,
+    ),
   ];
 
   @override

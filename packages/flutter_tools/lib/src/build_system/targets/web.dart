@@ -5,6 +5,7 @@
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 import 'package:unified_analytics/unified_analytics.dart';

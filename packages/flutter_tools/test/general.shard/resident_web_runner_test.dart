@@ -34,6 +34,7 @@ import 'package:flutter_tools/src/vmservice.dart';
 import 'package:flutter_tools/src/web/chrome.dart';
 import 'package:flutter_tools/src/web/devfs_config.dart';
 import 'package:flutter_tools/src/web/web_device.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:package_config/package_config.dart';
 import 'package:package_config/package_config_types.dart';
 import 'package:test/fake.dart';

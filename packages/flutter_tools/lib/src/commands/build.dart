@@ -20,6 +20,7 @@ import '../base/template.dart';
 import '../base/terminal.dart';
 import '../build_info.dart';
 import '../build_system/build_system.dart';
+import '../build_system/targets/extension.dart';
 import '../cache.dart';
 import '../experimental/extension_arg_parser.dart';
 import '../experimental/extension_build_manager.dart';
@@ -64,7 +65,8 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
     required Xcode? xcode,
     ExtensionBuildManager? extensionBuildManager,
     bool verboseHelp = false,
-  }) : _fileSystem = fileSystem,
+  }) : _artifacts = artifacts,
+       _fileSystem = fileSystem,
        _logger = logger,
        _extensionBuildManager = extensionBuildManager,
        _verboseHelp = verboseHelp {
@@ -164,6 +166,7 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
     );
   }
 
+  final Artifacts _artifacts;
   final FileSystem _fileSystem;
   final Logger _logger;
   final ExtensionBuildManager? _extensionBuildManager;
@@ -174,9 +177,7 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
 
   @override
   String? get extensionArgParserCacheKey {
-    final targets = <ExtensionBuildTarget>[
-      ...?_extensionBuildManager?.cachedTargets,
-    ];
+    final targets = <ExtensionBuildTarget>[...?_extensionBuildManager?.cachedTargets];
     if (targets.isEmpty) {
       return null;
     }
@@ -237,11 +238,9 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
   @override
   Future<void> initializeDynamicOptions() async {
     if (_extensionBuildManager case final ExtensionBuildManager extensionBuildManager?) {
-      final targets = <ExtensionBuildTarget>[
-        ...await extensionBuildManager.getBuildTargets(),
-      ];
+      final targets = <ExtensionBuildTarget>[...await extensionBuildManager.getBuildTargets()];
       for (final target in targets) {
-        if (!subcommands.containsKey(target.name)) {
+        if (target.isTopLevel && !subcommands.containsKey(target.name)) {
           _addSubcommand(
             ExtensionBuildSubCommand(
               target: target,
@@ -249,6 +248,7 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
               fileSystem: _fileSystem,
               logger: _logger,
               verboseHelp: _verboseHelp,
+              artifacts: _artifacts,
             ),
           );
         }
@@ -295,8 +295,10 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
     required FileSystem fileSystem,
     required super.logger,
     required bool verboseHelp,
+    required Artifacts artifacts,
   }) : _buildManager = buildManager,
        _fileSystem = fileSystem,
+       _artifacts = artifacts,
        super(verboseHelp: verboseHelp) {
     usesTargetOption();
     usesPubOption();
@@ -306,6 +308,7 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
   final ExtensionBuildTarget target;
   final ExtensionBuildManager _buildManager;
   final FileSystem _fileSystem;
+  final Artifacts _artifacts;
 
   @override
   String get name => target.name;
@@ -320,11 +323,32 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
     final BuildInfo buildInfo = await getBuildInfo();
     final String buildModeName = buildInfo.mode.name;
 
+    final String outputDir = _fileSystem.path.normalize(
+      target.outputDir
+          .replaceAll(kProjectDirPlaceholder, projectRoot)
+          .replaceAll(kBuildModePlaceholder, buildModeName)
+          .replaceAll(kTargetPlatformPlaceholder, target.targetPlatform),
+    );
+
+    final String buildDir = _fileSystem.path.join(projectRoot, '.dart_tool', 'flutter_build');
+
+    final resolver = ArtifactResolver(
+      artifacts: _artifacts,
+      targetPlatform: TargetPlatform.fromName(target.targetPlatform),
+      buildMode: buildInfo.mode,
+    );
+    for (final Source input in target.inputs) {
+      input.accept(resolver);
+    }
+
     final ExtensionBuildResult result = await _buildManager.build(
       targetName: target.name,
       projectRoot: projectRoot,
       mainPath: mainPath,
       buildMode: buildModeName,
+      outputDir: outputDir,
+      buildDir: buildDir,
+      resolvedArtifacts: resolver.resolvedArtifacts,
     );
 
     if (result.success) {

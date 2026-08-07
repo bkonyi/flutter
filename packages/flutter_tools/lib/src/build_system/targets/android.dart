@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import '../../artifacts.dart';
 import '../../base/build.dart';
 import '../../base/deferred_component.dart';
@@ -201,7 +202,7 @@ class AndroidAot extends AotElfBase {
     const Source.pattern('{BUILD_DIR}/app.dill'),
     const Source.artifact(Artifact.engineDartBinary),
     const Source.artifact(Artifact.skyEnginePath),
-    Source.artifact(Artifact.genSnapshot, mode: buildMode, platform: targetPlatform),
+    Source.artifact(Artifact.genSnapshot, mode: buildMode, platform: targetPlatform.getName()),
   ];
 
   @override
