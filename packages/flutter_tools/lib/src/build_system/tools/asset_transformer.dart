@@ -4,6 +4,7 @@
 
 import 'dart:typed_data';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import 'package:pool/pool.dart';
 import 'package:process/process.dart';
 
@@ -11,7 +12,6 @@ import '../../base/error_handling_io.dart';
 import '../../base/file_system.dart';
 import '../../base/io.dart';
 import '../../base/logger.dart';
-import '../../build_info.dart';
 import '../../devfs.dart';
 import '../../flutter_manifest.dart';
 import '../build_system.dart';

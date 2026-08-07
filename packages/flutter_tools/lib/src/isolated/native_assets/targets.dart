@@ -5,12 +5,12 @@
 import 'package:code_assets/code_assets.dart';
 import 'package:data_assets/data_assets.dart';
 import 'package:file/file.dart' show Directory, FileSystem;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:hooks/hooks.dart';
 
 import '../../base/common.dart' show throwToolExit;
 import '../../build_info.dart'
     show
-        BuildMode,
         CpuArch,
         EnvironmentType,
         TargetPlatform,

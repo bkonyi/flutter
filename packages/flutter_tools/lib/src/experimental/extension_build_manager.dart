@@ -48,16 +48,14 @@ base class ExtensionBuildManager {
     _targetToConnection.clear();
     final connections = <ExtensionConnection>[
       for (final connection in _extensionManager.connections)
-        if (connection.capabilities.services.contains(BuildService.serviceNamespace))
-          connection,
+        if (connection.capabilities.services.contains(BuildService.serviceNamespace)) connection,
     ];
 
     for (final connection in connections) {
       try {
-        final Object? rpcResult = await connection
+        final rawResult = (await connection
             .sendRequest(BuildService.getBuildTargetsMethod)
-            .timeout(const Duration(seconds: 5));
-        final rawResult = rpcResult! as List<Object?>;
+            .timeout(const Duration(seconds: 5)))! as List<Object?>;
         for (final Map<String, Object?> targetMap in rawResult.cast<Map<String, Object?>>()) {
           final target = ExtensionBuildTarget.fromJson(targetMap);
           targets.add(target);
@@ -80,12 +78,12 @@ base class ExtensionBuildManager {
     required String projectRoot,
     required String mainPath,
     required String buildMode,
+    required String outputDir,
+    required String buildDir,
+    required Map<String, String> resolvedArtifacts,
   }) async {
     if (!_featureFlags.isToolExtensionsEnabled) {
-      return const ExtensionBuildResult(
-        success: false,
-        errorMessage: 'Tool extensions are disabled.',
-      );
+      return const ExtensionBuildResult.failure(message: 'Tool extensions are disabled.');
     }
 
     await _extensionManager.ensureInitialized();
@@ -96,9 +94,8 @@ base class ExtensionBuildManager {
 
     final ExtensionConnection? connection = _targetToConnection[targetName];
     if (connection == null) {
-      return ExtensionBuildResult(
-        success: false,
-        errorMessage: 'No extension found to handle build target $targetName.',
+      return ExtensionBuildResult.failure(
+        message: 'No extension found to handle build target $targetName.',
       );
     }
 
@@ -109,12 +106,14 @@ base class ExtensionBuildManager {
             'projectRoot': projectRoot,
             'mainPath': mainPath,
             'buildMode': buildMode,
-          })
-          .timeout(const Duration(minutes: 5));
+            'outputDir': outputDir,
+            'buildDir': buildDir,
+            'resolvedArtifacts': resolvedArtifacts,
+          }, const Duration(minutes: 5));
       return ExtensionBuildResult.fromJson(result! as Map<String, Object?>);
     } on Object catch (e) {
       _logger.printError('Failed to run build from extension: $e');
-      return ExtensionBuildResult(success: false, errorMessage: e.toString());
+      return ExtensionBuildResult.failure(message: e.toString());
     }
 
   }

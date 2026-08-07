@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/test/test_compiler.dart';
 import 'package:flutter_tools/src/test/test_golden_comparator.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../src/common.dart';
 import '../src/context.dart';

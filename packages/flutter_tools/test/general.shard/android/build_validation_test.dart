@@ -4,6 +4,7 @@
 
 import 'package:flutter_tools/src/android/build_validation.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../../src/common.dart';
 

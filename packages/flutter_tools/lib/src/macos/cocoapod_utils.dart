@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import '../base/fingerprint.dart';
-import '../build_info.dart';
 import '../cache.dart';
 import '../darwin/darwin.dart';
 import '../flutter_plugins.dart';

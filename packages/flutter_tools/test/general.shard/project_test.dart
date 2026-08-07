@@ -24,8 +24,10 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:test/fake.dart';
+import 'package:yaml_edit/yaml_edit.dart' show YamlEditor;
 
 import '../src/common.dart';
 import '../src/context.dart';

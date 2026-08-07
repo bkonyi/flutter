@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
 import 'package:meta/meta.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
@@ -250,7 +251,7 @@ abstract class UnpackIOS extends UnpackDarwin {
     const Source.pattern(
       '{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/ios.dart',
     ),
-    Source.artifact(Artifact.flutterXcframework, platform: TargetPlatform.ios, mode: buildMode),
+    Source.artifact(Artifact.flutterXcframework, platform: TargetPlatform.ios.getName(), mode: buildMode),
   ];
 
   @override
@@ -478,11 +479,11 @@ class _IssueLaunchRootViewControllerAccess extends Target {
       const Source.pattern(
         '{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/ios.dart',
       ),
-      Source.fromProject(
+      ProjectSource(
         (FlutterProject project) => project.ios.appDelegateObjcImplementation,
         optional: true,
       ),
-      Source.fromProject((FlutterProject project) => project.ios.appDelegateSwift, optional: true),
+      ProjectSource((FlutterProject project) => project.ios.appDelegateSwift, optional: true),
     ];
   }
 
@@ -513,7 +514,7 @@ class DebugIosLLDBInit extends Target {
 
   @override
   List<Source> get outputs => <Source>[
-    Source.fromProject((FlutterProject project) => project.ios.lldbInitFile),
+    ProjectSource((FlutterProject project) => project.ios.lldbInitFile),
   ];
 
   @override

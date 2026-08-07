@@ -7,11 +7,14 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
+
 import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/process.dart';
 import '../base/utils.dart';
-import '../build_info.dart';
+import '../project.dart' show IosProject;
+import '../xcode_project.dart' show IosProject;
 import 'xcodeproj.dart';
 
 /// LLDB is the default debugger in Xcode on macOS. Once the application has

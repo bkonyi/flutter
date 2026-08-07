@@ -214,7 +214,11 @@ List<FlutterCommand> generateCommands({
     ],
     suppressAnalytics: !globals.analytics.okToSend,
   ),
-  AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
+  AssembleCommand(
+    buildSystem: globals.buildSystem,
+    extensionBuildManager: extensionBuildManager,
+    verboseHelp: verboseHelp,
+  ),
   AttachCommand(
     verboseHelp: verboseHelp,
     stdio: globals.stdio,

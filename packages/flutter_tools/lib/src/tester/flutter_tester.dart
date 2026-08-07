@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:process/process.dart';
 
 import '../application_package.dart';

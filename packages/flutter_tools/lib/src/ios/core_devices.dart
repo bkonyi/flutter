@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
 
@@ -14,7 +15,6 @@ import '../base/logger.dart';
 import '../base/process.dart';
 import '../base/template.dart';
 import '../base/utils.dart';
-import '../build_info.dart';
 import '../convert.dart';
 import '../device.dart';
 import '../macos/xcode.dart';

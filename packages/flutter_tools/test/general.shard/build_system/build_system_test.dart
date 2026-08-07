@@ -14,6 +14,7 @@ import 'package:flutter_tools/src/base/utils.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/convert.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show Source;
 
 import '../../src/common.dart';
 import '../../src/fake_process_manager.dart';

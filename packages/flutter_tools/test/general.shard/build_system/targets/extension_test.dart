@@ -1,0 +1,310 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/build_system/targets/extension.dart';
+import 'package:flutter_tools/src/experimental/extension_build_manager.dart';
+import 'package:flutter_tools/src/experimental/extension_manager.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart'
+    hide Artifact, BuildMode, HostArtifact, Target;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode, Source;
+import 'package:test/fake.dart';
+
+import '../../../src/common.dart';
+import '../../../src/context.dart';
+import '../../../src/fakes.dart';
+
+final class FakeExtensionManager extends Fake implements ExtensionManager {}
+
+final class FakeExtensionBuildManager extends ExtensionBuildManager {
+  FakeExtensionBuildManager({this.buildResult})
+    : super(
+        extensionManager: FakeExtensionManager(),
+        logger: BufferLogger.test(),
+        featureFlags: TestFeatureFlags(),
+      );
+
+  final ExtensionBuildResult? buildResult;
+
+  String? invokedTargetName;
+  String? invokedProjectRoot;
+  String? invokedMainPath;
+  String? invokedBuildMode;
+  String? invokedOutputDir;
+  String? invokedBuildDir;
+  Map<String, String>? invokedResolvedArtifacts;
+
+  @override
+  Future<ExtensionBuildResult> build({
+    required String targetName,
+    required String projectRoot,
+    required String mainPath,
+    required String buildMode,
+    required String outputDir,
+    required String buildDir,
+    required Map<String, String> resolvedArtifacts,
+  }) async {
+    invokedTargetName = targetName;
+    invokedProjectRoot = projectRoot;
+    invokedMainPath = mainPath;
+    invokedBuildMode = buildMode;
+    invokedOutputDir = outputDir;
+    invokedBuildDir = buildDir;
+    invokedResolvedArtifacts = resolvedArtifacts;
+    return buildResult ?? const ExtensionBuildResult.success();
+  }
+}
+
+void main() {
+  late FileSystem fileSystem;
+  late Logger logger;
+  late Environment environment;
+
+  setUp(() {
+    fileSystem = MemoryFileSystem.test();
+    logger = BufferLogger.test();
+    environment = Environment.test(
+      fileSystem.currentDirectory,
+      defines: <String, String>{kBuildMode: BuildMode.debug.cliName, kTargetFile: 'lib/main.dart'},
+      inputs: <String, String>{},
+      fileSystem: fileSystem,
+      logger: logger,
+      artifacts: LocalFakeArtifacts(fileSystem),
+      processManager: FakeProcessManager.any(),
+    );
+  });
+
+  testUsingContext('ExtensionAssembleTarget delegates build to ExtensionBuildManager', () async {
+    final buildManager = FakeExtensionBuildManager();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    expect(target.name, equals('custom-target'));
+    expect(target.dependencies, isEmpty);
+    expect(target.inputs, isEmpty);
+    expect(target.outputs, isEmpty);
+
+    await target.build(environment);
+
+    expect(buildManager.invokedTargetName, equals('custom-target'));
+    expect(buildManager.invokedProjectRoot, equals(environment.projectDir.path));
+    expect(buildManager.invokedMainPath, equals('lib/main.dart'));
+    expect(buildManager.invokedBuildMode, equals(BuildMode.debug.cliName));
+    expect(buildManager.invokedOutputDir, equals(environment.outputDir.path));
+    expect(buildManager.invokedBuildDir, equals(environment.buildDir.path));
+    expect(buildManager.invokedResolvedArtifacts, isEmpty);
+  });
+
+  testUsingContext('ExtensionAssembleTarget resolves and passes artifacts', () async {
+    final buildManager = FakeExtensionBuildManager();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+      inputs: <Source>[
+        Source.artifact(BuiltInArtifacts.icuData),
+        Source.hostArtifact(BuiltInHostArtifacts.impellerc),
+      ],
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    await target.build(environment);
+
+    expect(buildManager.invokedResolvedArtifacts, hasLength(2));
+    expect(buildManager.invokedResolvedArtifacts?['icuData'], endsWith('/artifacts/icuData'));
+    expect(
+      buildManager.invokedResolvedArtifacts?['impellerc'],
+      endsWith('/artifacts/host/impellerc'),
+    );
+  });
+
+  testUsingContext('ExtensionAssembleTarget resolves outputDir pattern', () async {
+    final buildManager = FakeExtensionBuildManager();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+      outputDir: '{PROJECT_DIR}/build/custom-out/{BUILD_MODE}',
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    await target.build(environment);
+
+    expect(
+      buildManager.invokedOutputDir,
+      equals(fileSystem.path.join(environment.projectDir.path, 'build', 'custom-out', 'debug')),
+    );
+  });
+
+  testUsingContext('ExtensionAssembleTarget throws ToolExit if BuildMode is missing', () async {
+    environment.defines.remove(kBuildMode);
+    final buildManager = FakeExtensionBuildManager();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    expect(
+      () => target.build(environment),
+      throwsA(
+        isA<ToolExit>().having(
+          (e) => e.message,
+          'message',
+          contains('BuildMode define is required'),
+        ),
+      ),
+    );
+  });
+
+  testUsingContext('ExtensionAssembleTarget throws ToolExit if build fails', () async {
+    final buildManager = FakeExtensionBuildManager(
+      buildResult: const ExtensionBuildResult.failure(message: 'Build failed error'),
+    );
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    expect(
+      () => target.build(environment),
+      throwsA(isA<ToolExit>().having((e) => e.message, 'message', contains('Build failed error'))),
+    );
+  });
+
+  testUsingContext('ExtensionAssembleTarget maps inputs and outputs', () async {
+    final buildManager = FakeExtensionBuildManager();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+      inputs: <Source>[Source.pattern('{PROJECT_DIR}/foo.dart')],
+      outputs: <Source>[Source.pattern('{BUILD_DIR}/bar.dart')],
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) => throw UnimplementedError(),
+    );
+
+    environment.buildDir.createSync(recursive: true);
+    environment.outputDir.createSync(recursive: true);
+
+    final ResolvedFiles resolvedInputs = target.resolveInputs(environment);
+    expect(resolvedInputs.sources, hasLength(1));
+    expect(resolvedInputs.sources.first.path, endsWith('foo.dart'));
+
+    final ResolvedFiles resolvedOutputs = target.resolveOutputs(environment);
+    expect(resolvedOutputs.sources, hasLength(1));
+    expect(resolvedOutputs.sources.first.path, endsWith('bar.dart'));
+  });
+
+  testUsingContext('ExtensionAssembleTarget resolves dependencies', () async {
+    final buildManager = FakeExtensionBuildManager();
+    final depTarget = FakeTarget();
+    const buildTarget = ExtensionBuildTarget(
+      description: 'description',
+      name: 'custom-target',
+      targetPlatform: 'linux-x64',
+      dependencies: <String>['dep-target'],
+    );
+    final target = ExtensionAssembleTarget(
+      buildManager: buildManager,
+      buildTarget: buildTarget,
+      dependencyResolver: (name) {
+        if (name == 'dep-target') {
+          return depTarget;
+        }
+        throw fail('Unexpected dependency lookup: $name');
+      },
+    );
+
+    expect(target.dependencies, hasLength(1));
+    expect(target.dependencies.first, same(depTarget));
+  });
+
+  testUsingContext(
+    'ExtensionAssembleTarget maps artifact and host_artifact inputs/outputs',
+    () async {
+      final buildManager = FakeExtensionBuildManager();
+      const buildTarget = ExtensionBuildTarget(
+        description: 'description',
+        name: 'custom-target',
+        targetPlatform: 'linux-x64',
+        inputs: <Source>[
+          Source.artifact(BuiltInArtifacts.icuData),
+          Source.hostArtifact(BuiltInHostArtifacts.impellerc),
+        ],
+      );
+      final target = ExtensionAssembleTarget(
+        buildManager: buildManager,
+        buildTarget: buildTarget,
+        dependencyResolver: (name) => throw UnimplementedError(),
+      );
+
+      final ResolvedFiles resolvedInputs = target.resolveInputs(environment);
+      expect(resolvedInputs.sources, hasLength(2));
+      expect(resolvedInputs.sources[0].path, endsWith('/artifacts/icuData'));
+      expect(resolvedInputs.sources[1].path, endsWith('/artifacts/host/impellerc'));
+    },
+  );
+}
+
+final class FakeTarget extends Fake implements Target {
+  @override
+  String get name => 'fake-target';
+}
+
+final class LocalFakeArtifacts extends Fake implements Artifacts {
+  LocalFakeArtifacts(this._fileSystem);
+  final FileSystem _fileSystem;
+
+  @override
+  String getArtifactPath(
+    Artifact artifact, {
+    TargetPlatform? platform,
+    BuildMode? mode,
+    EnvironmentType? environmentType,
+  }) {
+    return '/artifacts/${artifact.name}';
+  }
+
+  @override
+  FileSystemEntity getHostArtifact(HostArtifact artifact) {
+    return _fileSystem.file('/artifacts/host/${artifact.name}');
+  }
+}

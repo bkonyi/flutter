@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/test/web_test_compiler.dart';
 import 'package:flutter_tools/src/web/compile.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:test/expect.dart';
 
 import '../../src/context.dart';

@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 import 'dart:ffi' show Abi;
+
 import 'package:file/file.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:process/process.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
@@ -17,7 +19,6 @@ import '../base/platform.dart';
 import '../base/process.dart';
 import '../base/project_migrator.dart';
 import '../base/version.dart';
-import '../build_info.dart';
 import '../cache.dart';
 import '../ios/xcodeproj.dart';
 import '../migrations/cocoapods_script_symlink.dart';

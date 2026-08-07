@@ -14,6 +14,7 @@ import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/linux.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:standard_message_codec/standard_message_codec.dart';
 
 import '../../../src/common.dart';

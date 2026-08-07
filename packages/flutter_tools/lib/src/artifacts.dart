@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 import 'package:file/memory.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' as core show Artifact, HostArtifact;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
 
@@ -26,7 +28,7 @@ import 'globals.dart' as globals;
 //////////////////////////////////////////////////////////////////////
 
 /// Defines what engine artifacts are available (not necessarily on each platform).
-enum Artifact {
+enum Artifact implements core.Artifact {
   /// The tool which compiles a dart kernel file into native code.
   genSnapshot('gen_snapshot'),
   genSnapshotArm64('gen_snapshot_arm64'),
@@ -107,6 +109,9 @@ enum Artifact {
   final bool isPatchedSdk;
   final bool isFuchsiaRunner;
 
+  @override
+  String get name => EnumName(this).name;
+
   String getFileName(Platform hostPlatform, [BuildMode? mode]) {
     if (isPatchedSdk) {
       throw StateError('No filename for sdk path, should not be invoked');
@@ -125,7 +130,7 @@ enum Artifact {
 }
 
 /// A subset of [Artifact]s that are platform and build mode independent
-enum HostArtifact {
+enum HostArtifact implements core.HostArtifact {
   /// The root of the web implementation of the dart SDK.
   flutterWebSdk.directory(),
 
@@ -182,6 +187,9 @@ enum HostArtifact {
   final String _fileName;
   final bool isExecutable;
   final bool isDll;
+
+  @override
+  String get name => EnumName(this).name;
 
   String getFileName(Platform platform) {
     if (isDll) {

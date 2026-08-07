@@ -8,9 +8,9 @@ import 'package:file_testing/file_testing.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
-import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/tools/asset_transformer.dart';
 import 'package:flutter_tools/src/flutter_manifest.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../../../src/common.dart';
 import '../../../src/fake_process_manager.dart';

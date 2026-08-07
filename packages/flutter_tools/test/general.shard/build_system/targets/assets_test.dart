@@ -19,6 +19,7 @@ import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 
 import '../../../src/common.dart';
 import '../../../src/context.dart';
