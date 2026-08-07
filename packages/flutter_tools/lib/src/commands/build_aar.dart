@@ -20,10 +20,12 @@ import 'build.dart';
 class BuildAarCommand extends BuildSubCommand {
   BuildAarCommand({
     required super.logger,
+    AndroidBuilder? androidBuilder,
     required AndroidSdk? androidSdk,
     required FileSystem fileSystem,
     required bool verboseHelp,
-  }) : _androidSdk = androidSdk,
+  }) : _androidBuilder = androidBuilder,
+       _androidSdk = androidSdk,
        _fileSystem = fileSystem,
        super(verboseHelp: verboseHelp) {
     argParser
@@ -62,6 +64,7 @@ class BuildAarCommand extends BuildSubCommand {
       help: 'The target platform for which the project is compiled.',
     );
   }
+  final AndroidBuilder? _androidBuilder;
   final AndroidSdk? _androidSdk;
   final FileSystem _fileSystem;
 
@@ -116,16 +119,17 @@ class BuildAarCommand extends BuildSubCommand {
   @override
   bool get regeneratePlatformSpecificToolingDuringVerify => false;
 
+  AndroidBuilder? get _effectiveAndroidBuilder => _androidBuilder ?? androidBuilder;
+  AndroidSdk? get _effectiveAndroidSdk => _androidSdk ?? globals.androidSdk;
+
   @override
   Future<FlutterCommandResult> runCommand() async {
-    if (_androidSdk == null) {
+    if (_effectiveAndroidSdk == null) {
       exitWithNoSdkMessage();
     }
+    final Set<String> targetArchitectures = stringsArg('target-platform').toSet();
+    final FlutterProject project = _getProject();
     final androidBuildInfo = <AndroidBuildInfo>{};
-
-    final Iterable<CpuArch> targetArchitectures = stringsArg(
-      'target-platform',
-    ).map<CpuArch>(getCpuArchForName);
 
     final String? buildNumberArg = stringArg('build-number');
     final String buildNumber =
@@ -144,7 +148,7 @@ class BuildAarCommand extends BuildSubCommand {
               forcedBuildMode: BuildMode.fromCliName(buildMode),
               forcedTargetFile: targetFile,
             ),
-            targetArchs: targetArchitectures,
+            targetArchs: targetArchitectures.map<CpuArch>(getCpuArchForName).toList(),
           ),
         );
       }
@@ -153,7 +157,7 @@ class BuildAarCommand extends BuildSubCommand {
       throwToolExit('Please specify a build mode and try again.');
     }
 
-    await androidBuilder?.buildAar(
+    await _effectiveAndroidBuilder?.buildAar(
       project: project,
       target: targetFile.path,
       androidBuildInfo: androidBuildInfo,

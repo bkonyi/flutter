@@ -5,6 +5,7 @@
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
 
+import '../android/android_builder.dart';
 import '../android/android_sdk.dart';
 import '../artifacts.dart';
 import '../base/config.dart';
@@ -17,7 +18,11 @@ import '../base/template.dart';
 import '../base/terminal.dart';
 import '../build_system/build_system.dart';
 import '../cache.dart';
+import '../context/android_context.dart';
+import '../context/apple_context.dart';
+import '../context/tool_context.dart';
 import '../features.dart';
+import '../globals.dart' as globals;
 import '../ios/code_signing.dart';
 import '../ios/plist_parser.dart';
 import '../macos/xcode.dart';
@@ -39,118 +44,152 @@ import 'darwin_add_to_app.dart';
 
 class BuildCommand extends FlutterCommand {
   BuildCommand({
-    required Artifacts artifacts,
-    required Cache cache,
-    required FileSystem fileSystem,
-    required FlutterVersion flutterVersion,
-    required BuildSystem buildSystem,
-    required OperatingSystemUtils osUtils,
-    required Logger logger,
-    required AndroidSdk? androidSdk,
-    required Config config,
-    required Platform platform,
-    required ProcessUtils processUtils,
-    required ProcessManager processManager,
-    required FileSystemUtils fileSystemUtils,
-    required TemplateRenderer templateRenderer,
-    required Terminal terminal,
-    required PlistParser plistParser,
-    required Xcode? xcode,
+    ToolContext? toolContext,
+    AndroidContext? androidContext,
+    AppleContext? appleContext,
+    Artifacts? artifacts,
+    Cache? cache,
+    FileSystem? fileSystem,
+    FlutterVersion? flutterVersion,
+    BuildSystem? buildSystem,
+    OperatingSystemUtils? osUtils,
+    Logger? logger,
+    AndroidSdk? androidSdk,
+    Config? config,
+    Platform? platform,
+    ProcessUtils? processUtils,
+    ProcessManager? processManager,
+    FileSystemUtils? fileSystemUtils,
+    TemplateRenderer? templateRenderer,
+    Terminal? terminal,
+    PlistParser? plistParser,
+    Xcode? xcode,
+    AndroidBuilder? androidBuilder,
     bool verboseHelp = false,
   }) {
+    final FileSystem effectiveFileSystem = fileSystem ?? toolContext?.fs ?? globals.fs;
+    final Logger effectiveLogger = logger ?? toolContext?.logger ?? globals.logger;
+    final Platform effectivePlatform = platform ?? toolContext?.platform ?? globals.platform;
+    final ProcessManager effectiveProcessManager =
+        processManager ?? toolContext?.processManager ?? globals.processManager;
+    final ProcessUtils effectiveProcessUtils =
+        processUtils ?? toolContext?.processUtils ?? globals.processUtils;
+    final FileSystemUtils effectiveFileSystemUtils =
+        fileSystemUtils ?? toolContext?.fileSystemUtils ?? globals.fsUtils;
+    final Terminal effectiveTerminal = terminal ?? toolContext?.terminal ?? globals.terminal;
+    final Config effectiveConfig = config ?? toolContext?.config ?? globals.config;
+    final Artifacts effectiveArtifacts = artifacts ?? toolContext?.artifacts ?? globals.artifacts!;
+    final Cache effectiveCache = cache ?? toolContext?.cache ?? globals.cache;
+    final FlutterVersion effectiveFlutterVersion =
+        flutterVersion ?? toolContext?.flutterVersion ?? globals.flutterVersion;
+    final OperatingSystemUtils effectiveOsUtils = osUtils ?? toolContext?.os ?? globals.os;
+    final TemplateRenderer effectiveTemplateRenderer = templateRenderer ?? globals.templateRenderer;
+    final AndroidSdk? effectiveAndroidSdk =
+        androidSdk ?? androidContext?.androidSdk ?? globals.androidSdk;
+    final PlistParser effectivePlistParser =
+        plistParser ?? appleContext?.plistParser ?? globals.plistParser;
+    final Xcode? effectiveXcode = xcode ?? appleContext?.xcode ?? globals.xcode;
+    final BuildSystem effectiveBuildSystem = buildSystem ?? globals.buildSystem;
+
+    final xcodeCodeSigningSettings = XcodeCodeSigningSettings(
+      config: effectiveConfig,
+      logger: effectiveLogger,
+      platform: effectivePlatform,
+      processUtils: effectiveProcessUtils,
+      fileSystem: effectiveFileSystem,
+      fileSystemUtils: effectiveFileSystemUtils,
+      terminal: effectiveTerminal,
+      plistParser: effectivePlistParser,
+    );
+    final darwinAddToAppCodesigning = DarwinAddToAppCodesigning(
+      logger: effectiveLogger,
+      xcodeCodeSigningSettings: xcodeCodeSigningSettings,
+    );
+
     _addSubcommand(
       BuildAarCommand(
-        fileSystem: fileSystem,
-        androidSdk: androidSdk,
-        logger: logger,
+        androidBuilder: androidBuilder,
+        androidSdk: effectiveAndroidSdk,
+        fileSystem: effectiveFileSystem,
+        logger: effectiveLogger,
         verboseHelp: verboseHelp,
       ),
     );
-    _addSubcommand(BuildApkCommand(logger: logger, verboseHelp: verboseHelp));
-    _addSubcommand(BuildAppBundleCommand(logger: logger, verboseHelp: verboseHelp));
-    _addSubcommand(BuildIOSCommand(logger: logger, verboseHelp: verboseHelp));
+    _addSubcommand(
+      BuildApkCommand(
+        androidBuilder: androidBuilder,
+        androidSdk: effectiveAndroidSdk,
+        logger: effectiveLogger,
+        verboseHelp: verboseHelp,
+      ),
+    );
+    _addSubcommand(
+      BuildAppBundleCommand(
+        androidBuilder: androidBuilder,
+        androidSdk: effectiveAndroidSdk,
+        logger: effectiveLogger,
+        verboseHelp: verboseHelp,
+      ),
+    );
+    _addSubcommand(BuildIOSCommand(logger: effectiveLogger, verboseHelp: verboseHelp));
     _addSubcommand(
       BuildIOSFrameworkCommand(
-        logger: logger,
-        buildSystem: buildSystem,
+        logger: effectiveLogger,
+        buildSystem: effectiveBuildSystem,
         verboseHelp: verboseHelp,
-        codesign: DarwinAddToAppCodesigning(
-          logger: logger,
-          xcodeCodeSigningSettings: XcodeCodeSigningSettings(
-            config: config,
-            logger: logger,
-            platform: platform,
-            processUtils: processUtils,
-            fileSystem: fileSystem,
-            fileSystemUtils: fileSystemUtils,
-            terminal: terminal,
-            plistParser: plistParser,
-          ),
-        ),
+        codesign: darwinAddToAppCodesigning,
       ),
     );
     _addSubcommand(
       BuildMacOSFrameworkCommand(
-        logger: logger,
-        buildSystem: buildSystem,
+        logger: effectiveLogger,
+        buildSystem: effectiveBuildSystem,
         verboseHelp: verboseHelp,
-        codesign: DarwinAddToAppCodesigning(
-          logger: logger,
-          xcodeCodeSigningSettings: XcodeCodeSigningSettings(
-            config: config,
-            logger: logger,
-            platform: platform,
-            processUtils: processUtils,
-            fileSystem: fileSystem,
-            fileSystemUtils: fileSystemUtils,
-            terminal: terminal,
-            plistParser: plistParser,
-          ),
-        ),
+        codesign: darwinAddToAppCodesigning,
       ),
     );
     _addSubcommand(
       BuildSwiftPackage(
-        logger: logger,
-        analytics: analytics,
-        artifacts: artifacts,
-        buildSystem: buildSystem,
-        cache: cache,
+        logger: effectiveLogger,
+        analytics: globals.analytics,
+        artifacts: effectiveArtifacts,
+        buildSystem: effectiveBuildSystem,
+        cache: effectiveCache,
         featureFlags: featureFlags,
-        fileSystem: fileSystem,
-        flutterVersion: flutterVersion,
-        platform: platform,
-        processManager: processManager,
-        templateRenderer: templateRenderer,
-        xcode: xcode,
-        codesign: DarwinAddToAppCodesigning(
-          logger: logger,
-          xcodeCodeSigningSettings: XcodeCodeSigningSettings(
-            config: config,
-            logger: logger,
-            platform: platform,
-            processUtils: processUtils,
-            fileSystem: fileSystem,
-            fileSystemUtils: fileSystemUtils,
-            terminal: terminal,
-            plistParser: plistParser,
-          ),
-        ),
+        fileSystem: effectiveFileSystem,
+        flutterVersion: effectiveFlutterVersion,
+        platform: effectivePlatform,
+        processManager: effectiveProcessManager,
+        templateRenderer: effectiveTemplateRenderer,
+        xcode: effectiveXcode,
+        codesign: darwinAddToAppCodesigning,
         verboseHelp: verboseHelp,
       ),
     );
 
-    _addSubcommand(BuildIOSArchiveCommand(logger: logger, verboseHelp: verboseHelp));
-    _addSubcommand(BuildBundleCommand(logger: logger, verboseHelp: verboseHelp));
+    _addSubcommand(BuildIOSArchiveCommand(logger: effectiveLogger, verboseHelp: verboseHelp));
+    _addSubcommand(BuildBundleCommand(logger: effectiveLogger, verboseHelp: verboseHelp));
     _addSubcommand(
-      BuildWebCommand(fileSystem: fileSystem, logger: logger, verboseHelp: verboseHelp),
+      BuildWebCommand(
+        fileSystem: effectiveFileSystem,
+        logger: effectiveLogger,
+        verboseHelp: verboseHelp,
+      ),
     );
-    _addSubcommand(BuildMacosCommand(logger: logger, verboseHelp: verboseHelp));
+    _addSubcommand(BuildMacosCommand(logger: effectiveLogger, verboseHelp: verboseHelp));
     _addSubcommand(
-      BuildLinuxCommand(logger: logger, operatingSystemUtils: osUtils, verboseHelp: verboseHelp),
+      BuildLinuxCommand(
+        logger: effectiveLogger,
+        operatingSystemUtils: effectiveOsUtils,
+        verboseHelp: verboseHelp,
+      ),
     );
     _addSubcommand(
-      BuildWindowsCommand(logger: logger, operatingSystemUtils: osUtils, verboseHelp: verboseHelp),
+      BuildWindowsCommand(
+        logger: effectiveLogger,
+        operatingSystemUtils: effectiveOsUtils,
+        verboseHelp: verboseHelp,
+      ),
     );
   }
 

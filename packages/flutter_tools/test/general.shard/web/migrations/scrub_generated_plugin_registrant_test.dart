@@ -33,13 +33,11 @@ void main() {
     late FileSystem fileSystem;
     late ProcessManager processManager;
     late BuildSystem buildSystem;
-    late BufferLogger logger;
 
     setUp(() {
       // Prepare environment overrides
       fileSystem = MemoryFileSystem.test();
       processManager = FakeProcessManager.any();
-      logger = BufferLogger.test();
 
       buildSystem = TestBuildSystem.all(BuildResult(success: true));
       // Write some initial state into our testing filesystem
@@ -98,23 +96,12 @@ void main() {
 
         await createTestCommandRunner(
           BuildCommand(
-            androidSdk: FakeAndroidSdk(),
+            toolContext: FakeToolContext(),
+            androidContext: FakeAndroidContext(),
+            appleContext: FakeAppleContext(),
             buildSystem: buildSystem,
-            fileSystem: fileSystem,
-            logger: logger,
             osUtils: FakeOperatingSystemUtils(),
-            config: FakeConfig(),
-            platform: FakePlatform(),
-            fileSystemUtils: FakeFileSystemUtils(),
-            terminal: FakeTerminal(),
-            plistParser: FakePlistParser(),
-            processUtils: FakeProcessUtils(),
-            processManager: FakeProcessManager.any(),
             templateRenderer: FakeTemplateRenderer(),
-            xcode: FakeXcode(),
-            artifacts: FakeArtifacts(),
-            cache: FakeCache(),
-            flutterVersion: FakeFlutterVersion(),
           ),
         ).run(<String>['build', 'web', '--no-pub']);
 
@@ -138,23 +125,12 @@ void main() {
 
         await createTestCommandRunner(
           BuildCommand(
-            androidSdk: FakeAndroidSdk(),
+            toolContext: FakeToolContext(),
+            androidContext: FakeAndroidContext(),
+            appleContext: FakeAppleContext(),
             buildSystem: buildSystem,
-            fileSystem: fileSystem,
-            logger: logger,
             osUtils: FakeOperatingSystemUtils(),
-            config: FakeConfig(),
-            platform: FakePlatform(),
-            fileSystemUtils: FakeFileSystemUtils(),
-            terminal: FakeTerminal(),
-            plistParser: FakePlistParser(),
-            processUtils: FakeProcessUtils(),
-            processManager: FakeProcessManager.any(),
             templateRenderer: FakeTemplateRenderer(),
-            xcode: FakeXcode(),
-            artifacts: FakeArtifacts(),
-            cache: FakeCache(),
-            flutterVersion: FakeFlutterVersion(),
           ),
         ).run(<String>['build', 'web', '--no-pub']);
 
@@ -180,23 +156,12 @@ void main() {
 
         await createTestCommandRunner(
           BuildCommand(
-            androidSdk: FakeAndroidSdk(),
+            toolContext: FakeToolContext(),
+            androidContext: FakeAndroidContext(),
+            appleContext: FakeAppleContext(),
             buildSystem: buildSystem,
-            fileSystem: fileSystem,
-            logger: logger,
             osUtils: FakeOperatingSystemUtils(),
-            config: FakeConfig(),
-            platform: FakePlatform(),
-            fileSystemUtils: FakeFileSystemUtils(),
-            terminal: FakeTerminal(),
-            plistParser: FakePlistParser(),
-            processUtils: FakeProcessUtils(),
-            processManager: FakeProcessManager.any(),
             templateRenderer: FakeTemplateRenderer(),
-            xcode: FakeXcode(),
-            artifacts: FakeArtifacts(),
-            cache: FakeCache(),
-            flutterVersion: FakeFlutterVersion(),
           ),
         ).run(<String>['build', 'web', '--no-pub']);
 
@@ -221,23 +186,12 @@ void main() {
 
         await createTestCommandRunner(
           BuildCommand(
-            androidSdk: FakeAndroidSdk(),
+            toolContext: FakeToolContext(),
+            androidContext: FakeAndroidContext(),
+            appleContext: FakeAppleContext(),
             buildSystem: buildSystem,
-            fileSystem: fileSystem,
-            logger: logger,
             osUtils: FakeOperatingSystemUtils(),
-            config: FakeConfig(),
-            platform: FakePlatform(),
-            fileSystemUtils: FakeFileSystemUtils(),
-            terminal: FakeTerminal(),
-            plistParser: FakePlistParser(),
-            processUtils: FakeProcessUtils(),
-            processManager: FakeProcessManager.any(),
             templateRenderer: FakeTemplateRenderer(),
-            xcode: FakeXcode(),
-            artifacts: FakeArtifacts(),
-            cache: FakeCache(),
-            flutterVersion: FakeFlutterVersion(),
           ),
         ).run(<String>['build', 'web', '--no-pub']);
 

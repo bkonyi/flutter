@@ -4,11 +4,14 @@
 
 import 'package:args/args.dart';
 import 'package:meta/meta.dart';
+import 'package:process/process.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
 import '../artifacts.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
+import '../base/logger.dart';
+import '../base/platform.dart';
 import '../build_info.dart';
 import '../build_system/build_system.dart';
 import '../build_system/depfile.dart';
@@ -21,10 +24,12 @@ import '../build_system/targets/linux.dart';
 import '../build_system/targets/macos.dart';
 import '../build_system/targets/windows.dart';
 import '../cache.dart';
+import '../context/tool_context.dart';
 import '../convert.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
 import '../runner/flutter_command.dart';
+import '../version.dart';
 
 /// All currently implemented targets.
 var _kDefaultTargets = <Target>[
@@ -94,9 +99,13 @@ var _kDefaultTargets = <Target>[
 /// Assemble provides a low level API to interact with the flutter tool build
 /// system.
 class AssembleCommand extends FlutterCommand {
-  AssembleCommand({bool verboseHelp = false, required BuildSystem buildSystem})
-    : _verboseHelp = verboseHelp,
-      _buildSystem = buildSystem {
+  AssembleCommand({
+    bool verboseHelp = false,
+    required BuildSystem buildSystem,
+    ToolContext? toolContext,
+  }) : _verboseHelp = verboseHelp,
+       _buildSystem = buildSystem,
+       _toolContext = toolContext {
     requiresPubspecYaml();
     argParser.addMultiOption(
       'define',
@@ -167,6 +176,7 @@ class AssembleCommand extends FlutterCommand {
   bool get hidden => !_verboseHelp;
 
   final BuildSystem _buildSystem;
+  final ToolContext? _toolContext;
 
   late final FlutterProject _flutterProject = FlutterProject.current();
 
@@ -266,8 +276,17 @@ class AssembleCommand extends FlutterCommand {
       );
     }
 
+    final FileSystem fs = _toolContext?.fs ?? globals.fs;
+    final Cache cache = _toolContext?.cache ?? globals.cache;
+    final Artifacts effectiveArtifacts = _toolContext?.artifacts ?? artifacts;
+    final Logger logger = _toolContext?.logger ?? globals.logger;
+    final ProcessManager processManager = _toolContext?.processManager ?? globals.processManager;
+    final Analytics analytics = globals.analytics;
+    final Platform platform = _toolContext?.platform ?? globals.platform;
+    final FlutterVersion flutterVersion = _toolContext?.flutterVersion ?? globals.flutterVersion;
+
     return Environment(
-      outputDir: globals.fs.directory(output),
+      outputDir: fs.directory(output),
       buildDir: _flutterProject.directory
           .childDirectory('.dart_tool')
           .childDirectory('flutter_build'),
@@ -275,15 +294,15 @@ class AssembleCommand extends FlutterCommand {
       packageConfigPath: packageConfigPath(),
       defines: _parseDefines([...stringsArg('define'), ...decodedDefines]),
       inputs: _parseDefines(stringsArg('input')),
-      cacheDir: globals.cache.getRoot(),
-      flutterRootDir: globals.fs.directory(Cache.flutterRoot),
-      artifacts: artifacts,
-      fileSystem: globals.fs,
-      logger: globals.logger,
-      processManager: globals.processManager,
-      analytics: globals.analytics,
-      platform: globals.platform,
-      engineVersion: artifacts.usesLocalArtifacts ? null : globals.flutterVersion.engineRevision,
+      cacheDir: cache.getRoot(),
+      flutterRootDir: fs.directory(Cache.flutterRoot),
+      artifacts: effectiveArtifacts,
+      fileSystem: fs,
+      logger: logger,
+      processManager: processManager,
+      analytics: analytics,
+      platform: platform,
+      engineVersion: effectiveArtifacts.usesLocalArtifacts ? null : flutterVersion.engineRevision,
       generateDartPluginRegistry: true,
     );
   }
@@ -375,18 +394,21 @@ class AssembleCommand extends FlutterCommand {
             : null,
       ),
     );
+    final FileSystem fs = _toolContext?.fs ?? globals.fs;
+    final Logger logger = _toolContext?.logger ?? globals.logger;
+
     if (!result.success) {
       for (final ExceptionMeasurement measurement in result.exceptions.values) {
-        if (measurement.fatal || globals.logger.isVerbose) {
-          globals.printError(
+        if (measurement.fatal || logger.isVerbose) {
+          logger.printError(
             'Target ${measurement.target} failed: ${measurement.exception}',
-            stackTrace: globals.logger.isVerbose ? measurement.stackTrace : null,
+            stackTrace: logger.isVerbose ? measurement.stackTrace : null,
           );
         }
       }
       throwToolExit('');
     }
-    globals.printTrace('build succeeded.');
+    logger.printTrace('build succeeded.');
 
     if (argumentResults.wasParsed('build-inputs')) {
       writeListIfChanged(result.inputFiles, stringArg('build-inputs')!);
@@ -395,13 +417,13 @@ class AssembleCommand extends FlutterCommand {
       writeListIfChanged(result.outputFiles, stringArg('build-outputs')!);
     }
     if (argumentResults.wasParsed('performance-measurement-file')) {
-      final File outFile = globals.fs.file(argumentResults['performance-measurement-file']);
+      final File outFile = fs.file(argumentResults['performance-measurement-file']);
       writePerformanceData(result.performance.values, outFile);
     }
     if (argumentResults.wasParsed('depfile')) {
-      final File depfileFile = globals.fs.file(stringArg('depfile'));
+      final File depfileFile = fs.file(stringArg('depfile'));
       final depfile = Depfile(result.inputFiles, result.outputFiles);
-      _environment.depFileService.writeToFile(depfile, globals.fs.file(depfileFile));
+      _environment.depFileService.writeToFile(depfile, fs.file(depfileFile));
     }
     return FlutterCommandResult.success();
   }

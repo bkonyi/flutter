@@ -5,6 +5,7 @@
 import 'package:unified_analytics/unified_analytics.dart';
 
 import '../android/android_builder.dart';
+import '../android/android_sdk.dart';
 import '../android/build_validation.dart';
 import '../android/gradle_utils.dart';
 import '../build_info.dart';
@@ -15,8 +16,14 @@ import '../runner/flutter_command.dart' show FlutterCommandResult;
 import 'build.dart';
 
 class BuildApkCommand extends BuildSubCommand {
-  BuildApkCommand({required super.logger, bool verboseHelp = false})
-    : super(verboseHelp: verboseHelp) {
+  BuildApkCommand({
+    required super.logger,
+    AndroidSdk? androidSdk,
+    AndroidBuilder? androidBuilder,
+    bool verboseHelp = false,
+  }) : _androidSdk = androidSdk,
+       _androidBuilder = androidBuilder,
+       super(verboseHelp: verboseHelp) {
     addTreeShakeIconsFlag();
     usesTargetOption();
     addBuildModeFlags(verboseHelp: verboseHelp);
@@ -117,9 +124,15 @@ class BuildApkCommand extends BuildSubCommand {
     );
   }
 
+  final AndroidSdk? _androidSdk;
+  final AndroidBuilder? _androidBuilder;
+
+  AndroidSdk? get _effectiveAndroidSdk => _androidSdk ?? globals.androidSdk;
+  AndroidBuilder? get _effectiveAndroidBuilder => _androidBuilder ?? androidBuilder;
+
   @override
   Future<FlutterCommandResult> runCommand() async {
-    if (globals.androidSdk == null) {
+    if (_effectiveAndroidSdk == null) {
       exitWithNoSdkMessage();
     }
     final BuildInfo buildInfo = await getBuildInfo();
@@ -132,7 +145,7 @@ class BuildApkCommand extends BuildSubCommand {
     validateBuild(androidBuildInfo);
     globals.terminal.usesTerminalUi = true;
     final FlutterProject project = FlutterProject.current();
-    await androidBuilder?.buildApk(
+    await _effectiveAndroidBuilder?.buildApk(
       project: project,
       target: targetFile,
       androidBuildInfo: androidBuildInfo,

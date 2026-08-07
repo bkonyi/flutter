@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:file/file.dart';
 import 'package:process/process.dart';
 
 import '../artifacts.dart';
 import '../base/bot_detector.dart';
 import '../base/config.dart';
+import '../base/file_system.dart';
 import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/os.dart';
@@ -121,4 +121,7 @@ class ToolContext {
 
   /// Centralized templates for user-facing status strings and error messages.
   final UserMessages userMessages;
+
+  /// Utility helpers for file system operations and paths.
+  FileSystemUtils get fileSystemUtils => FileSystemUtils(fileSystem: fs, platform: platform);
 }

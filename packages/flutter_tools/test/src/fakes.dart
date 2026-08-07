@@ -16,19 +16,26 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/base/time.dart';
+import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/context/android_context.dart';
+import 'package:flutter_tools/src/context/apple_context.dart';
+import 'package:flutter_tools/src/context/tool_context.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/version.dart';
+import 'package:process/process.dart';
 import 'package:test/fake.dart';
 
 /// Environment with DYLD_LIBRARY_PATH=/path/to/libraries
@@ -934,3 +941,107 @@ class FakeXcode extends Fake implements Xcode {}
 class FakeArtifacts extends Fake implements Artifacts {}
 
 class FakeCache extends Fake implements Cache {}
+
+class FakeToolContext extends Fake implements ToolContext {
+  FakeToolContext({
+    FileSystem? fs,
+    Logger? logger,
+    Platform? platform,
+    ProcessManager? processManager,
+    ProcessUtils? processUtils,
+    Config? config,
+    Artifacts? artifacts,
+    Cache? cache,
+    FlutterVersion? flutterVersion,
+    OperatingSystemUtils? os,
+    AnsiTerminal? terminal,
+    UserMessages? userMessages,
+  }) : _fs = fs,
+       _logger = logger,
+       _platform = platform,
+       _processManager = processManager,
+       _processUtils = processUtils,
+       _config = config,
+       _artifacts = artifacts,
+       _cache = cache,
+       _flutterVersion = flutterVersion,
+       _os = os,
+       _terminal = terminal,
+       _userMessages = userMessages;
+
+  final FileSystem? _fs;
+  final Logger? _logger;
+  final Platform? _platform;
+  final ProcessManager? _processManager;
+  final ProcessUtils? _processUtils;
+  final Config? _config;
+  final Artifacts? _artifacts;
+  final Cache? _cache;
+  final FlutterVersion? _flutterVersion;
+  final OperatingSystemUtils? _os;
+  final AnsiTerminal? _terminal;
+  final UserMessages? _userMessages;
+
+  @override
+  FileSystem get fs => _fs ?? globals.fs;
+
+  @override
+  Logger get logger => _logger ?? globals.logger;
+
+  @override
+  Platform get platform => _platform ?? globals.platform;
+
+  @override
+  ProcessManager get processManager => _processManager ?? globals.processManager;
+
+  @override
+  ProcessUtils get processUtils => _processUtils ?? globals.processUtils;
+
+  @override
+  Config get config => _config ?? globals.config;
+
+  @override
+  Artifacts get artifacts => _artifacts ?? globals.artifacts!;
+
+  @override
+  Cache get cache => _cache ?? globals.cache;
+
+  @override
+  FlutterVersion get flutterVersion => _flutterVersion ?? globals.flutterVersion;
+
+  @override
+  OperatingSystemUtils get os => _os ?? globals.os;
+
+  @override
+  AnsiTerminal get terminal => _terminal ?? globals.terminal;
+
+  @override
+  UserMessages get userMessages => _userMessages ?? globals.userMessages;
+
+  @override
+  FileSystemUtils get fileSystemUtils => FileSystemUtils(fileSystem: fs, platform: platform);
+}
+
+class FakeAndroidContext extends Fake implements AndroidContext {
+  FakeAndroidContext({AndroidSdk? androidSdk}) : _androidSdk = androidSdk;
+
+  final AndroidSdk? _androidSdk;
+
+  @override
+  AndroidSdk? get androidSdk => _androidSdk ?? globals.androidSdk;
+}
+
+class FakeAppleContext extends Fake implements AppleContext {
+  FakeAppleContext({Xcode? xcode, PlistParser? plistParser})
+    : _xcode = xcode,
+      _plistParser = plistParser;
+
+  final Xcode? _xcode;
+  final PlistParser? _plistParser;
+
+  @override
+  Xcode get xcode => _xcode ?? globals.xcode!;
+
+  @override
+  PlistParser get plistParser => _plistParser ?? globals.plistParser;
+}

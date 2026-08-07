@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import '../base/logger.dart';
 import '../globals.dart' as globals;
 import '../runner/flutter_command.dart';
 
 class GenerateCommand extends FlutterCommand {
-  GenerateCommand() {
+  GenerateCommand({Logger? logger}) : _logger = logger {
     usesTargetOption();
   }
+
+  final Logger? _logger;
+  Logger get _effectiveLogger => _logger ?? globals.logger;
+
   @override
   String get description => 'run code generators.';
 
@@ -20,7 +25,7 @@ class GenerateCommand extends FlutterCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
-    globals.printError(
+    _effectiveLogger.printError(
       '"flutter generate" is deprecated, use "dart run build_runner" instead. '
       'The following dependencies must be added to dev_dependencies in pubspec.yaml:\n'
       'build_runner: ^1.10.0\n'
