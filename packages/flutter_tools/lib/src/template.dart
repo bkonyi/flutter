@@ -119,13 +119,26 @@ class Template {
       }
     }
 
+    final String templatesDir = fileSystem.path.join(
+      Cache.flutterRoot!,
+      'packages',
+      'flutter_tools',
+      'templates',
+    );
+    final String templatesDirPath = fileSystem.path.absolute(templatesDir);
+
     final templateFiles = <FileSystemEntity, Directory>{
       for (final Directory sourceDirectory in templateSources)
         for (final FileSystemEntity entity in sourceDirectory.listSync(recursive: true))
           entity: sourceDirectory,
     };
     for (final FileSystemEntity entity in templateFiles.keys.whereType<File>()) {
-      if (_templateManifest.isNotEmpty &&
+      final Directory sourceDirectory = templateFiles[entity]!;
+      final bool isInternal =
+          fileSystem.path.isWithin(templatesDirPath, sourceDirectory.absolute.path) ||
+          sourceDirectory.absolute.path == templatesDirPath;
+      if (isInternal &&
+          _templateManifest.isNotEmpty &&
           !_templateManifest.contains(Uri.file(entity.absolute.path))) {
         _logger.printTrace('Skipping ${entity.absolute.path}, missing from the template manifest.');
         // Skip stale files in the flutter_tools directory.
@@ -143,6 +156,24 @@ class Template {
         _templateFilePaths[relativePath] = fileSystem.path.absolute(entity.path);
       }
     }
+  }
+
+  static Future<Template> fromDirectories(
+    List<Directory> templateSources, {
+    List<Directory> imageSourceDirectories = const <Directory>[],
+    required FileSystem fileSystem,
+    required Logger logger,
+    required TemplateRenderer templateRenderer,
+    Set<Uri>? templateManifest,
+  }) async {
+    return Template._(
+      templateSources,
+      imageSourceDirectories,
+      fileSystem: fileSystem,
+      logger: logger,
+      templateRenderer: templateRenderer,
+      templateManifest: templateManifest,
+    );
   }
 
   static Future<Template> fromName(

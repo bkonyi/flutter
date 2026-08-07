@@ -16,6 +16,8 @@ import '../src/common.dart';
 import '../src/context.dart';
 
 void main() {
+  Cache.flutterRoot = '/flutter';
+
   testWithoutContext('Template constructor throws ToolExit when source directory is missing', () {
     final handler = FileExceptionHandler();
     final fileSystem = MemoryFileSystem.test(opHandle: handler.opHandle);
