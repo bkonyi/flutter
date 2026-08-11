@@ -17,6 +17,7 @@ class ExtensionBuildContext {
     required this.outputDir,
     required this.buildDir,
     required this.resolvedArtifacts,
+    required this.plugins,
   });
 
   /// The absolute path to the root directory of the Flutter project being built.
@@ -38,6 +39,9 @@ class ExtensionBuildContext {
   ///
   /// Keys correspond to `Artifact` or `HostArtifact` name values.
   final Map<String, String> resolvedArtifacts;
+
+  /// A list of plugins enabled for the build.
+  final List<ExtensionPlugin> plugins;
 }
 
 /// Abstract target that encapsulates both metadata and build logic.
@@ -50,6 +54,9 @@ abstract class ExtensionTarget extends Target {
     this.isTopLevel = true,
     this.outputDir = '{BUILD_DIR}',
   });
+
+  @override
+  String? get pluginPlatformKey => null;
 
   /// The output directory pattern for this target.
   ///
@@ -120,6 +127,7 @@ abstract base class BuildService extends ToolExtensionService {
             inputs: target.inputs,
             outputs: target.outputs,
             outputDir: target.outputDir,
+            pluginPlatformKey: target.pluginPlatformKey,
           ).toMap(),
         )
         .toList();
@@ -135,6 +143,7 @@ abstract base class BuildService extends ToolExtensionService {
       'buildDir': final String buildDir,
       'resolvedArtifacts': final Map<Object?, Object?> resolvedArtifactsRaw,
     }) {
+      final List<Object?> pluginsRaw = (params['plugins'] as List<Object?>?) ?? <Object?>[];
       ExtensionTarget? target;
       for (final ExtensionTarget t in targets) {
         if (t.name == targetName) {
@@ -151,6 +160,9 @@ abstract base class BuildService extends ToolExtensionService {
       );
 
       try {
+        final List<ExtensionPlugin> plugins = pluginsRaw
+            .map((dynamic e) => ExtensionPlugin.fromJson(e as Map<String, Object?>))
+            .toList();
         final context = ExtensionBuildContext(
           projectRoot: projectRoot,
           mainPath: mainPath,
@@ -158,6 +170,7 @@ abstract base class BuildService extends ToolExtensionService {
           outputDir: outputDir,
           buildDir: buildDir,
           resolvedArtifacts: resolvedArtifacts,
+          plugins: plugins,
         );
         final Map<String, Object?> buildResultMap = await target.build(context);
         return <String, Object?>{'success': true, ...buildResultMap};
@@ -185,6 +198,9 @@ abstract base class BuildService extends ToolExtensionService {
     }
     if (params['resolvedArtifacts'] is! Map) {
       throw RpcException.invalidParams('Missing or invalid "resolvedArtifacts" parameter.');
+    }
+    if (params['plugins'] is! List) {
+      throw RpcException.invalidParams('Missing or invalid "plugins" parameter.');
     }
     throw RpcException.invalidParams('Invalid build parameters.');
   }

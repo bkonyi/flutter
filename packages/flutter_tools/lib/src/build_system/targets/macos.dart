@@ -583,16 +583,8 @@ class DebugMacOSBundleFlutterAssets extends MacOSBundleFlutterAssets {
   List<Source> get inputs => <Source>[
     ...super.inputs,
     const Source.pattern('{BUILD_DIR}/app.dill'),
-    const Source.artifact(
-      Artifact.isolateSnapshotData,
-      platform: 'darwin',
-      mode: BuildMode.debug,
-    ),
-    const Source.artifact(
-      Artifact.vmSnapshotData,
-      platform: 'darwin',
-      mode: BuildMode.debug,
-    ),
+    const Source.artifact(Artifact.isolateSnapshotData, platform: 'darwin', mode: BuildMode.debug),
+    const Source.artifact(Artifact.vmSnapshotData, platform: 'darwin', mode: BuildMode.debug),
   ];
 
   @override

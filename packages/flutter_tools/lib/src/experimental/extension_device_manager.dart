@@ -11,12 +11,12 @@ import '../application_package.dart';
 import '../artifacts.dart';
 import '../base/file_system.dart';
 import '../base/logger.dart';
-import '../base/platform.dart';
 import '../build_info.dart';
 import '../build_system/targets/extension.dart';
-import '../cache.dart';
 import '../device.dart';
 import '../device_port_forwarder.dart';
+import '../flutter_plugins.dart';
+import '../plugins.dart';
 import '../project.dart';
 import 'extension_discovery.dart';
 import 'extension_manager.dart';
@@ -70,15 +70,6 @@ final class ExtensionDeviceClient extends DeviceService {
     );
     return result as String?;
   }
-
-  @override
-  Future<bool> stopApp({required String deviceId, required String executablePath}) async {
-    final Object? result = await connection.sendRequest(
-      DeviceService.stopAppMethod,
-      <String, Object?>{'deviceId': deviceId, 'executablePath': executablePath},
-    );
-    return result as bool? ?? false;
-  }
 }
 
 /// A host-side [DeviceDiscovery] mechanism that discovers devices registered by active extensions.
@@ -89,22 +80,16 @@ class ExtensionDeviceDiscovery extends PollingDeviceDiscovery {
     required Logger logger,
     required FileSystem fileSystem,
     required Artifacts artifacts,
-    required Cache cache,
-    required Platform platform,
   }) : _extensionManager = extensionManager,
        _logger = logger,
        _fileSystem = fileSystem,
        _artifacts = artifacts,
-       _cache = cache,
-       _platform = platform,
        super('tool_extension');
 
   final ExtensionManager _extensionManager;
   final Logger _logger;
   final FileSystem _fileSystem;
   final Artifacts _artifacts;
-  final Cache _cache;
-  final Platform _platform;
 
   @override
   bool get supportsPlatform => true;
@@ -140,8 +125,6 @@ class ExtensionDeviceDiscovery extends PollingDeviceDiscovery {
                   targetDevice: targetDevice,
                   connection: service.connection,
                   artifacts: _artifacts,
-                  cache: _cache,
-                  platform: _platform,
                 ),
               )
               .toList();
@@ -173,14 +156,10 @@ class ExtensionBackedDevice extends Device {
     required TargetDevice targetDevice,
     required this.connection,
     required Artifacts artifacts,
-    required Cache cache,
-    required Platform platform,
   }) : _targetDevice = targetDevice,
        _logger = logger,
        _fileSystem = fileSystem,
        _artifacts = artifacts,
-       _cache = cache,
-       _platform = platform,
        super(
          targetDevice.id,
          category: Category.fromString(targetDevice.category) ?? Category.desktop,
@@ -193,9 +172,6 @@ class ExtensionBackedDevice extends Device {
   final Logger _logger;
   final FileSystem _fileSystem;
   final Artifacts _artifacts;
-  final Cache _cache;
-  final Platform _platform;
-  final Map<String, String> _launchedExecutablePaths = <String, String>{};
 
   @override
   String get name => _targetDevice.name;
@@ -205,9 +181,6 @@ class ExtensionBackedDevice extends Device {
 
   @override
   bool isSupportedForProject(FlutterProject project) => _targetDevice.isSupportedForProject;
-
-  @override
-  Future<CpuArch> get cpuArch async => CpuArch.unknown;
 
   @override
   Future<String> get sdkNameAndVersion async =>
@@ -235,6 +208,9 @@ class ExtensionBackedDevice extends Device {
 
   @override
   Future<bool> get isLocalEmulator async => false;
+
+  @override
+  Future<CpuArch> get cpuArch async => CpuArch.unknown;
 
   @override
   Future<String?> get emulatorId async => null;
@@ -323,34 +299,26 @@ class ExtensionBackedDevice extends Device {
           input.accept(resolver);
         }
         resolvedArtifacts.addAll(resolver.resolvedArtifacts);
+      }
 
-        final Set<DevelopmentArtifact> requiredDevArtifacts =
-            _mapArtifactNamesToDevelopmentArtifacts(resolvedArtifacts.keys);
-        try {
-          final platformVal = TargetPlatform.fromName(matchedTarget.targetPlatform);
-          final DevelopmentArtifact? platformDevArtifact = _artifactFromTargetPlatform(platformVal);
-          if (platformDevArtifact != null) {
-            requiredDevArtifacts.add(platformDevArtifact);
-          }
-        } on Object catch (_) {
-          // Ignore if TargetPlatform.fromName fails.
-        }
+      final FlutterProject project = FlutterProject.fromDirectory(
+        _fileSystem.directory(projectDirectory),
+      );
+      final String platformName = _targetDevice.targetPlatform ?? _targetDevice.platformType;
 
-        if (requiredDevArtifacts.isNotEmpty) {
-          _logger.printTrace(
-            'Pre-downloading artifacts for extension build target: $requiredDevArtifacts',
+      final String pluginPlatformKey = matchedTarget?.pluginPlatformKey ?? platformName;
+      final plugins = <ExtensionPlugin>[];
+      await refreshPluginsList(project);
+      final List<Plugin> allPlugins = await findPlugins(project);
+      final List<Plugin> resolved = resolvePluginImplementationsForPlatform(
+        allPlugins,
+        pluginPlatformKey,
+      );
+      for (final p in resolved) {
+        if (p.platforms[pluginPlatformKey] case final platformConfig?) {
+          plugins.add(
+            ExtensionPlugin(name: p.name, path: p.path, configuration: platformConfig.toMap()),
           );
-          final shouldLock = _platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true';
-          if (shouldLock) {
-            await _cache.lock();
-          }
-          try {
-            await _cache.updateAll(requiredDevArtifacts);
-          } finally {
-            if (shouldLock) {
-              _cache.releaseLock();
-            }
-          }
         }
       }
 
@@ -363,6 +331,7 @@ class ExtensionBackedDevice extends Device {
             'outputDir': resolvedOutputDir,
             'buildDir': _fileSystem.path.join(projectDirectory, '.dart_tool', 'flutter_build'),
             'resolvedArtifacts': resolvedArtifacts,
+            'plugins': plugins.map((ExtensionPlugin p) => p.toMap()).toList(),
           }, const Duration(minutes: 5));
 
       final buildResultMap = buildResult! as Map<String, Object?>;
@@ -370,9 +339,6 @@ class ExtensionBackedDevice extends Device {
 
       if (executablePath == null) {
         return LaunchResult.failed();
-      }
-      if (package != null) {
-        _launchedExecutablePaths[package.id] = executablePath;
       }
 
       final Object? launchResult = await connection.sendRequest(
@@ -446,88 +412,11 @@ class ExtensionBackedDevice extends Device {
   }
 
   @override
-  Future<bool> stopApp(ApplicationPackage? app, {String? userIdentifier}) async {
-    if (app == null) {
-      return false;
-    }
-    final String? executablePath = _launchedExecutablePaths[app.id];
-    if (executablePath == null) {
-      _logger.printTrace(
-        'ExtensionBackedDevice.stopApp: No launched executable path found for ${app.id}',
-      );
-      return false;
-    }
-    try {
-      final Object? result = await connection.sendRequest(
-        DeviceService.stopAppMethod,
-        <String, Object?>{'deviceId': id, 'executablePath': executablePath},
-      );
-      _launchedExecutablePaths.remove(app.id);
-      return result as bool? ?? false;
-    } on Object catch (e) {
-      _logger.printTrace('Failed to stop app via extension: $e');
-      return false;
-    }
-  }
+  Future<bool> stopApp(ApplicationPackage? app, {String? userIdentifier}) async => true;
 
   @override
   Future<bool> uninstallApp(ApplicationPackage app, {String? userIdentifier}) async => true;
 
   @override
   Future<bool> isAppInstalled(ApplicationPackage app, {String? userIdentifier}) async => false;
-
-  Set<DevelopmentArtifact> _mapArtifactNamesToDevelopmentArtifacts(Iterable<String> artifactNames) {
-    final requiredDevArtifacts = <DevelopmentArtifact>{};
-    for (final artifactName in artifactNames) {
-      switch (artifactName) {
-        case 'linuxDesktopPath':
-        case 'linuxHeaders':
-          requiredDevArtifacts.add(DevelopmentArtifact.linux);
-        case 'windowsDesktopPath':
-        case 'windowsCppClientWrapper':
-          requiredDevArtifacts.add(DevelopmentArtifact.windows);
-        case 'flutterMacOSFramework':
-        case 'flutterMacOSFrameworkDsym':
-        case 'flutterMacOSXcframework':
-          requiredDevArtifacts.add(DevelopmentArtifact.macOS);
-        case 'flutterFramework':
-        case 'flutterFrameworkDsym':
-        case 'flutterXcframework':
-        case 'ios-sdk':
-          requiredDevArtifacts.add(DevelopmentArtifact.iOS);
-        case 'icuData':
-          requiredDevArtifacts.add(DevelopmentArtifact.universal);
-      }
-    }
-    return requiredDevArtifacts;
-  }
-
-  DevelopmentArtifact? _artifactFromTargetPlatform(TargetPlatform targetPlatform) {
-    switch (targetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.android_arm:
-      case TargetPlatform.android_arm64:
-      case TargetPlatform.android_x64:
-        return DevelopmentArtifact.androidGenSnapshot;
-      case TargetPlatform.web_javascript:
-        return DevelopmentArtifact.web;
-      case TargetPlatform.ios:
-        return DevelopmentArtifact.iOS;
-      case TargetPlatform.darwin:
-        return DevelopmentArtifact.macOS;
-      case TargetPlatform.windows_x64:
-      case TargetPlatform.windows_arm64:
-        return DevelopmentArtifact.windows;
-      case TargetPlatform.linux_x64:
-      case TargetPlatform.linux_arm64:
-      case TargetPlatform.linux_riscv64:
-        return DevelopmentArtifact.linux;
-      case TargetPlatform.fuchsia_arm64:
-      case TargetPlatform.fuchsia_x64:
-        return null;
-      case TargetPlatform.tester:
-      case TargetPlatform.unsupported:
-        return null;
-    }
-  }
 }

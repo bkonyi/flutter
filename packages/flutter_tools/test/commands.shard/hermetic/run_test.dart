@@ -30,7 +30,7 @@ import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/web/compile.dart';
 import 'package:flutter_tools/src/web/web_runner.dart';
-import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
+import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/unified_analytics.dart' as analytics;
 import 'package:vm_service/vm_service.dart';
@@ -61,7 +61,7 @@ void main() {
     testUsingContext(
       'fails when target not found',
       () async {
-        final command = RunCommand(cache: globals.cache, platform: globals.platform);
+        final command = RunCommand();
         expect(
           () => createTestCommandRunner(command).run(<String>['run', '-t', 'abc123', '--no-pub']),
           throwsA(
@@ -95,7 +95,7 @@ void main() {
         fileSystem.file('lib/main.dart').createSync(recursive: true);
         fileSystem.currentDirectory = fileSystem.directory('a/b/c')..createSync(recursive: true);
 
-        final command = RunCommand(cache: globals.cache, platform: globals.platform);
+        final command = RunCommand();
         await expectLater(
           () => createTestCommandRunner(command).run(<String>['run', '--no-pub']),
           throwsToolExit(),
@@ -119,7 +119,7 @@ void main() {
         fileSystem.currentDirectory = fileSystem.directory('a/b/c')..createSync(recursive: true);
         fileSystem.file('lib/main.dart').createSync(recursive: true);
 
-        final command = RunCommand(cache: globals.cache, platform: globals.platform);
+        final command = RunCommand();
         await expectLater(
           () => createTestCommandRunner(command).run(<String>['run', '--no-pub']),
           throwsToolExit(message: 'No pubspec.yaml file found'),
@@ -164,7 +164,7 @@ void main() {
         'prebuiltApplicationBinaryPath is set when --use-application-binary is provided',
         () async {
           testDeviceManager.devices = <Device>[FakeDevice()];
-          final RunCommand command = TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform);
+          final RunCommand command = TestRunCommandThatOnlyValidates();
           final CommandRunner<void> runner = createTestCommandRunner(command);
           await runner.run(<String>['run', '--no-pub', '--use-application-binary=path/to/binary']);
           expect(command.prebuiltApplicationBinaryPath, 'path/to/binary');
@@ -179,7 +179,7 @@ void main() {
       testUsingContext(
         'exits with a user message when no supported devices attached',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           testDeviceManager.devices = <Device>[];
 
           await expectLater(
@@ -203,7 +203,7 @@ void main() {
       testUsingContext(
         'exits and lists available devices when specified device not found',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           final device = FakeDevice(isLocalEmulator: true);
           testDeviceManager
             ..devices = <Device>[device]
@@ -240,7 +240,7 @@ void main() {
 
           testDeviceManager.devices = <Device>[device];
 
-          final command = TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform);
+          final command = TestRunCommandThatOnlyValidates();
           await expectLater(
             createTestCommandRunner(
               command,
@@ -267,7 +267,7 @@ void main() {
 
           testDeviceManager.devices = <Device>[device];
 
-          final command = TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform);
+          final command = TestRunCommandThatOnlyValidates();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--device-user', '10']);
@@ -285,7 +285,7 @@ void main() {
       testUsingContext(
         'shows unsupported devices when no supported devices are found',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           final mockDevice = FakeDevice(
             targetPlatform: TargetPlatform.android_arm,
             isLocalEmulator: true,
@@ -343,7 +343,7 @@ void main() {
           final deviceWithFlavorSupport = FakeDevice(supportsFlavors: true);
           testDeviceManager.devices = <Device>[deviceWithoutFlavorSupport, deviceWithFlavorSupport];
 
-          await createTestCommandRunner(TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform)).run(runCommand);
+          await createTestCommandRunner(TestRunCommandThatOnlyValidates()).run(runCommand);
 
           expect(
             logger.warningText,
@@ -366,7 +366,7 @@ void main() {
       testUsingContext(
         'forwards --uninstall-only to DebuggingOptions',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           final mockDevice = FakeDevice(sdkNameAndVersion: 'iOS 13')..startAppSuccess = false;
 
           testDeviceManager.devices = <Device>[mockDevice];
@@ -399,7 +399,7 @@ void main() {
       testUsingContext(
         'passes device target platform to analytics',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           final mockDevice = FakeDevice(sdkNameAndVersion: 'iOS 13')..startAppSuccess = false;
 
           testDeviceManager.devices = <Device>[mockDevice];
@@ -457,7 +457,7 @@ void main() {
               .childDirectory('ios')
               .childFile('AppDelegate.swift')
               .createSync(recursive: true);
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           final mockDevice = FakeDevice(sdkNameAndVersion: 'iOS 13')..startAppSuccess = false;
 
           testDeviceManager.devices = <Device>[mockDevice];
@@ -504,7 +504,7 @@ void main() {
         testUsingContext(
           'can pass --device-user',
           () async {
-            final command = DaemonCapturingRunCommand(cache: globals.cache, platform: globals.platform);
+            final command = DaemonCapturingRunCommand();
             final device = FakeDevice(platformType: PlatformType.android);
             testDeviceManager.devices = <Device>[device];
 
@@ -543,7 +543,7 @@ void main() {
           testUsingContext(
             'can pass --web-define',
             () async {
-              final command = RunCommand(cache: globals.cache, platform: globals.platform);
+              final command = RunCommand();
               final device = FakeDevice(
                 platformType: PlatformType.web,
                 targetPlatform: TargetPlatform.web_javascript,
@@ -580,7 +580,7 @@ void main() {
         testUsingContext(
           'can disable devtools with --no-devtools',
           () async {
-            final command = DaemonCapturingRunCommand(cache: globals.cache, platform: globals.platform);
+            final command = DaemonCapturingRunCommand();
             final device = FakeDevice();
             testDeviceManager.devices = <Device>[device];
 
@@ -606,16 +606,17 @@ void main() {
     });
 
     group('Fatal Logs', () {
+      late TestRunCommandWithFakeResidentRunner command;
       late MemoryFileSystem fs;
 
       setUp(() {
+        command = TestRunCommandWithFakeResidentRunner()..fakeResidentRunner = FakeResidentRunner();
         fs = MemoryFileSystem.test();
       });
 
       testUsingContext(
         "doesn't fail if --fatal-warnings specified and no warnings occur",
         () async {
-          final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform)..fakeResidentRunner = FakeResidentRunner();
           try {
             await createTestCommandRunner(
               command,
@@ -633,7 +634,6 @@ void main() {
       testUsingContext(
         "doesn't fail if --fatal-warnings not specified",
         () async {
-          final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform)..fakeResidentRunner = FakeResidentRunner();
           testLogger.printWarning('Warning: Mild annoyance Will Robinson!');
           try {
             await createTestCommandRunner(command).run(<String>['run', '--no-pub', '--no-hot']);
@@ -650,7 +650,6 @@ void main() {
       testUsingContext(
         'fails if --fatal-warnings specified and warnings emitted',
         () async {
-          final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform)..fakeResidentRunner = FakeResidentRunner();
           testLogger.printWarning('Warning: Mild annoyance Will Robinson!');
           await expectLater(
             createTestCommandRunner(
@@ -671,7 +670,6 @@ void main() {
       testUsingContext(
         'fails if --fatal-warnings specified and errors emitted',
         () async {
-          final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform)..fakeResidentRunner = FakeResidentRunner();
           testLogger.printError('Error: Danger Will Robinson!');
           await expectLater(
             createTestCommandRunner(
@@ -698,7 +696,7 @@ void main() {
         ];
 
         expect(
-          await RunCommand(cache: globals.cache, platform: globals.platform).requiredArtifacts,
+          await RunCommand().requiredArtifacts,
           unorderedEquals(<DevelopmentArtifact>{
             DevelopmentArtifact.universal,
             DevelopmentArtifact.androidGenSnapshot,
@@ -708,7 +706,7 @@ void main() {
         testDeviceManager.devices = <Device>[FakeDevice()];
 
         expect(
-          await RunCommand(cache: globals.cache, platform: globals.platform).requiredArtifacts,
+          await RunCommand().requiredArtifacts,
           unorderedEquals(<DevelopmentArtifact>{
             DevelopmentArtifact.universal,
             DevelopmentArtifact.iOS,
@@ -721,7 +719,7 @@ void main() {
         ];
 
         expect(
-          await RunCommand(cache: globals.cache, platform: globals.platform).requiredArtifacts,
+          await RunCommand().requiredArtifacts,
           unorderedEquals(<DevelopmentArtifact>{
             DevelopmentArtifact.universal,
             DevelopmentArtifact.iOS,
@@ -734,7 +732,7 @@ void main() {
         ];
 
         expect(
-          await RunCommand(cache: globals.cache, platform: globals.platform).requiredArtifacts,
+          await RunCommand().requiredArtifacts,
           unorderedEquals(<DevelopmentArtifact>{
             DevelopmentArtifact.universal,
             DevelopmentArtifact.web,
@@ -759,7 +757,7 @@ void main() {
               platformType: PlatformType.android,
             ),
           ];
-          final command = TestRunCommandForUsageValues(cache: globals.cache, platform: globals.platform, devices: devices);
+          final command = TestRunCommandForUsageValues(devices: devices);
           final CommandRunner<void> runner = createTestCommandRunner(command);
           try {
             // run the command so that CLI args are parsed
@@ -809,7 +807,7 @@ void main() {
         'with only iOS usb device',
         () async {
           final devices = <Device>[FakeIOSDevice(sdkNameAndVersion: 'iOS 16.2')];
-          final command = TestRunCommandForUsageValues(cache: globals.cache, platform: globals.platform, devices: devices);
+          final command = TestRunCommandForUsageValues(devices: devices);
           final CommandRunner<void> runner = createTestCommandRunner(command);
           try {
             // run the command so that CLI args are parsed
@@ -865,7 +863,7 @@ void main() {
               sdkNameAndVersion: 'iOS 16.2',
             ),
           ];
-          final command = TestRunCommandForUsageValues(cache: globals.cache, platform: globals.platform, devices: devices);
+          final command = TestRunCommandForUsageValues(devices: devices);
           final CommandRunner<void> runner = createTestCommandRunner(command);
           try {
             // run the command so that CLI args are parsed
@@ -922,7 +920,7 @@ void main() {
             ),
             FakeIOSDevice(sdkNameAndVersion: 'iOS 16.2'),
           ];
-          final command = TestRunCommandForUsageValues(cache: globals.cache, platform: globals.platform, devices: devices);
+          final command = TestRunCommandForUsageValues(devices: devices);
           final CommandRunner<void> runner = createTestCommandRunner(command);
           try {
             // run the command so that CLI args are parsed
@@ -997,7 +995,7 @@ void main() {
       testUsingContext(
         'can accept simple, valid values',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--no-hot', '--web-header', 'foo=bar']);
@@ -1021,7 +1019,7 @@ void main() {
       testUsingContext(
         'throws a ToolExit when no value is provided',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(
               command,
@@ -1046,7 +1044,7 @@ void main() {
           fileSystem.file('pubspec.yaml').createSync();
           fileSystem.file('.dart_tool/package_config.json').createSync(recursive: true);
 
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(command).run(<String>[
               'run',
@@ -1073,7 +1071,7 @@ void main() {
         'throws a ToolExit when using --wasm on a non-web platform',
         () async {
           testDeviceManager.devices = <Device>[FakeDevice(platformType: PlatformType.android)];
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(
               command,
@@ -1094,7 +1092,7 @@ void main() {
       testUsingContext(
         'throws a ToolExit when using the skwasm renderer without --wasm',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(command).run(<String>[
               'run',
@@ -1118,7 +1116,7 @@ void main() {
       testUsingContext(
         'accepts headers with commas in them',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>[
             'run',
             '--no-pub',
@@ -1176,7 +1174,7 @@ server:
   host: confighost
   port: 9000
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--no-hot', '--web-port=8080']);
@@ -1203,7 +1201,7 @@ server:
   host: confighost
   port: 9000
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--no-hot', '--web-hostname=clihost']);
@@ -1235,7 +1233,7 @@ server:
     - name: X-Shared-Header
       value: from-config
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>[
             'run',
             '--no-pub',
@@ -1273,7 +1271,7 @@ server:
   host: confighost
   port: 9000
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>['run', '--no-pub', '--no-hot']);
 
           expect(fakeWebRunnerFactory.lastOptions, isNotNull);
@@ -1302,7 +1300,7 @@ server:
     cert-path: /config/cert.pem
     cert-key-path: /config/key.pem
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>[
             'run',
             '--no-pub',
@@ -1344,7 +1342,7 @@ server:
     cert-path: /config/cert.pem
     cert-key-path: /config/key.pem
 ''');
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--no-hot', '--web-tls-cert-path=/cli/cert.pem']);
@@ -1377,7 +1375,7 @@ server:
         'CLI TLS args work without web_dev_config.yaml file',
         () async {
           // No web_dev_config.yaml file exists
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>[
             'run',
             '--no-pub',
@@ -1436,7 +1434,7 @@ server:
       testUsingContext(
         'passes base-href to WebDevServerConfig',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(
             command,
           ).run(<String>['run', '--no-pub', '--no-hot', '--base-href=/preview/']);
@@ -1458,7 +1456,7 @@ server:
       testUsingContext(
         'throws ToolExit when base-href does not start with /',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(
               command,
@@ -1479,7 +1477,7 @@ server:
       testUsingContext(
         'throws ToolExit when base-href does not end with /',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await expectLater(
             () => createTestCommandRunner(
               command,
@@ -1500,7 +1498,7 @@ server:
       testUsingContext(
         'base-href defaults to null when not provided',
         () async {
-          final command = RunCommand(cache: globals.cache, platform: globals.platform);
+          final command = RunCommand();
           await createTestCommandRunner(command).run(<String>['run', '--no-pub', '--no-hot']);
 
           expect(fakeWebRunnerFactory.lastOptions, isNotNull);
@@ -1530,7 +1528,7 @@ server:
       'Flutter run sets terminal singleCharMode to false on exit',
       () async {
         final residentRunner = FakeResidentRunner();
-        final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform);
+        final command = TestRunCommandWithFakeResidentRunner();
         command.fakeResidentRunner = residentRunner;
 
         await createTestCommandRunner(command).run(<String>['run', '--no-pub']);
@@ -1553,7 +1551,7 @@ server:
       () async {
         fakeTerminal.hasStdin = false;
         final residentRunner = FakeResidentRunner();
-        final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform);
+        final command = TestRunCommandWithFakeResidentRunner();
         command.fakeResidentRunner = residentRunner;
 
         try {
@@ -1581,7 +1579,7 @@ server:
         RPCErrorKind.kServiceDisappeared.code,
         '',
       );
-      final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform);
+      final command = TestRunCommandWithFakeResidentRunner();
       command.fakeResidentRunner = residentRunner;
 
       await expectToolExitLater(
@@ -1616,7 +1614,7 @@ server:
         RPCErrorKind.kServiceDisappeared.code,
         '',
       );
-      final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform);
+      final command = TestRunCommandWithFakeResidentRunner();
       command.fakeResidentRunner = residentRunner;
 
       await expectToolExitLater(
@@ -1651,7 +1649,7 @@ server:
         RPCErrorKind.kInvalidParams.code,
         '',
       );
-      final command = TestRunCommandWithFakeResidentRunner(cache: globals.cache, platform: globals.platform);
+      final command = TestRunCommandWithFakeResidentRunner();
       command.fakeResidentRunner = residentRunner;
 
       await expectLater(
@@ -1669,7 +1667,7 @@ server:
   testUsingContext(
     'Configures web connection options to use web sockets by default',
     () async {
-      final command = RunCommand(cache: globals.cache, platform: globals.platform);
+      final command = RunCommand();
       await expectLater(
         () => createTestCommandRunner(command).run(<String>['run', '--no-pub']),
         throwsToolExit(),
@@ -1691,7 +1689,7 @@ server:
   testUsingContext(
     'flags propagate to debugging options',
     () async {
-      final command = RunCommand(cache: globals.cache, platform: globals.platform);
+      final command = RunCommand();
       await expectLater(
         () => createTestCommandRunner(command).run(<String>[
           'run',
@@ -1751,7 +1749,7 @@ server:
   testUsingContext(
     'usingCISystem can also be set by environment LUCI_CI',
     () async {
-      final command = RunCommand(cache: globals.cache, platform: globals.platform);
+      final command = RunCommand();
       await expectLater(
         () => createTestCommandRunner(command).run(<String>['run']),
         throwsToolExit(),
@@ -1772,7 +1770,7 @@ server:
   testUsingContext(
     'wasm mode selects skwasm renderer by default',
     () async {
-      final command = RunCommand(cache: globals.cache, platform: globals.platform);
+      final command = RunCommand();
       await expectLater(
         () => createTestCommandRunner(command).run(<String>['run', '-d chrome', '--wasm']),
         throwsToolExit(),
@@ -1793,7 +1791,7 @@ server:
   testUsingContext(
     'fails when "--web-launch-url" is not supported',
     () async {
-      final command = RunCommand(cache: globals.cache, platform: globals.platform);
+      final command = RunCommand();
       await expectLater(
         () => createTestCommandRunner(
           command,
@@ -1845,7 +1843,7 @@ server:
       'no warning triggered when web hot reload flag not present',
       () async {
         final CommandRunner<void> runner = createTestCommandRunner(
-          TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform),
+          TestRunCommandThatOnlyValidates(),
         );
         await runner.run(<String>['run']);
         expect(testLogger.warningText, isEmpty);
@@ -1863,7 +1861,7 @@ server:
       'warning triggered when web hot reload flag is passed (enabled)',
       () async {
         final CommandRunner<void> runner = createTestCommandRunner(
-          TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform),
+          TestRunCommandThatOnlyValidates(),
         );
         await runner.run(<String>['run', '--web-experimental-hot-reload']);
         expect(
@@ -1890,7 +1888,7 @@ server:
       'warning triggered when web hot reload flag is passed (disabled)',
       () async {
         final CommandRunner<void> runner = createTestCommandRunner(
-          TestRunCommandThatOnlyValidates(cache: globals.cache, platform: globals.platform),
+          TestRunCommandThatOnlyValidates(),
         );
         await runner.run(<String>['run', '--no-web-experimental-hot-reload']);
 
@@ -2093,11 +2091,7 @@ class FakeIOSDevice extends Fake implements IOSDevice {
 }
 
 class TestRunCommandForUsageValues extends RunCommand {
-  TestRunCommandForUsageValues({
-    required super.cache,
-    required super.platform,
-    List<Device>? devices,
-  }) {
+  TestRunCommandForUsageValues({List<Device>? devices}) {
     this.devices = devices;
   }
 
@@ -2119,10 +2113,6 @@ class TestRunCommandForUsageValues extends RunCommand {
 }
 
 class TestRunCommandWithFakeResidentRunner extends RunCommand {
-  TestRunCommandWithFakeResidentRunner({
-    required super.cache,
-    required super.platform,
-  });
   late FakeResidentRunner fakeResidentRunner;
 
   @override
@@ -2143,10 +2133,6 @@ class TestRunCommandWithFakeResidentRunner extends RunCommand {
 }
 
 class TestRunCommandThatOnlyValidates extends RunCommand {
-  TestRunCommandThatOnlyValidates({
-    required super.cache,
-    required super.platform,
-  });
   @override
   Future<FlutterCommandResult> runCommand() async {
     return FlutterCommandResult.success();
@@ -2180,10 +2166,6 @@ class FakeResidentRunner extends Fake implements ResidentRunner {
 }
 
 class DaemonCapturingRunCommand extends RunCommand {
-  DaemonCapturingRunCommand({
-    required super.cache,
-    required super.platform,
-  });
   late Daemon daemon;
   late CapturingAppDomain appDomain;
 
@@ -2255,9 +2237,6 @@ class FakeAnsiTerminal extends Fake implements AnsiTerminal {
 class FakeFeatureFlags extends Fake implements FeatureFlags {
   @override
   bool get isWebEnabled => true;
-
-  @override
-  bool get isToolExtensionsEnabled => false;
 
   @override
   bool isEnabled(Feature feature) => feature.master.enabledByDefault;

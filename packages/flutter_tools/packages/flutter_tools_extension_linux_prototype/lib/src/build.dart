@@ -4,7 +4,6 @@
 
 import 'dart:io';
 
-// Requirement 1: Removed manual downloads and archive import
 import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
@@ -66,9 +65,7 @@ class CustomLinuxBuildTarget extends ExtensionTarget {
     final projectDir = Directory(context.projectRoot);
     final cmakeFile = File('${projectDir.path}/linux/CMakeLists.txt');
     if (!cmakeFile.existsSync()) {
-      return <String, Object?>{
-        'executablePath': '${context.outputDir}/bundle/custom_linux_app',
-      };
+      return <String, Object?>{'executablePath': '${context.outputDir}/bundle/custom_linux_app'};
     }
 
     _unpackArtifacts(
@@ -119,14 +116,36 @@ list(APPEND FLUTTER_TOOL_ENVIRONMENT
     }
     symlinkDirectory.createSync(recursive: true);
 
+    for (final ExtensionPlugin plugin in context.plugins) {
+      final link = Link('${symlinkDirectory.path}/${plugin.name}');
+      link.createSync(plugin.path);
+    }
 
-
-
+    String camelCaseToUnderscore(String camelCaseSelector) {
+      final regex = RegExp(r'(?<=[a-z])(?=[A-Z])');
+      return camelCaseSelector.split(regex).join('_').toLowerCase();
+    }
 
     final methodChannelPlugins = <Map<String, Object?>>[];
     final ffiPlugins = <Map<String, Object?>>[];
 
+    for (final ExtensionPlugin plugin in context.plugins) {
+      final Map<String, Object?> config = plugin.configuration;
+      final isFfi = config['ffiPlugin'] == true;
+      final String? pluginClass = config['class'] as String? ?? config['pluginClass'] as String?;
 
+      if (pluginClass != null) {
+        final String filename = config['filename'] as String? ?? camelCaseToUnderscore(pluginClass);
+        methodChannelPlugins.add(<String, Object?>{
+          'name': plugin.name,
+          'class': pluginClass,
+          'filename': filename,
+          'path': plugin.path,
+        });
+      } else if (isFfi) {
+        ffiPlugins.add(<String, Object?>{'name': plugin.name, 'path': plugin.path});
+      }
+    }
 
     final generatedPluginsFile = File('${ephemeralDir.path}/generated_plugins.cmake');
     final generatedPluginHeader = File('${ephemeralDir.path}/generated_plugin_registrant.h');
@@ -513,7 +532,6 @@ void _copyFile(File source, File destination) {
   }
   source.copySync(destination.path);
 }
-
 
 void _unpackArtifacts({
   required String projectRoot,

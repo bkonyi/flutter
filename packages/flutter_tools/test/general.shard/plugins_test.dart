@@ -3189,6 +3189,51 @@ flutter:
       },
     );
   });
+
+  group('CustomPlatformPlugin', () {
+    late MemoryFileSystem fs;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+    });
+
+    testWithoutContext('parses custom platform configuration', () {
+      final yaml =
+          loadYaml('''
+platforms:
+  custom_platform:
+    some_key: some_value
+    nested_list:
+      - item1
+      - item2
+    nested_map:
+      key1: val1
+''')
+              as YamlMap;
+
+      final plugin = Plugin.fromYaml(
+        'my_custom_plugin',
+        '/path/to/my_custom_plugin',
+        yaml,
+        null,
+        <String>[],
+        fileSystem: fs,
+        isDevDependency: false,
+      );
+
+      expect(plugin.platforms, contains('custom_platform'));
+      final customPlatform = plugin.platforms['custom_platform']! as CustomPlatformPlugin;
+      expect(customPlatform.configuration, <String, Object?>{
+        'some_key': 'some_value',
+        'nested_list': <Object?>['item1', 'item2'],
+        'nested_map': <String, Object?>{'key1': 'val1'},
+      });
+
+      // Verify types are standard Dart types, not Yaml types
+      expect(customPlatform.configuration['nested_list'], isNot(isA<YamlList>()));
+      expect(customPlatform.configuration['nested_map'], isNot(isA<YamlMap>()));
+    });
+  });
 }
 
 class FakeFlutterManifest extends Fake implements FlutterManifest {

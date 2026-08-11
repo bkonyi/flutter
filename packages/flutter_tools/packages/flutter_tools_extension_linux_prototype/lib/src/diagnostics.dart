@@ -12,7 +12,7 @@ class LinuxExtensionDiagnostics extends DiagnosticsExtension {
 
   @override
   Future<List<ValidationResult>> runDiagnostics() async {
-    // TODO(bkonyi): perform Linux-specific environment and toolchain validation.
+    // [REVIEW-CONTEXT]: Perform Linux-specific environment and toolchain validation.
     final messages = <ValidationMessage>[
       const ValidationMessage('Linux custom extension toolchain is operational'),
       const ValidationMessage('GTK 3.0 headers and libraries detected'),

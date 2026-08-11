@@ -251,7 +251,11 @@ abstract class UnpackIOS extends UnpackDarwin {
     const Source.pattern(
       '{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/ios.dart',
     ),
-    Source.artifact(Artifact.flutterXcframework, platform: TargetPlatform.ios.getName(), mode: buildMode),
+    Source.artifact(
+      Artifact.flutterXcframework,
+      platform: TargetPlatform.ios.getName(),
+      mode: buildMode,
+    ),
   ];
 
   @override

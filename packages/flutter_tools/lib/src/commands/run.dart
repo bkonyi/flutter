@@ -13,9 +13,7 @@ import '../android/android_device.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
-import '../base/platform.dart';
 import '../build_info.dart';
-import '../cache.dart';
 import '../device.dart';
 import '../experimental/extension_device_manager.dart';
 import '../experimental/extension_manager.dart';
@@ -459,15 +457,9 @@ abstract class RunCommandBase extends FlutterCommand with DeviceBasedDevelopment
 }
 
 class RunCommand extends RunCommandBase {
-  RunCommand({
-    required Cache cache,
-    required Platform platform,
-    bool verboseHelp = false,
-    ExtensionManager? extensionManager,
-  }) : _cache = cache,
-       _platform = platform,
-       _extensionManager = extensionManager,
-       super(verboseHelp: verboseHelp) {
+  RunCommand({bool verboseHelp = false, ExtensionManager? extensionManager})
+    : _extensionManager = extensionManager,
+      super(verboseHelp: verboseHelp) {
     requiresPubspecYaml();
     usesFilesystemOptions(hide: !verboseHelp);
     usesExtraDartFlagOptions(verboseHelp: verboseHelp);
@@ -714,9 +706,7 @@ class RunCommand extends RunCommandBase {
   bool get stayResident => boolArg('resident');
   bool get awaitFirstFrameWhenTracing => boolArg('await-first-frame-when-tracing');
 
-  final Cache _cache;
   final ExtensionManager? _extensionManager;
-  final Platform _platform;
 
   @override
   Future<void> validateCommand() async {
@@ -733,8 +723,6 @@ class RunCommand extends RunCommandBase {
           logger: globals.logger,
           fileSystem: globals.fs,
           artifacts: globals.artifacts!,
-          cache: _cache,
-          platform: _platform,
         ),
       );
     }

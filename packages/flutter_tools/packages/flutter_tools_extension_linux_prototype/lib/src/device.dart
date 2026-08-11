@@ -78,7 +78,7 @@ final class LinuxDeviceService extends DeviceService {
       stdout.writeln('[Device $deviceId stdout] $line');
 
       final vmServiceRegExp = RegExp(
-        r'The Dart VM service is listening on (http://(?:127\.0\.0\.1|localhost|\[::1\]):\d+/[^/]+/)',
+        r'The Dart VM service is listening on (http://127.0.0.1:\d+/[^/]+/)',
       );
       final Match? match = vmServiceRegExp.firstMatch(line);
       if (match != null) {
@@ -137,21 +137,6 @@ final class LinuxDeviceService extends DeviceService {
   }) async {
     final key = '$deviceId:$executablePath';
     return _vmServiceUris[key];
-  }
-
-  @override
-  Future<bool> stopApp({required String deviceId, required String executablePath}) async {
-    final key = '$deviceId:$executablePath';
-    final Process? process = _runningProcesses[key];
-    if (process == null) {
-      stdout.writeln('LinuxDeviceService.stopApp: No running process found for $key');
-      return false;
-    }
-    stdout.writeln('LinuxDeviceService.stopApp: Killing process for $key');
-    final bool killed = process.kill();
-    _runningProcesses.remove(key);
-    _vmServiceUris.remove(key);
-    return killed;
   }
 
   @override

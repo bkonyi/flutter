@@ -53,9 +53,11 @@ base class ExtensionBuildManager {
 
     for (final connection in connections) {
       try {
-        final rawResult = (await connection
-            .sendRequest(BuildService.getBuildTargetsMethod)
-            .timeout(const Duration(seconds: 5)))! as List<Object?>;
+        final rawResult =
+            (await connection
+                    .sendRequest(BuildService.getBuildTargetsMethod)
+                    .timeout(const Duration(seconds: 5)))!
+                as List<Object?>;
         for (final Map<String, Object?> targetMap in rawResult.cast<Map<String, Object?>>()) {
           final target = ExtensionBuildTarget.fromJson(targetMap);
           targets.add(target);
@@ -115,6 +117,5 @@ base class ExtensionBuildManager {
       _logger.printError('Failed to run build from extension: $e');
       return ExtensionBuildResult.failure(message: e.toString());
     }
-
   }
 }

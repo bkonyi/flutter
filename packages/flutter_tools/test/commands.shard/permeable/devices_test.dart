@@ -10,7 +10,6 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/devices.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/features.dart';
-import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/web/web_device.dart';
 import 'package:test/fake.dart';
 
@@ -32,7 +31,7 @@ void main() {
   });
 
   testUsingContext('devices can display no connected devices with the --machine flag', () async {
-    final command = DevicesCommand(cache: globals.cache, platform: globals.platform);
+    final command = DevicesCommand();
     final CommandRunner<void> runner = createTestCommandRunner(command);
     await runner.run(<String>['devices', '--machine']);
 
@@ -43,7 +42,7 @@ void main() {
     'devices can display via the --machine flag',
     () async {
       deviceManager.devices = <Device>[WebServerDevice(logger: logger)];
-      final command = DevicesCommand(cache: globals.cache, platform: globals.platform);
+      final command = DevicesCommand();
       final CommandRunner<void> runner = createTestCommandRunner(command);
       await runner.run(<String>['devices', '--machine']);
 

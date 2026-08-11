@@ -19,9 +19,6 @@ abstract base class DeviceService extends ToolExtensionService {
   /// RPC method identifier to get the VM service URI of a target device.
   static const String getVmServiceUriMethod = 'device.getVmServiceUri';
 
-  /// RPC method identifier to stop an application on a target device.
-  static const String stopAppMethod = 'device.stopApp';
-
   @override
   String get namespace => serviceNamespace;
 
@@ -38,16 +35,12 @@ abstract base class DeviceService extends ToolExtensionService {
   /// Returns the VM service URI of a running application on the target device.
   Future<String?> getVmServiceUri({required String deviceId, required String executablePath});
 
-  /// Stops a running application on the target device with [deviceId] and [executablePath].
-  Future<bool> stopApp({required String deviceId, required String executablePath});
-
   @override
   Future<Map<String, ExtensionRpcHandler>> initialize() async {
     return <String, ExtensionRpcHandler>{
       'getDevices': _getDevicesRpc,
       'launchApp': _launchAppRpc,
       'getVmServiceUri': _getVmServiceUriRpc,
-      'stopApp': _stopAppRpc,
     };
   }
 
@@ -74,11 +67,5 @@ abstract base class DeviceService extends ToolExtensionService {
     final deviceId = params['deviceId']! as String;
     final executablePath = params['executablePath']! as String;
     return getVmServiceUri(deviceId: deviceId, executablePath: executablePath);
-  }
-
-  Future<bool> _stopAppRpc(Map<String, Object?> params) async {
-    final deviceId = params['deviceId']! as String;
-    final executablePath = params['executablePath']! as String;
-    return stopApp(deviceId: deviceId, executablePath: executablePath);
   }
 }

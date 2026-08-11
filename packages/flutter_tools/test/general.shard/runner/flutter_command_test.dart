@@ -30,7 +30,7 @@ import 'package:flutter_tools/src/pre_run_validator.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/version.dart';
-import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
+import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:meta/meta.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/testing.dart';
@@ -2073,7 +2073,6 @@ class FakeClock extends Fake implements SystemClock {
 }
 
 class _TestRunCommandThatOnlyValidates extends RunCommand {
-  _TestRunCommandThatOnlyValidates({Cache? cache, Platform? platform}) : super(cache: cache ?? globals.cache, platform: platform ?? globals.platform);
   @override
   Future<FlutterCommandResult> runCommand() async {
     return FlutterCommandResult.success();

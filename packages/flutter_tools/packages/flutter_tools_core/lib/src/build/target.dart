@@ -29,6 +29,9 @@ abstract class Target {
 
   /// The output directory pattern for this target.
   String get outputDir => kBuildDirPlaceholder;
+
+  /// The plugin platform key associated with this target, if any.
+  String? get pluginPlatformKey => null;
 }
 
 /// A simple concrete implementation of [Target] to represent static metadata.
@@ -42,6 +45,7 @@ class SimpleTarget extends Target {
     this.outputs = const <Source>[],
     this.depfiles = const <String>[],
     this.outputDir = kBuildDirPlaceholder,
+    this.pluginPlatformKey,
   });
 
   @override
@@ -61,4 +65,7 @@ class SimpleTarget extends Target {
 
   @override
   final String outputDir;
+
+  @override
+  final String? pluginPlatformKey;
 }

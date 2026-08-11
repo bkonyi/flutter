@@ -39,8 +39,6 @@ void main() {
           logger: testLogger,
           fileSystem: globals.fs,
           artifacts: globals.artifacts!,
-          cache: globals.cache,
-          platform: globals.platform,
         );
 
         final List<Device> devices = await discovery.devices();
@@ -62,10 +60,7 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final devicesCommand = DevicesCommand(
-          cache: globals.cache,
-          platform: globals.platform,
-        );
+        final devicesCommand = DevicesCommand();
         final CommandRunner<void> commandRunner = createTestCommandRunner(devicesCommand);
 
         await commandRunner.run(<String>['devices']);
@@ -82,8 +77,6 @@ void main() {
               logger: testLogger,
               fileSystem: globals.fs,
               artifacts: globals.artifacts!,
-              cache: globals.cache,
-              platform: globals.platform,
             ),
           ],
         ),
@@ -107,8 +100,6 @@ void main() {
           logger: testLogger,
           fileSystem: globals.fs,
           artifacts: globals.artifacts!,
-          cache: globals.cache,
-          platform: globals.platform,
         );
 
         final List<Device> devices = await discovery.devices();
@@ -139,13 +130,8 @@ void main() {
           logger: testLogger,
           fileSystem: globals.fs,
           artifacts: globals.artifacts!,
-          cache: globals.cache,
-          platform: globals.platform,
         );
-        final devicesCommand = DevicesCommand(
-          cache: globals.cache,
-          platform: globals.platform,
-        );
+        final devicesCommand = DevicesCommand();
         final CommandRunner<void> commandRunner = createTestCommandRunner(devicesCommand);
 
         await commandRunner.run(<String>['devices']);
@@ -172,8 +158,6 @@ void main() {
               logger: testLogger,
               fileSystem: globals.fs,
               artifacts: globals.artifacts!,
-              cache: globals.cache,
-              platform: globals.platform,
             ),
           ],
         ),

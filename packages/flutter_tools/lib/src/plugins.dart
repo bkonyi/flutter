@@ -9,6 +9,17 @@ import 'base/common.dart';
 import 'base/file_system.dart';
 import 'platform_plugins.dart';
 
+Object? _yamlToDart(Object? value) => switch (value) {
+  YamlMap() => _yamlMapToMap(value),
+  YamlList() => value.map(_yamlToDart).toList(),
+  _ => value,
+};
+
+Map<String, Object?> _yamlMapToMap(YamlMap map) => <String, Object?>{
+  for (final MapEntry<Object?, Object?>(:key, :value) in map.entries)
+    if (key is String) key: _yamlToDart(value),
+};
+
 class Plugin {
   Plugin({
     required this.name,
@@ -76,12 +87,12 @@ class Plugin {
     if (errors.isNotEmpty) {
       throwToolExit('Invalid plugin specification $name.\n${errors.join('\n')}');
     }
-    if (pluginYaml?['platforms'] != null) {
+    if (pluginYaml != null && pluginYaml['platforms'] != null) {
       // SAFETY: Assumes that validatePluginYaml(pluginYaml) has been called.
       return Plugin._fromMultiPlatformYaml(
         name,
         path,
-        pluginYaml!,
+        pluginYaml,
         flutterConstraint,
         dependencies,
         fileSystem,
@@ -120,63 +131,61 @@ class Plugin {
 
     final platforms = <String, PluginPlatform>{};
 
-    if (_providesImplementationForPlatform(platformsYaml, AndroidPlugin.kConfigKey)) {
-      platforms[AndroidPlugin.kConfigKey] = AndroidPlugin.fromYaml(
-        name,
-        platformsYaml[AndroidPlugin.kConfigKey] as YamlMap,
-        path,
-        fileSystem,
-      );
+    for (final Object? key in platformsYaml.keys) {
+      if (key is! String) {
+        continue;
+      }
+      final Object? value = platformsYaml[key];
+      if (value is! YamlMap) {
+        continue;
+      }
+
+      if (key == AndroidPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, AndroidPlugin.kConfigKey)) {
+          platforms[AndroidPlugin.kConfigKey] = AndroidPlugin.fromYaml(
+            name,
+            value,
+            path,
+            fileSystem,
+          );
+        }
+      } else if (key == IOSPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, IOSPlugin.kConfigKey)) {
+          platforms[IOSPlugin.kConfigKey] = IOSPlugin.fromYaml(name, value);
+        }
+      } else if (key == LinuxPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, LinuxPlugin.kConfigKey)) {
+          platforms[LinuxPlugin.kConfigKey] = LinuxPlugin.fromYaml(name, value);
+        }
+      } else if (key == MacOSPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, MacOSPlugin.kConfigKey)) {
+          platforms[MacOSPlugin.kConfigKey] = MacOSPlugin.fromYaml(name, value);
+        }
+      } else if (key == WebPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, WebPlugin.kConfigKey)) {
+          platforms[WebPlugin.kConfigKey] = WebPlugin.fromYaml(name, value);
+        }
+      } else if (key == WindowsPlugin.kConfigKey) {
+        if (_providesImplementationForPlatform(platformsYaml, WindowsPlugin.kConfigKey)) {
+          platforms[WindowsPlugin.kConfigKey] = WindowsPlugin.fromYaml(name, value);
+        }
+      } else {
+        if (_providesImplementationForPlatform(platformsYaml, key)) {
+          platforms[key] = CustomPlatformPlugin(configuration: _yamlMapToMap(value));
+        }
+      }
     }
 
-    if (_providesImplementationForPlatform(platformsYaml, IOSPlugin.kConfigKey)) {
-      platforms[IOSPlugin.kConfigKey] = IOSPlugin.fromYaml(
-        name,
-        platformsYaml[IOSPlugin.kConfigKey] as YamlMap,
-      );
-    }
-
-    if (_providesImplementationForPlatform(platformsYaml, LinuxPlugin.kConfigKey)) {
-      platforms[LinuxPlugin.kConfigKey] = LinuxPlugin.fromYaml(
-        name,
-        platformsYaml[LinuxPlugin.kConfigKey] as YamlMap,
-      );
-    }
-
-    if (_providesImplementationForPlatform(platformsYaml, MacOSPlugin.kConfigKey)) {
-      platforms[MacOSPlugin.kConfigKey] = MacOSPlugin.fromYaml(
-        name,
-        platformsYaml[MacOSPlugin.kConfigKey] as YamlMap,
-      );
-    }
-
-    if (_providesImplementationForPlatform(platformsYaml, WebPlugin.kConfigKey)) {
-      platforms[WebPlugin.kConfigKey] = WebPlugin.fromYaml(
-        name,
-        platformsYaml[WebPlugin.kConfigKey] as YamlMap,
-      );
-    }
-
-    if (_providesImplementationForPlatform(platformsYaml, WindowsPlugin.kConfigKey)) {
-      platforms[WindowsPlugin.kConfigKey] = WindowsPlugin.fromYaml(
-        name,
-        platformsYaml[WindowsPlugin.kConfigKey] as YamlMap,
-      );
-    }
-
-    // TODO(stuartmorgan): Consider merging web into this common handling; the
-    //  fact that its implementation of Dart-only plugins and default packages
-    //  are separate is legacy.
-    final sharedHandlingPlatforms = <String>[
-      AndroidPlugin.kConfigKey,
-      IOSPlugin.kConfigKey,
-      LinuxPlugin.kConfigKey,
-      MacOSPlugin.kConfigKey,
-      WindowsPlugin.kConfigKey,
-    ];
     final defaultPackages = <String, String>{};
     final dartPluginClasses = <String, DartPluginClassAndFilePair>{};
-    for (final platform in sharedHandlingPlatforms) {
+    for (final Object? platformKeyObj in platformsYaml.keys) {
+      if (platformKeyObj is! String) {
+        continue;
+      }
+      final String platform = platformKeyObj;
+      if (platform == WebPlugin.kConfigKey) {
+        continue;
+      }
       final String? defaultPackage = _getDefaultPackageForPlatform(platformsYaml, platform);
       if (defaultPackage != null) {
         defaultPackages[platform] = defaultPackage;
@@ -389,12 +398,6 @@ class Plugin {
       final dartClass = (platformsYaml[platformKey] as YamlMap)[kDartPluginClass] as String;
       final String dartFileName =
           (platformsYaml[platformKey] as YamlMap)[kDartFileName] as String? ?? '$pluginName.dart';
-      if (!isValidPluginDartFileName(dartFileName)) {
-        throwToolExit(
-          'The plugin `$pluginName` has an invalid `dartFileName` for platform `$platformKey` '
-          'in pubspec.yaml.',
-        );
-      }
       return (dartClass: dartClass, dartFileName: dartFileName);
     }
     return null;

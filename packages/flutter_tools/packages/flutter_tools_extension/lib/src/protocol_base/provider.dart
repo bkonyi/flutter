@@ -61,16 +61,9 @@ class ToolExtensionEntryPoint {
         final Map<String, Object?> paramMap = rawValue is Map
             ? rawValue.cast<String, Object?>()
             : <String, Object?>{};
-        try {
-          final Object? result = await handler(paramMap);
-          logger?.call('[ToolExtensionIsolate] RPC request "$fullMethod" completed.');
-          return result;
-        } on Object catch (error, stackTrace) {
-          logger?.call(
-            '[ToolExtensionIsolate] RPC request "$fullMethod" failed: $error\n$stackTrace',
-          );
-          rethrow;
-        }
+        final Object? result = await handler(paramMap);
+        logger?.call('[ToolExtensionIsolate] RPC request "$fullMethod" completed.');
+        return result;
       });
     });
 

@@ -7,6 +7,7 @@ import 'build/source.dart';
 
 export 'build/constants.dart';
 export 'build/enums.dart';
+export 'build/plugin.dart';
 export 'build/source.dart';
 export 'build/target.dart';
 
@@ -23,6 +24,7 @@ class ExtensionBuildTarget {
     this.isTopLevel = true,
     this.outputs = const <Source>[],
     this.outputDir = '{BUILD_DIR}',
+    this.pluginPlatformKey,
   });
 
   /// Deserializes an [ExtensionBuildTarget] from a JSON-serializable map.
@@ -46,6 +48,7 @@ class ExtensionBuildTarget {
               .toList() ??
           const <Source>[],
       outputDir: json['outputDir'] as String? ?? '{BUILD_DIR}',
+      pluginPlatformKey: json['pluginPlatformKey'] as String?,
     );
   }
 
@@ -73,6 +76,9 @@ class ExtensionBuildTarget {
   /// The output directory pattern.
   final String outputDir;
 
+  /// The plugin platform key for this target.
+  final String? pluginPlatformKey;
+
   /// Serializes the build target to a JSON-serializable map.
   Map<String, Object?> toMap() => <String, Object?>{
     'name': name,
@@ -83,6 +89,7 @@ class ExtensionBuildTarget {
     'inputs': inputs.map((s) => s.toJson()).toList(),
     'outputs': outputs.map((s) => s.toJson()).toList(),
     'outputDir': outputDir,
+    'pluginPlatformKey': pluginPlatformKey,
   };
 
   @override
@@ -94,6 +101,7 @@ class ExtensionBuildTarget {
             other.description == description &&
             other.isTopLevel == isTopLevel &&
             other.outputDir == outputDir &&
+            other.pluginPlatformKey == pluginPlatformKey &&
             _listEquals(other.dependencies, dependencies) &&
             _listEquals(other.inputs, inputs) &&
             _listEquals(other.outputs, outputs));
@@ -106,6 +114,7 @@ class ExtensionBuildTarget {
     description,
     isTopLevel,
     outputDir,
+    pluginPlatformKey,
     Object.hashAll(dependencies),
     Object.hashAll(inputs),
     Object.hashAll(outputs),

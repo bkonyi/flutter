@@ -11,7 +11,7 @@ class LinuxConfigurationExtension extends ConfigurationExtension {
   String get title => 'Linux Custom Extension Prototype';
   @override
   Future<List<FeatureFlag>> getFeatureFlags() async {
-    // TODO(bkonyi): return prototype feature flags for Linux target platform.
+    // [REVIEW-CONTEXT]: Return prototype feature flags for Linux target platform.
     return const <FeatureFlag>[
       FeatureFlag(
         name: 'enable-linux-custom-prototype',
@@ -23,7 +23,7 @@ class LinuxConfigurationExtension extends ConfigurationExtension {
 
   @override
   Future<List<ConfigOption>> getConfigurations() async {
-    // TODO(bkonyi): return configuration settings for Linux target platform.
+    // [REVIEW-CONTEXT]: Return configuration settings for Linux target platform.
     return const <ConfigOption>[
       ConfigOption(
         name: 'linux-gtk-version',

@@ -800,3 +800,12 @@ String _filenameForCppClass(String className) {
     onNonMatch: (String n) => n.toLowerCase(),
   );
 }
+
+class CustomPlatformPlugin extends PluginPlatform {
+  const CustomPlatformPlugin({required this.configuration});
+
+  final Map<String, Object?> configuration;
+
+  @override
+  Map<String, dynamic> toMap() => configuration;
+}

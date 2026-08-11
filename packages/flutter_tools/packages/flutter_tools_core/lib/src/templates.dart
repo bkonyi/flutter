@@ -92,9 +92,6 @@ final class ExtensionProjectTemplate extends ProjectTemplate {
 
   static List<ExtensionProjectTemplate> listFromJson(Object? rpcResult) {
     final list = rpcResult! as List<Object?>;
-    return list
-        .cast<Map<String, Object?>>()
-        .map(ExtensionProjectTemplate.fromJson)
-        .toList();
+    return list.cast<Map<String, Object?>>().map(ExtensionProjectTemplate.fromJson).toList();
   }
 }
