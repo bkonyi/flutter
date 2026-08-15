@@ -107,6 +107,85 @@ class WidgetPreviewSnapshotRegistry {
   }
 }
 
+/// Global registry tracking layout overflow and build errors per preview.
+class WidgetPreviewDiagnosticsRegistry {
+  static final Map<String, List<Map<String, Object?>>> _diagnostics =
+      <String, List<Map<String, Object?>>>{};
+
+  /// Records a structured diagnostic for [previewId].
+  static void recordDiagnostic(String previewId, Map<String, Object?> diagnostic) {
+    _diagnostics.putIfAbsent(previewId, () => <Map<String, Object?>>[]).add(diagnostic);
+  }
+
+  /// Clears diagnostics for [previewId].
+  static void clearDiagnostics(String previewId) {
+    _diagnostics.remove(previewId);
+  }
+
+  /// Retrieves all recorded diagnostics for [previewId].
+  static List<Map<String, Object?>> getDiagnostics(String previewId) {
+    return List<Map<String, Object?>>.unmodifiable(
+      _diagnostics[previewId] ?? const <Map<String, Object?>>[],
+    );
+  }
+
+  /// Retrieves a full diagnostic report for [previewId].
+  static Map<String, Object?> getReport(String previewId) {
+    final List<Map<String, Object?>> list =
+        _diagnostics[previewId] ?? const <Map<String, Object?>>[];
+    return <String, Object?>{
+      'diagnostics': list,
+      'hasErrors': list.isNotEmpty,
+      'previewId': previewId,
+    };
+  }
+
+  /// Parses a Flutter error message into structured overflow diagnostics.
+  static Map<String, Object?> parseLayoutError({
+    required String message,
+    String? stackTrace,
+    String? sourceFile,
+    int? sourceLine,
+    int? sourceColumn,
+  }) {
+    final overflowRegex = RegExp(
+      r'([A-Za-z0-9_]+) overflowed by ([0-9.]+) pixels on the (right|left|bottom|top|start|end)',
+      caseSensitive: false,
+    );
+    final match = overflowRegex.firstMatch(message);
+
+    if (match != null) {
+      final String widgetType = match.group(1) ?? 'RenderFlex';
+      final double overflowPixels = double.tryParse(match.group(2) ?? '0') ?? 0.0;
+      final String side = (match.group(3) ?? 'right').toLowerCase();
+      final String direction = (side == 'bottom' || side == 'top') ? 'vertical' : 'horizontal';
+
+      return <String, Object?>{
+        'direction': direction,
+        'message': message,
+        'overflowPixels': overflowPixels,
+        if (sourceColumn != null) 'sourceColumn': sourceColumn,
+        if (sourceFile != null) 'sourceFile': sourceFile,
+        if (sourceLine != null) 'sourceLine': sourceLine,
+        if (stackTrace != null) 'stackTrace': stackTrace,
+        'type': 'RenderFlexOverflow',
+        'widgetType': widgetType,
+      };
+    }
+
+    return <String, Object?>{
+      'direction': 'none',
+      'message': message,
+      'overflowPixels': 0.0,
+      if (sourceColumn != null) 'sourceColumn': sourceColumn,
+      if (sourceFile != null) 'sourceFile': sourceFile,
+      if (sourceLine != null) 'sourceLine': sourceLine,
+      if (stackTrace != null) 'stackTrace': stackTrace,
+      'type': 'LayoutException',
+    };
+  }
+}
+
 /// Displayed when an unhandled exception is thrown when initializing the widget
 /// tree for a preview (i.e., before the build phase).
 ///

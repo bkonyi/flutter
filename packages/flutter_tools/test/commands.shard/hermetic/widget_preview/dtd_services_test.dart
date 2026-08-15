@@ -148,6 +148,62 @@ void main() {
       expect(deserialized.height, 0);
       expect(deserialized.imageBase64, isNull);
     });
+
+    test('OverflowDiagnostic serialization and equality', () {
+      const diag = OverflowDiagnostic(
+        direction: 'horizontal',
+        message: 'A RenderFlex overflowed by 32.0 pixels on the right.',
+        overflowPixels: 32.0,
+        sourceColumn: 12,
+        sourceFile: '/project/lib/row.dart',
+        sourceLine: 45,
+        stackTrace: 'at render_flex.dart:120',
+        type: 'RenderFlexOverflow',
+        widgetType: 'Row',
+      );
+
+      final Map<String, Object?> json = diag.toJson();
+      final OverflowDiagnostic deserialized = OverflowDiagnostic.fromJson(json);
+
+      expect(deserialized, equals(diag));
+      expect(deserialized.hashCode, equals(diag.hashCode));
+      expect(deserialized.type, 'RenderFlexOverflow');
+      expect(deserialized.message, 'A RenderFlex overflowed by 32.0 pixels on the right.');
+      expect(deserialized.overflowPixels, 32.0);
+      expect(deserialized.direction, 'horizontal');
+      expect(deserialized.widgetType, 'Row');
+      expect(deserialized.sourceFile, '/project/lib/row.dart');
+      expect(deserialized.sourceLine, 45);
+      expect(deserialized.sourceColumn, 12);
+      expect(deserialized.stackTrace, 'at render_flex.dart:120');
+      expect(deserialized.toString(), contains('RenderFlexOverflow'));
+    });
+
+    test('LayoutDiagnosticReport serialization and equality', () {
+      const diag = OverflowDiagnostic(
+        direction: 'horizontal',
+        message: 'Overflow',
+        overflowPixels: 10.0,
+        type: 'RenderFlexOverflow',
+      );
+
+      const report = LayoutDiagnosticReport(
+        diagnostics: <OverflowDiagnostic>[diag],
+        hasErrors: true,
+        previewId: 'overflow_card',
+      );
+
+      final Map<String, Object?> json = report.toJson();
+      final LayoutDiagnosticReport deserialized = LayoutDiagnosticReport.fromJson(json);
+
+      expect(deserialized, equals(report));
+      expect(deserialized.hashCode, equals(report.hashCode));
+      expect(deserialized.previewId, 'overflow_card');
+      expect(deserialized.hasErrors, isTrue);
+      expect(deserialized.diagnostics, hasLength(1));
+      expect(deserialized.diagnostics.first.overflowPixels, 10.0);
+      expect(deserialized.toString(), contains('overflow_card'));
+    });
   });
 
   group('WidgetPreviewDtdServices Method Registration & Handlers', () {

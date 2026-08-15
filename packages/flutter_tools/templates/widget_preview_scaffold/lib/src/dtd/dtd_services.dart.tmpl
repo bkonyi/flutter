@@ -31,6 +31,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kUnregisterSyntheticPreview = 'unregisterSyntheticPreview';
   static const kClearSyntheticPreviews = 'clearSyntheticPreviews';
   static const kCapturePreview = 'capturePreview';
+  static const kGetLayoutDiagnostics = 'getLayoutDiagnostics';
 
   static const kPreviewScaffoldService = 'PreviewScaffold';
   static const kWidgetPreviewConnectedEvent = 'Connected';
@@ -75,6 +76,11 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         kCapturePreview,
         _handleCapturePreview,
       );
+      await dtd.registerService(
+        kPreviewScaffoldService,
+        kGetLayoutDiagnostics,
+        _handleGetLayoutDiagnostics,
+      );
     } on Object catch (_) {
       // Best-effort registration if service registration is not permitted or already registered.
     }
@@ -93,6 +99,21 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
       outputPath: outputPath,
       returnImage: returnImage,
     );
+  }
+
+  Future<Map<String, Object?>> _handleGetLayoutDiagnostics(Parameters params) async {
+    final Map<dynamic, dynamic> map = params.asMap;
+    final String? previewId = map['previewId'] as String?;
+
+    if (previewId != null) {
+      return WidgetPreviewDiagnosticsRegistry.getReport(previewId);
+    }
+
+    return <String, Object?>{
+      'diagnostics': const <Map<String, Object?>>[],
+      'hasErrors': false,
+      'previewId': '',
+    };
   }
 
   /// Disposes the DTD connection.

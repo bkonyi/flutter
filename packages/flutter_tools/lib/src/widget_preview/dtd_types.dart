@@ -599,3 +599,174 @@ class CapturePreviewResult {
     );
   }
 }
+
+/// Structured information describing a layout overflow or exception in a preview.
+class OverflowDiagnostic {
+  const OverflowDiagnostic({
+    required this.direction,
+    required this.message,
+    required this.overflowPixels,
+    required this.type,
+    this.sourceColumn,
+    this.sourceFile,
+    this.sourceLine,
+    this.stackTrace,
+    this.widgetType,
+  });
+
+  /// The diagnostic classification (e.g. `'RenderFlexOverflow'`).
+  final String type;
+
+  /// The human-readable error description.
+  final String message;
+
+  /// The amount of overflow in logical pixels (e.g. `24.0`).
+  final double overflowPixels;
+
+  /// The overflow direction (`'horizontal'` or `'vertical'`).
+  final String direction;
+
+  /// The widget class associated with the overflow (e.g. `'Row'`, `'Column'`).
+  final String? widgetType;
+
+  /// Source file path where the error originated.
+  final String? sourceFile;
+
+  /// Source line number where the error originated.
+  final int? sourceLine;
+
+  /// Source column number where the error originated.
+  final int? sourceColumn;
+
+  /// Terse stack trace string.
+  final String? stackTrace;
+
+  @override
+  int get hashCode => Object.hash(
+    direction,
+    message,
+    overflowPixels,
+    sourceColumn,
+    sourceFile,
+    sourceLine,
+    stackTrace,
+    type,
+    widgetType,
+  );
+
+  @override
+  bool operator ==(Object other) {
+    return other is OverflowDiagnostic &&
+        other.runtimeType == OverflowDiagnostic &&
+        direction == other.direction &&
+        message == other.message &&
+        overflowPixels == other.overflowPixels &&
+        sourceColumn == other.sourceColumn &&
+        sourceFile == other.sourceFile &&
+        sourceLine == other.sourceLine &&
+        stackTrace == other.stackTrace &&
+        type == other.type &&
+        widgetType == other.widgetType;
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'direction': direction,
+      'message': message,
+      'overflowPixels': overflowPixels,
+      if (sourceColumn != null) 'sourceColumn': sourceColumn,
+      if (sourceFile != null) 'sourceFile': sourceFile,
+      if (sourceLine != null) 'sourceLine': sourceLine,
+      if (stackTrace != null) 'stackTrace': stackTrace,
+      'type': type,
+      if (widgetType != null) 'widgetType': widgetType,
+    };
+  }
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static OverflowDiagnostic fromJson(Map<String, Object?> json) {
+    final direction = json['direction']! as String;
+    final message = json['message']! as String;
+    final double overflowPixels = (json['overflowPixels'] as num?)?.toDouble() ?? 0.0;
+    final sourceColumn = json['sourceColumn'] as int?;
+    final sourceFile = json['sourceFile'] as String?;
+    final sourceLine = json['sourceLine'] as int?;
+    final stackTrace = json['stackTrace'] as String?;
+    final type = json['type']! as String;
+    final widgetType = json['widgetType'] as String?;
+    return OverflowDiagnostic(
+      direction: direction,
+      message: message,
+      overflowPixels: overflowPixels,
+      sourceColumn: sourceColumn,
+      sourceFile: sourceFile,
+      sourceLine: sourceLine,
+      stackTrace: stackTrace,
+      type: type,
+      widgetType: widgetType,
+    );
+  }
+}
+
+/// A comprehensive diagnostic report for a specific preview.
+class LayoutDiagnosticReport {
+  const LayoutDiagnosticReport({
+    required this.hasErrors,
+    required this.previewId,
+    this.diagnostics = const <OverflowDiagnostic>[],
+  });
+
+  /// The preview identifier.
+  final String previewId;
+
+  /// Whether any layout exceptions or overflows were detected.
+  final bool hasErrors;
+
+  /// The list of structured overflow/layout diagnostics.
+  final List<OverflowDiagnostic> diagnostics;
+
+  @override
+  int get hashCode =>
+      Object.hash(hasErrors, previewId, const DeepCollectionEquality().hash(diagnostics));
+
+  @override
+  bool operator ==(Object other) {
+    return other is LayoutDiagnosticReport &&
+        other.runtimeType == LayoutDiagnosticReport &&
+        hasErrors == other.hasErrors &&
+        previewId == other.previewId &&
+        const DeepCollectionEquality().equals(diagnostics, other.diagnostics);
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'diagnostics': diagnostics.map((OverflowDiagnostic d) => d.toJson()).toList(),
+      'hasErrors': hasErrors,
+      'previewId': previewId,
+    };
+  }
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static LayoutDiagnosticReport fromJson(Map<String, Object?> json) {
+    final hasErrors = json['hasErrors']! as bool;
+    final previewId = json['previewId']! as String;
+    final rawDiagnostics = json['diagnostics'] as List<Object?>?;
+    final List<OverflowDiagnostic> diagnostics = rawDiagnostics != null
+        ? rawDiagnostics
+              .map(
+                (Object? item) =>
+                    OverflowDiagnostic.fromJson((item! as Map).cast<String, Object?>()),
+              )
+              .toList()
+        : const <OverflowDiagnostic>[];
+    return LayoutDiagnosticReport(
+      diagnostics: diagnostics,
+      hasErrors: hasErrors,
+      previewId: previewId,
+    );
+  }
+}

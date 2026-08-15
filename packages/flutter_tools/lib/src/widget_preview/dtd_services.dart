@@ -100,6 +100,7 @@ class WidgetPreviewDtdServices {
   static const kRegisterSyntheticPreview = 'registerSyntheticPreview';
   static const kUnregisterSyntheticPreview = 'unregisterSyntheticPreview';
   static const kClearSyntheticPreviews = 'clearSyntheticPreviews';
+  static const kGetLayoutDiagnostics = 'getLayoutDiagnostics';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
   static const kLayoutExceptionEvent = 'LayoutException';
