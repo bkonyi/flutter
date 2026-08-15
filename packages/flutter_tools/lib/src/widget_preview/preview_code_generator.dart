@@ -30,6 +30,30 @@ class PreviewCodeGenerator {
   /// project.
   final FlutterProject widgetPreviewScaffoldProject;
 
+  final Map<String, SyntheticPreviewDetails> _syntheticPreviews =
+      <String, SyntheticPreviewDetails>{};
+
+  /// Registers an ephemeral synthetic preview.
+  void registerSyntheticPreview(SyntheticPreviewDetails preview) {
+    _syntheticPreviews[preview.previewId] = preview;
+  }
+
+  /// Unregisters an ephemeral synthetic preview by its identifier.
+  bool unregisterSyntheticPreview(String previewId) {
+    return _syntheticPreviews.remove(previewId) != null;
+  }
+
+  /// Clears all registered synthetic previews and returns the count of removed previews.
+  int clearSyntheticPreviews() {
+    final int count = _syntheticPreviews.length;
+    _syntheticPreviews.clear();
+    return count;
+  }
+
+  /// List of currently registered synthetic previews.
+  List<SyntheticPreviewDetails> get syntheticPreviews =>
+      List<SyntheticPreviewDetails>.unmodifiable(_syntheticPreviews.values);
+
   static const _kBuildMultiWidgetPreview = 'buildMultiWidgetPreview';
   static const _kBuildWidgetPreview = 'buildWidgetPreview';
   static const _kBuildWidgetPreviewError = 'buildWidgetPreviewError';
@@ -221,6 +245,7 @@ class PreviewCodeGenerator {
               uri: libraryPreviews.key.uri,
               libraryDetails: libraryPreviews.value,
             ),
+        for (final synthetic in _syntheticPreviews.values) _buildSyntheticPreview(synthetic),
       ]).code
       ..name = _kPreviewsFunctionName
       ..returns =
@@ -248,6 +273,7 @@ class PreviewCodeGenerator {
       ..body = cb.literalList([
         for (final preview in sortedPreviews)
           _buildPreviewsLsp(preview: preview, uri: preview.libraryUri),
+        for (final synthetic in _syntheticPreviews.values) _buildSyntheticPreview(synthetic),
       ]).code
       ..name = _kPreviewsFunctionName
       ..returns =
@@ -257,6 +283,38 @@ class PreviewCodeGenerator {
                   cb.refer(_kWidgetPreviewClass, _kWidgetPreviewLibraryUri),
                 ]))
               .build();
+  }
+
+  cb.Expression _buildSyntheticPreview(SyntheticPreviewDetails preview) {
+    cb.Expression child = cb.CodeExpression(cb.Code(preview.constructorExpression));
+
+    for (final String wrapper in preview.wrappers) {
+      final String normalized = wrapper.toLowerCase();
+      if (normalized == 'material') {
+        child = cb.refer('Material', 'package:flutter/material.dart').call(
+          [],
+          <String, cb.Expression>{'child': child},
+        );
+      } else if (normalized == 'directionality') {
+        child = cb.refer('Directionality', 'package:flutter/widgets.dart').call(
+          [],
+          <String, cb.Expression>{
+            'textDirection': cb.refer('TextDirection.ltr', 'dart:ui'),
+            'child': child,
+          },
+        );
+      } else if (normalized == 'scaffold') {
+        child = cb.refer('Scaffold', 'package:flutter/material.dart').call(
+          [],
+          <String, cb.Expression>{'body': child},
+        );
+      }
+    }
+
+    return cb.refer(_kWidgetPreviewClass, _kWidgetPreviewLibraryUri).call(
+      [],
+      <String, cb.Expression>{'name': cb.literalString(preview.widgetName), 'child': child},
+    );
   }
 
   cb.Expression _buildPreviews({

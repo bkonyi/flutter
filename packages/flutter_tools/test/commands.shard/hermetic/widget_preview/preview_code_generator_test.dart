@@ -15,6 +15,7 @@ import 'package:flutter_tools/src/flutter_manifest.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dependency_graph.dart';
+import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/preview_code_generator.dart';
 import 'package:flutter_tools/src/widget_preview/preview_detector.dart';
 import 'package:process/process.dart';
@@ -487,5 +488,59 @@ const String kProjectRootPath = r'${project.directory.absolute.path}';
         expect(generatedDtdConnectionInfoFile.readAsStringSync(), expectedDtdConnectionInfo);
       },
     );
+
+    testUsingContext('manages and generates synthetic previews correctly', () async {
+      await previewDetector.initialize();
+      final File generatedPreviewFile = project.widgetPreviewScaffold.childFile(
+        PreviewCodeGenerator.getGeneratedPreviewFilePath(fs),
+      );
+      generatedPreviewFile.createSync(recursive: true);
+
+      const synthetic1 = SyntheticPreviewDetails(
+        constructorExpression: "PrimaryButton(label: 'Submit')",
+        filePath: '/project/lib/buttons.dart',
+        previewId: 'synth_1',
+        widgetName: 'PrimaryButton',
+        wrappers: <String>['Material'],
+      );
+
+      const synthetic2 = SyntheticPreviewDetails(
+        constructorExpression: 'Badge(count: 42)',
+        filePath: '/project/lib/badge.dart',
+        previewId: 'synth_2',
+        widgetName: 'Badge',
+        wrappers: <String>['Directionality'],
+      );
+
+      expect(codeGenerator.syntheticPreviews, isEmpty);
+
+      // Register synthetic previews
+      codeGenerator.registerSyntheticPreview(synthetic1);
+      codeGenerator.registerSyntheticPreview(synthetic2);
+
+      expect(codeGenerator.syntheticPreviews, hasLength(2));
+      expect(codeGenerator.syntheticPreviews, contains(synthetic1));
+      expect(codeGenerator.syntheticPreviews, contains(synthetic2));
+
+      // Generate preview scaffold with synthetic previews
+      codeGenerator.populatePreviewsInGeneratedPreviewScaffold(
+        const <PreviewPath, LibraryPreviewNode>{},
+      );
+
+      final String content = generatedPreviewFile.readAsStringSync();
+      expect(content, contains('PrimaryButton'));
+      expect(content, contains('Material'));
+      expect(content, contains('Badge'));
+      expect(content, contains('Directionality'));
+
+      // Unregister one
+      expect(codeGenerator.unregisterSyntheticPreview('synth_1'), isTrue);
+      expect(codeGenerator.syntheticPreviews, hasLength(1));
+      expect(codeGenerator.unregisterSyntheticPreview('non_existent'), isFalse);
+
+      // Clear all
+      expect(codeGenerator.clearSyntheticPreviews(), 1);
+      expect(codeGenerator.syntheticPreviews, isEmpty);
+    });
   });
 }
