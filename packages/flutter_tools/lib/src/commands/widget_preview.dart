@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:args/args.dart';
 import 'package:collection/collection.dart';
+import 'package:dtd/dtd.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 import 'package:process/process.dart';
@@ -79,6 +81,14 @@ class WidgetPreviewCommand extends FlutterCommand {
     );
     addSubcommand(
       WidgetPreviewCleanCommand(logger: logger, fs: fs, projectFactory: projectFactory),
+    );
+    addSubcommand(
+      WidgetPreviewSnapshotCommand(
+        verbose: verboseHelp,
+        logger: logger,
+        fs: fs,
+        projectFactory: projectFactory,
+      ),
     );
   }
 
@@ -688,6 +698,186 @@ final class WidgetPreviewCleanCommand extends WidgetPreviewSubCommandBase {
       logger.printStatus('Nothing to clean up.');
     }
     return FlutterCommandResult.success();
+  }
+}
+
+final class WidgetPreviewSnapshotCommand extends WidgetPreviewSubCommandBase {
+  WidgetPreviewSnapshotCommand({
+    required this.fs,
+    required this.logger,
+    required this.projectFactory,
+    this.verbose = false,
+    @visibleForTesting this.dtdConnectorOverride,
+  }) {
+    addMachineOutputFlag(verboseHelp: verbose);
+    argParser
+      ..addOption(
+        kPreviewId,
+        abbr: 'p',
+        help: 'The identifier of the preview to capture.',
+        mandatory: true,
+      )
+      ..addOption(
+        kOutput,
+        abbr: 'o',
+        help: 'File path where the captured PNG snapshot should be saved.',
+      )
+      ..addOption(
+        kDevicePixelRatio,
+        defaultsTo: '2.0',
+        help: 'Device pixel ratio for rasterization.',
+      )
+      ..addFlag(
+        kReturnImage,
+        defaultsTo: true,
+        help: 'Whether to return the base64-encoded image data in the response.',
+      )
+      ..addOption(kDtdUrl, help: 'The address of an existing Dart Tooling Daemon (DTD) instance.');
+  }
+
+  static const kPreviewId = 'preview-id';
+  static const kOutput = 'output';
+  static const kDevicePixelRatio = 'device-pixel-ratio';
+  static const kReturnImage = 'return-image';
+  static const kDtdUrl = 'dtd-url';
+
+  final bool verbose;
+
+  @visibleForTesting
+  final Future<DartToolingDaemon> Function(Uri)? dtdConnectorOverride;
+
+  @override
+  final FileSystem fs;
+
+  @override
+  final Logger logger;
+
+  @override
+  final FlutterProjectFactory projectFactory;
+
+  @override
+  String get description => 'Captures a high-resolution snapshot of a widget preview.';
+
+  @override
+  String get name => 'snapshot';
+
+  void _outputMachineJson(Map<String, Object?> data) {
+    globals.stdio.stdout.writeln(json.encode(data));
+  }
+
+  @override
+  Future<FlutterCommandResult> runCommand() async {
+    final String previewId = stringArg(kPreviewId)!;
+    final String? outputPath = stringArg(kOutput);
+    final double devicePixelRatio = double.tryParse(stringArg(kDevicePixelRatio) ?? '2.0') ?? 2.0;
+    final bool returnImage = boolArg(kReturnImage);
+    final String? dtdUrlString = stringArg(kDtdUrl);
+    final bool machine = boolArg('machine');
+
+    if (dtdUrlString == null || dtdUrlString.isEmpty) {
+      if (machine) {
+        _outputMachineJson(<String, Object?>{
+          'error': 'A running Dart Tooling Daemon instance is required. Pass --$kDtdUrl.',
+          'previewId': previewId,
+          'success': false,
+        });
+      }
+      throwToolExit(
+        'A running Dart Tooling Daemon instance is required for capturing snapshots. '
+        'Pass --$kDtdUrl with the DTD WebSocket URI.',
+      );
+    }
+
+    final Uri? dtdUri = Uri.tryParse(dtdUrlString);
+    if (dtdUri == null) {
+      if (machine) {
+        _outputMachineJson(<String, Object?>{
+          'error': 'Invalid DTD URI: $dtdUrlString',
+          'previewId': previewId,
+          'success': false,
+        });
+      }
+      throwToolExit('Invalid DTD URI: $dtdUrlString');
+    }
+
+    final DartToolingDaemon dtd;
+    try {
+      dtd = dtdConnectorOverride != null
+          ? await dtdConnectorOverride!(dtdUri)
+          : await DartToolingDaemon.connect(dtdUri);
+    } on Object catch (e) {
+      if (machine) {
+        _outputMachineJson(<String, Object?>{
+          'error': 'Failed to connect to Dart Tooling Daemon at $dtdUri: $e',
+          'previewId': previewId,
+          'success': false,
+        });
+      }
+      throwToolExit('Failed to connect to Dart Tooling Daemon at $dtdUri: $e');
+    }
+
+    try {
+      // If outputPath is provided, we must request the image bytes to write to disk.
+      final bool needsImageBytes = returnImage || outputPath != null;
+      final DTDResponse response = await dtd.call(
+        'PreviewScaffold',
+        'capturePreview',
+        params: <String, Object?>{
+          'devicePixelRatio': devicePixelRatio,
+          if (outputPath != null) 'outputPath': outputPath,
+          'previewId': previewId,
+          'returnImage': needsImageBytes,
+        },
+      );
+
+      final result = Map<String, Object?>.from(response.result);
+      final bool success = result['success'] as bool? ?? false;
+
+      if (outputPath != null && result['imageBase64'] is String) {
+        final base64Data = result['imageBase64']! as String;
+        final String base64Clean = base64Data.contains(',')
+            ? base64Data.split(',').last
+            : base64Data;
+        final Uint8List bytes = base64Decode(base64Clean);
+        final File outFile = fs.file(outputPath);
+        outFile.parent.createSync(recursive: true);
+        outFile.writeAsBytesSync(bytes);
+        result['outputPath'] = outputPath;
+      }
+
+      // If the caller requested --no-return-image, remove base64 from the output payload.
+      if (!returnImage) {
+        result.remove('imageBase64');
+      }
+
+      if (machine) {
+        _outputMachineJson(result);
+      } else {
+        if (success) {
+          logger.printStatus(
+            'Successfully captured snapshot for "$previewId" (${result['width']}x${result['height']} px).'
+            '${outputPath != null ? ' Saved to $outputPath' : ''}',
+          );
+        } else {
+          logger.printError(
+            'Failed to capture snapshot for "$previewId": ${result['error'] ?? 'Unknown error'}',
+          );
+        }
+      }
+
+      return success ? FlutterCommandResult.success() : FlutterCommandResult.fail();
+    } on Object catch (e) {
+      if (machine) {
+        _outputMachineJson(<String, Object?>{
+          'error': e.toString(),
+          'previewId': previewId,
+          'success': false,
+        });
+      }
+      throwToolExit('Failed to invoke capturePreview on PreviewScaffold: $e');
+    } finally {
+      await dtd.close();
+    }
   }
 }
 
