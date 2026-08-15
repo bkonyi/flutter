@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -26,6 +30,82 @@ import 'package:widget_preview_scaffold/src/utils.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_inspector_service.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
+
+/// Global registry mapping preview IDs to their rendered [GlobalKey]s for offscreen frame capture.
+class WidgetPreviewSnapshotRegistry {
+  static final Map<String, GlobalKey> _previewKeys = <String, GlobalKey>{};
+
+  /// Register a preview's [GlobalKey] by its identifier.
+  static void registerKey(String previewId, GlobalKey key) {
+    _previewKeys[previewId] = key;
+  }
+
+  /// Unregister a preview's [GlobalKey].
+  static void unregisterKey(String previewId) {
+    _previewKeys.remove(previewId);
+  }
+
+  /// Get the registered [GlobalKey] for [previewId].
+  static GlobalKey? getKey(String previewId) => _previewKeys[previewId];
+
+  /// Captures an offscreen PNG snapshot of the target preview using [RenderRepaintBoundary.toImage].
+  static Future<Map<String, Object?>> capturePreview({
+    required String previewId,
+    double devicePixelRatio = 2.0,
+    String? outputPath,
+    bool returnImage = true,
+  }) async {
+    final GlobalKey? key = _previewKeys[previewId];
+    if (key == null || key.currentContext == null) {
+      return <String, Object?>{
+        'success': false,
+        'previewId': previewId,
+        'width': 0,
+        'height': 0,
+        'error': 'Preview with ID "$previewId" is not currently mounted or rendered.',
+      };
+    }
+
+    final RenderObject? renderObject = key.currentContext?.findRenderObject();
+    if (renderObject is! RenderRepaintBoundary) {
+      return <String, Object?>{
+        'success': false,
+        'previewId': previewId,
+        'width': 0,
+        'height': 0,
+        'error': 'RenderObject for "$previewId" is not a RenderRepaintBoundary.',
+      };
+    }
+
+    final ui.Image image = await renderObject.toImage(pixelRatio: devicePixelRatio);
+    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return <String, Object?>{
+        'success': false,
+        'previewId': previewId,
+        'width': image.width,
+        'height': image.height,
+        'error': 'Failed to encode rendered image into PNG format.',
+      };
+    }
+
+    final Uint8List pngBytes = byteData.buffer.asUint8List();
+    final String? base64String = returnImage
+        ? 'data:image/png;base64,${base64Encode(pngBytes)}'
+        : null;
+
+    return <String, Object?>{
+      'success': true,
+      'previewId': previewId,
+      'width': image.width,
+      'height': image.height,
+      'devicePixelRatio': devicePixelRatio,
+      if (base64String != null) 'imageBase64': base64String,
+      if (outputPath != null) 'imagePath': outputPath,
+      'mimeType': 'image/png',
+    };
+  }
+}
 
 /// Displayed when an unhandled exception is thrown when initializing the widget
 /// tree for a preview (i.e., before the build phase).
@@ -326,6 +406,23 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
 
   final softRestartListenable = ValueNotifier<bool>(false);
   final key = GlobalKey();
+  late final repaintBoundaryKey = GlobalKey();
+
+  String get _previewId =>
+      widget.preview.name ??
+      '${widget.preview.packageName}_${widget.preview.previewData.group}_${widget.preview.hashCode}';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetPreviewSnapshotRegistry.registerKey(_previewId, repaintBoundaryKey);
+  }
+
+  @override
+  void dispose() {
+    WidgetPreviewSnapshotRegistry.unregisterKey(_previewId);
+    super.dispose();
+  }
 
   /// Returns the last size of the previewed widget.
   Size get lastChildSize =>
@@ -334,6 +431,13 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
   @override
   void didUpdateWidget(WidgetPreviewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    final String oldPreviewId = oldWidget.preview.name ??
+        '${oldWidget.preview.packageName}_${oldWidget.preview.previewData.group}_${oldWidget.preview.hashCode}';
+    if (oldPreviewId != _previewId) {
+      WidgetPreviewSnapshotRegistry.unregisterKey(oldPreviewId);
+      WidgetPreviewSnapshotRegistry.registerKey(_previewId, repaintBoundaryKey);
+    }
 
     final previousBrightness = oldWidget.preview.brightness;
     final newBrightness = widget.preview.brightness;
@@ -380,14 +484,17 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
       valueListenable: softRestartListenable,
       builder: (context, performRestart, _) {
         try {
-          final previewWidget = Container(
-            key: key,
-            child: WidgetPreviewTheming(
-              theme: widget.preview.theme,
-              child: EnableWidgetInspectorScope(
-                child: PreviewWidget(
-                  preview: widget.preview,
-                  child: widget.preview.previewBuilder(),
+          final previewWidget = RepaintBoundary(
+            key: repaintBoundaryKey,
+            child: Container(
+              key: key,
+              child: WidgetPreviewTheming(
+                theme: widget.preview.theme,
+                child: EnableWidgetInspectorScope(
+                  child: PreviewWidget(
+                    preview: widget.preview,
+                    child: widget.preview.previewBuilder(),
+                  ),
                 ),
               ),
             ),

@@ -85,6 +85,69 @@ void main() {
       expect(deserialized.webPreviewUrl, 'http://127.0.0.1:8080');
       expect(deserialized.toString(), contains('1.0.0'));
     });
+
+    test('ViewportConfig serialization and equality', () {
+      const config = ViewportConfig(devicePixelRatio: 2.0, height: 800.0, width: 400.0);
+
+      final Map<String, Object?> json = config.toJson();
+      final ViewportConfig deserialized = ViewportConfig.fromJson(json);
+
+      expect(deserialized, equals(config));
+      expect(deserialized.hashCode, equals(config.hashCode));
+      expect(deserialized.devicePixelRatio, 2.0);
+      expect(deserialized.height, 800.0);
+      expect(deserialized.width, 400.0);
+      expect(deserialized.toString(), contains('400.0'));
+    });
+
+    test('CapturePreviewResult serialization and equality', () {
+      const result = CapturePreviewResult(
+        devicePixelRatio: 2.0,
+        height: 600,
+        imageBase64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',
+        imagePath: '/tmp/preview.png',
+        previewId: 'card_preview',
+        success: true,
+        width: 800,
+      );
+
+      final Map<String, Object?> json = result.toJson();
+      final CapturePreviewResult deserialized = CapturePreviewResult.fromJson(json);
+
+      expect(deserialized, equals(result));
+      expect(deserialized.hashCode, equals(result.hashCode));
+      expect(deserialized.previewId, 'card_preview');
+      expect(deserialized.success, isTrue);
+      expect(deserialized.width, 800);
+      expect(deserialized.height, 600);
+      expect(deserialized.devicePixelRatio, 2.0);
+      expect(deserialized.imageBase64, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==');
+      expect(deserialized.imagePath, '/tmp/preview.png');
+      expect(deserialized.mimeType, 'image/png');
+      expect(deserialized.toString(), contains('card_preview'));
+    });
+
+    test('CapturePreviewResult failure serialization and equality', () {
+      const result = CapturePreviewResult(
+        error: 'Preview not mounted',
+        height: 0,
+        previewId: 'missing_preview',
+        success: false,
+        width: 0,
+      );
+
+      final Map<String, Object?> json = result.toJson();
+      final CapturePreviewResult deserialized = CapturePreviewResult.fromJson(json);
+
+      expect(deserialized, equals(result));
+      expect(deserialized.hashCode, equals(result.hashCode));
+      expect(deserialized.previewId, 'missing_preview');
+      expect(deserialized.success, isFalse);
+      expect(deserialized.error, 'Preview not mounted');
+      expect(deserialized.width, 0);
+      expect(deserialized.height, 0);
+      expect(deserialized.imageBase64, isNull);
+    });
   });
 
   group('WidgetPreviewDtdServices Method Registration & Handlers', () {

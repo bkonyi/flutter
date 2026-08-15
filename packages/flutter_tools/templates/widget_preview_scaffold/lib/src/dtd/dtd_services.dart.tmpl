@@ -9,6 +9,7 @@ import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_connection_info.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/dtd/utils.dart';
+import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 
 /// Provides services, streams, and RPC invocations to interact with Flutter developer tooling.
 class WidgetPreviewScaffoldDtdServices with DtdEditorService {
@@ -29,7 +30,9 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kRegisterSyntheticPreview = 'registerSyntheticPreview';
   static const kUnregisterSyntheticPreview = 'unregisterSyntheticPreview';
   static const kClearSyntheticPreviews = 'clearSyntheticPreviews';
+  static const kCapturePreview = 'capturePreview';
 
+  static const kPreviewScaffoldService = 'PreviewScaffold';
   static const kWidgetPreviewConnectedEvent = 'Connected';
   static const kLayoutExceptionEvent = 'LayoutException';
   static const kCompilationSucceededEvent = 'CompilationSucceeded';
@@ -62,6 +65,34 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     );
     await _determineIfWindows();
     await initializeEditorService(this);
+    await _registerScaffoldServices();
+  }
+
+  Future<void> _registerScaffoldServices() async {
+    try {
+      await dtd.registerService(
+        kPreviewScaffoldService,
+        kCapturePreview,
+        _handleCapturePreview,
+      );
+    } on Object catch (_) {
+      // Best-effort registration if service registration is not permitted or already registered.
+    }
+  }
+
+  Future<Map<String, Object?>> _handleCapturePreview(Parameters params) async {
+    final Map<dynamic, dynamic> map = params.asMap;
+    final String previewId = params['previewId'].asString;
+    final double devicePixelRatio = (map['devicePixelRatio'] as num?)?.toDouble() ?? 2.0;
+    final bool returnImage = map['returnImage'] as bool? ?? true;
+    final String? outputPath = map['outputPath'] as String?;
+
+    return WidgetPreviewSnapshotRegistry.capturePreview(
+      previewId: previewId,
+      devicePixelRatio: devicePixelRatio,
+      outputPath: outputPath,
+      returnImage: returnImage,
+    );
   }
 
   /// Disposes the DTD connection.

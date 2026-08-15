@@ -445,3 +445,157 @@ class PreviewServiceInfo {
     );
   }
 }
+
+/// Viewport and environment configuration for rendering and snapshotting a preview.
+class ViewportConfig {
+  const ViewportConfig({this.devicePixelRatio, this.height, this.width});
+
+  /// The logical viewport width in DP.
+  final double? width;
+
+  /// The logical viewport height in DP.
+  final double? height;
+
+  /// The device pixel ratio (DPR) for rendering.
+  final double? devicePixelRatio;
+
+  @override
+  int get hashCode => Object.hash(devicePixelRatio, height, width);
+
+  @override
+  bool operator ==(Object other) {
+    return other is ViewportConfig &&
+        other.runtimeType == ViewportConfig &&
+        devicePixelRatio == other.devicePixelRatio &&
+        height == other.height &&
+        width == other.width;
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      if (devicePixelRatio != null) 'devicePixelRatio': devicePixelRatio,
+      if (height != null) 'height': height,
+      if (width != null) 'width': width,
+    };
+  }
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static ViewportConfig fromJson(Map<String, Object?> json) {
+    final double? devicePixelRatio = (json['devicePixelRatio'] as num?)?.toDouble();
+    final double? height = (json['height'] as num?)?.toDouble();
+    final double? width = (json['width'] as num?)?.toDouble();
+    return ViewportConfig(devicePixelRatio: devicePixelRatio, height: height, width: width);
+  }
+}
+
+/// The result of capturing an offscreen preview snapshot.
+class CapturePreviewResult {
+  const CapturePreviewResult({
+    required this.height,
+    required this.previewId,
+    required this.success,
+    required this.width,
+    this.devicePixelRatio = 1.0,
+    this.error,
+    this.imageBase64,
+    this.imagePath,
+    this.mimeType = 'image/png',
+  });
+
+  /// Whether the snapshot was captured successfully.
+  final bool success;
+
+  /// The preview identifier that was captured.
+  final String previewId;
+
+  /// Pixel width of the rendered snapshot.
+  final int width;
+
+  /// Pixel height of the rendered snapshot.
+  final int height;
+
+  /// Device pixel ratio used during capture.
+  final double devicePixelRatio;
+
+  /// Detailed error message if snapshot capture failed.
+  final String? error;
+
+  /// Base64 data URI string (e.g. `data:image/png;base64,...`).
+  final String? imageBase64;
+
+  /// File path to saved image artifact if requested.
+  final String? imagePath;
+
+  /// MIME type of the image.
+  final String mimeType;
+
+  @override
+  int get hashCode => Object.hash(
+    devicePixelRatio,
+    error,
+    height,
+    imageBase64,
+    imagePath,
+    mimeType,
+    previewId,
+    success,
+    width,
+  );
+
+  @override
+  bool operator ==(Object other) {
+    return other is CapturePreviewResult &&
+        other.runtimeType == CapturePreviewResult &&
+        devicePixelRatio == other.devicePixelRatio &&
+        error == other.error &&
+        height == other.height &&
+        imageBase64 == other.imageBase64 &&
+        imagePath == other.imagePath &&
+        mimeType == other.mimeType &&
+        previewId == other.previewId &&
+        success == other.success &&
+        width == other.width;
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'devicePixelRatio': devicePixelRatio,
+      if (error != null) 'error': error,
+      'height': height,
+      if (imageBase64 != null) 'imageBase64': imageBase64,
+      if (imagePath != null) 'imagePath': imagePath,
+      'mimeType': mimeType,
+      'previewId': previewId,
+      'success': success,
+      'width': width,
+    };
+  }
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static CapturePreviewResult fromJson(Map<String, Object?> json) {
+    final double devicePixelRatio = (json['devicePixelRatio'] as num?)?.toDouble() ?? 1.0;
+    final error = json['error'] as String?;
+    final height = json['height']! as int;
+    final imageBase64 = json['imageBase64'] as String?;
+    final imagePath = json['imagePath'] as String?;
+    final String mimeType = (json['mimeType'] as String?) ?? 'image/png';
+    final previewId = json['previewId']! as String;
+    final success = json['success']! as bool;
+    final width = json['width']! as int;
+    return CapturePreviewResult(
+      devicePixelRatio: devicePixelRatio,
+      error: error,
+      height: height,
+      imageBase64: imageBase64,
+      imagePath: imagePath,
+      mimeType: mimeType,
+      previewId: previewId,
+      success: success,
+      width: width,
+    );
+  }
+}
