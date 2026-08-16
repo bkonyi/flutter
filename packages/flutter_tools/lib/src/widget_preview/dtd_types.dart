@@ -316,6 +316,7 @@ class SyntheticPreviewDetails {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      'type': 'SyntheticPreviewDetails',
       'constructorExpression': constructorExpression,
       'filePath': filePath,
       'previewId': previewId,
@@ -372,7 +373,7 @@ class WebPreviewUrlResult {
   }
 
   Map<String, Object?> toJson() {
-    return <String, Object?>{'host': host, 'port': port, 'url': url};
+    return <String, Object?>{'type': 'WebPreviewUrlResult', 'host': host, 'port': port, 'url': url};
   }
 
   @override
@@ -422,6 +423,7 @@ class PreviewServiceInfo {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      'type': 'PreviewServiceInfo',
       'dtdUri': dtdUri,
       'serviceName': serviceName,
       'version': version,
@@ -561,6 +563,7 @@ class CapturePreviewResult {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      'type': 'CapturePreviewResult',
       'devicePixelRatio': devicePixelRatio,
       if (error != null) 'error': error,
       'height': height,
@@ -742,6 +745,7 @@ class LayoutDiagnosticReport {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
+      'type': 'LayoutDiagnosticReport',
       'diagnostics': diagnostics.map((OverflowDiagnostic d) => d.toJson()).toList(),
       'hasErrors': hasErrors,
       'previewId': previewId,
