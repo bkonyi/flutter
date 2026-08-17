@@ -35,6 +35,7 @@ import '../project.dart';
 import '../resident_runner.dart';
 import '../runner/flutter_command.dart';
 import '../web/web_device.dart';
+
 import '../widget_preview/analytics.dart';
 import '../widget_preview/dependency_graph.dart';
 import '../widget_preview/dtd_services.dart';
@@ -43,6 +44,7 @@ import '../widget_preview/lsp_preview_detector.dart';
 import '../widget_preview/preview_code_generator.dart';
 import '../widget_preview/preview_detector.dart';
 import '../widget_preview/preview_manifest.dart';
+import '../widget_preview/preview_mcp_server.dart';
 import '../widget_preview/preview_pubspec_builder.dart';
 import 'create_base.dart';
 
@@ -89,6 +91,9 @@ class WidgetPreviewCommand extends FlutterCommand {
         fs: fs,
         projectFactory: projectFactory,
       ),
+    );
+    addSubcommand(
+      WidgetPreviewMcpServerCommand(fs: fs, logger: logger, projectFactory: projectFactory),
     );
   }
 
@@ -303,12 +308,50 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     cache: cache,
   );
 
+  FlutterWidgetPreviews? _lastPreviewsUpdate;
+
+  void _regeneratePreviewsAndReload() {
+    if (_lastPreviewsUpdate != null) {
+      _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(_lastPreviewsUpdate!);
+    } else {
+      _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(
+        const FlutterWidgetPreviews(namespaces: {}, previews: [], scriptUris: []),
+      );
+    }
+  }
+
   late var _dtdService = WidgetPreviewDtdServices(
     previewAnalytics: previewAnalytics,
     fs: fs,
     logger: logger,
     shutdownHooks: shutdownHooks,
     onHotRestartPreviewerRequest: onHotRestartRequest,
+    onHotReloadPreviewerRequest: () async {
+      await _widgetPreviewApp?.restart();
+    },
+    onRegisterSyntheticPreview: (SyntheticPreviewDetails details) async {
+      _previewCodeGenerator.registerSyntheticPreview(details);
+      _regeneratePreviewsAndReload();
+      await _widgetPreviewApp?.restart();
+      return true;
+    },
+    onUnregisterSyntheticPreview: (String previewId) async {
+      final bool removed = _previewCodeGenerator.unregisterSyntheticPreview(previewId);
+      if (removed) {
+        _regeneratePreviewsAndReload();
+        await _widgetPreviewApp?.restart();
+      }
+      return removed;
+    },
+    onClearSyntheticPreviews: () async {
+      final int count = _previewCodeGenerator.clearSyntheticPreviews();
+      if (count > 0) {
+        _regeneratePreviewsAndReload();
+        await _widgetPreviewApp?.restart();
+      }
+      return count;
+    },
+
     dtdLauncher: DtdLauncher(logger: logger, artifacts: artifacts, processManager: processManager),
     project: rootProject.widgetPreviewScaffoldProject,
     addUuidToServiceName: !boolArg(kDisableDtdServiceUuid),
@@ -603,6 +646,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
         webRunHeadless: boolArg(kHeadless),
         devToolsServerAddress: devToolsServerAddress,
       );
+
       final String target = bundle.defaultMainPath;
       final FlutterDevice flutterDevice = await FlutterDevice.create(
         device,
@@ -774,30 +818,61 @@ final class WidgetPreviewSnapshotCommand extends WidgetPreviewSubCommandBase {
     final String? dtdUrlString = stringArg(kDtdUrl);
     final bool machine = boolArg('machine');
 
-    if (dtdUrlString == null || dtdUrlString.isEmpty) {
+    Uri? dtdUri;
+    if (dtdUrlString != null && dtdUrlString.isNotEmpty) {
+      dtdUri = Uri.tryParse(dtdUrlString);
+      if (dtdUri == null) {
+        if (machine) {
+          _outputMachineJson(<String, Object?>{
+            'error': 'Invalid DTD URI: $dtdUrlString',
+            'previewId': previewId,
+            'success': false,
+          });
+        }
+        throwToolExit('Invalid DTD URI: $dtdUrlString');
+      }
+    } else {
+      final String? home =
+          globals.platform.environment['HOME'] ?? globals.platform.environment['USERPROFILE'];
+      if (home != null) {
+        final Directory dtdDir = fs.directory(fs.path.join(home, '.dart_tooling_daemon'));
+        if (dtdDir.existsSync()) {
+          final List<FileSystemEntity> entities = dtdDir.listSync()
+            ..sort((a, b) {
+              try {
+                return b.statSync().modified.compareTo(a.statSync().modified);
+              } on Object catch (_) {
+                return 0;
+              }
+            });
+          for (final entity in entities) {
+            if (entity is File && entity.path.endsWith('.json')) {
+              try {
+                final content = jsonDecode(entity.readAsStringSync()) as Map<String, dynamic>;
+                if (content['ws_uri'] is String) {
+                  dtdUri = Uri.parse(content['ws_uri'] as String);
+                  break;
+                }
+              } on Object catch (_) {}
+            }
+          }
+        }
+      }
+    }
+
+    if (dtdUri == null) {
       if (machine) {
         _outputMachineJson(<String, Object?>{
-          'error': 'A running Dart Tooling Daemon instance is required. Pass --$kDtdUrl.',
+          'error':
+              'A running Dart Tooling Daemon instance is required. Pass --$kDtdUrl or ensure a preview session is running.',
           'previewId': previewId,
           'success': false,
         });
       }
       throwToolExit(
         'A running Dart Tooling Daemon instance is required for capturing snapshots. '
-        'Pass --$kDtdUrl with the DTD WebSocket URI.',
+        'Pass --$kDtdUrl with the DTD WebSocket URI or run "flutter widget-preview start".',
       );
-    }
-
-    final Uri? dtdUri = Uri.tryParse(dtdUrlString);
-    if (dtdUri == null) {
-      if (machine) {
-        _outputMachineJson(<String, Object?>{
-          'error': 'Invalid DTD URI: $dtdUrlString',
-          'previewId': previewId,
-          'success': false,
-        });
-      }
-      throwToolExit('Invalid DTD URI: $dtdUrlString');
     }
 
     final DartToolingDaemon dtd;
@@ -817,6 +892,40 @@ final class WidgetPreviewSnapshotCommand extends WidgetPreviewSubCommandBase {
     }
 
     try {
+      try {
+        final RegisteredServicesResponse services = await dtd.getRegisteredServices();
+        final bool hasScaffold = services.clientServices.any(
+          (service) => service.name.startsWith('PreviewScaffold'),
+        );
+        if (!hasScaffold) {
+          final DTDResponse webUrlResp = await dtd.call(
+            WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
+            WidgetPreviewDtdServices.kGetWebPreviewUrl,
+          );
+          final webUrl = webUrlResp.result['url'] as String?;
+          if (webUrl != null) {
+            final targetUrl = '$webUrl/?previewId=${Uri.encodeComponent(previewId)}';
+            await Process.start('google-chrome', <String>[
+              '--headless=new',
+              '--disable-gpu',
+              '--no-sandbox',
+              targetUrl,
+            ]);
+            for (var i = 0; i < 20; i++) {
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+              final RegisteredServicesResponse updated = await dtd.getRegisteredServices();
+              if (updated.clientServices.any(
+                (service) => service.name.startsWith('PreviewScaffold'),
+              )) {
+                break;
+              }
+            }
+          }
+        }
+      } on Object catch (e) {
+        logger.printTrace('Could not check registered services / auto-mount: $e');
+      }
+
       // If outputPath is provided, we must request the image bytes to write to disk.
       final bool needsImageBytes = returnImage || outputPath != null;
       final DTDResponse response = await dtd.call(
@@ -878,6 +987,48 @@ final class WidgetPreviewSnapshotCommand extends WidgetPreviewSubCommandBase {
     } finally {
       await dtd.close();
     }
+  }
+}
+
+final class WidgetPreviewMcpServerCommand extends WidgetPreviewSubCommandBase {
+  WidgetPreviewMcpServerCommand({
+    required this.fs,
+    required this.logger,
+    required this.projectFactory,
+  }) {
+    argParser.addOption(
+      kDtdUrl,
+      help: 'The address of an existing Dart Tooling Daemon (DTD) instance.',
+    );
+  }
+
+  static const kDtdUrl = 'dtd-url';
+
+  @override
+  final FileSystem fs;
+
+  @override
+  final Logger logger;
+
+  @override
+  final FlutterProjectFactory projectFactory;
+
+  @override
+  String get description =>
+      'Runs the Widget Preview Model Context Protocol (MCP) server over standard I/O.';
+
+  @override
+  String get name => 'mcp-server';
+
+  @override
+  Future<FlutterCommandResult> runCommand() async {
+    final String? dtdUrlString = stringArg(kDtdUrl);
+    final Uri? dtdUri = dtdUrlString != null ? Uri.tryParse(dtdUrlString) : null;
+
+    final mcpServer = FlutterWidgetPreviewMcpServer(fs: fs, logger: logger, dtdUri: dtdUri);
+
+    await mcpServer.runStdio();
+    return FlutterCommandResult.success();
   }
 }
 

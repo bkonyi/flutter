@@ -39,15 +39,18 @@ extension on InterfaceType {
 }
 
 extension AnnotationExtension on Annotation {
-  static final Uri widgetPreviewsLibraryUri = Uri.parse(
-    'package:flutter/src/widget_previews/widget_previews.dart',
-  );
+  static final List<Uri> widgetPreviewsLibraryUris = <Uri>[
+    Uri.parse('package:flutter/src/widget_previews/widget_previews.dart'),
+    Uri.parse('package:flutter/widget_previews.dart'),
+    Uri.parse('package:flutter/widgets.dart'),
+    Uri.parse('package:widget_preview/widget_preview.dart'),
+  ];
 
   bool _isPreviewType(String typeName) {
     final Element? element = elementAnnotation!.element;
     if (element is ConstructorElement) {
       final InterfaceType type = element.enclosingElement.thisType;
-      return type.isType(typeName: typeName, uri: widgetPreviewsLibraryUri);
+      return widgetPreviewsLibraryUris.any((Uri uri) => type.isType(typeName: typeName, uri: uri));
     }
     return false;
   }

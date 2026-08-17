@@ -23,7 +23,9 @@ import '../base/utils.dart';
 import '../convert.dart';
 import '../dart/analysis.dart';
 import '../dart/package_map.dart';
+import '../globals.dart' as globals;
 import '../project.dart';
+
 import 'analytics.dart';
 import 'dtd_types.dart';
 import 'persistent_preferences.dart';
@@ -381,7 +383,16 @@ class WidgetPreviewDtdServices {
   }
 
   Future<Map<String, Object?>> _getWebPreviewUrl(Parameters _) async {
-    final Uri? uri = webPreviewUri?.call();
+    Uri? uri = webPreviewUri?.call();
+    if (uri == null) {
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        uri = webPreviewUri?.call();
+        if (uri != null) {
+          break;
+        }
+      }
+    }
     if (uri == null) {
       throw RpcException(kNoValueForKey, 'Web preview server URL is not currently available.');
     }
@@ -389,7 +400,16 @@ class WidgetPreviewDtdServices {
   }
 
   Future<Map<String, Object?>> _getServiceInfo(Parameters _) async {
-    final Uri? uri = webPreviewUri?.call();
+    Uri? uri = webPreviewUri?.call();
+    if (uri == null) {
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        uri = webPreviewUri?.call();
+        if (uri != null) {
+          break;
+        }
+      }
+    }
     return PreviewServiceInfo(
       dtdUri: _dtdUri?.toString() ?? '',
       serviceName: widgetPreviewService,
@@ -501,6 +521,7 @@ class DtdLauncher {
       artifacts.getArtifactPath(Artifact.engineDartBinary),
       'tooling-daemon',
       '--machine',
+      '--unrestricted',
     ]);
 
     // Wait for the DTD connection information.
@@ -510,7 +531,23 @@ class DtdLauncher {
       await sub.cancel();
       final jsonData = json.decode(data) as Map<String, Object?>;
       if (jsonData case {'tooling_daemon_details': {'uri': final String dtdUriString}}) {
-        dtdUri.complete(Uri.parse(dtdUriString));
+        final Uri uri = Uri.parse(dtdUriString);
+        try {
+          final String? home =
+              globals.platform.environment['HOME'] ?? globals.platform.environment['USERPROFILE'];
+          if (home != null) {
+            final Directory dir = globals.fs.directory(
+              globals.fs.path.join(home, '.dart_tooling_daemon'),
+            );
+            if (!dir.existsSync()) {
+              dir.createSync(recursive: true);
+            }
+            final File file = dir.childFile('dtd_${_dtdProcess!.pid}.json');
+            file.writeAsStringSync(json.encode(<String, Object?>{'ws_uri': dtdUriString}));
+            _dtdConnectionFile = file;
+          }
+        } on Object catch (_) {}
+        dtdUri.complete(uri);
       } else {
         throwToolExit('Unable to start the Dart Tooling Daemon.');
       }
@@ -520,6 +557,9 @@ class DtdLauncher {
 
   /// Kills the spawned DTD instance.
   Future<void> dispose() async {
+    try {
+      _dtdConnectionFile?.deleteSync();
+    } on Object catch (_) {}
     _dtdProcess?.kill();
     _dtdProcess = null;
   }
@@ -529,4 +569,5 @@ class DtdLauncher {
   final ProcessManager processManager;
 
   Process? _dtdProcess;
+  File? _dtdConnectionFile;
 }

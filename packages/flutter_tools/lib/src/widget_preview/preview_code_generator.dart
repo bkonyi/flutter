@@ -203,6 +203,13 @@ class PreviewCodeGenerator {
     final lib = cb.Library(
       (cb.LibraryBuilder b) => b
         ..ignoreForFile.add('implementation_imports')
+        ..ignoreForFile.add('no_leading_underscores_for_library_prefixes')
+        ..directives.addAll([
+          cb.Directive.import('package:flutter/cupertino.dart'),
+          cb.Directive.import('package:flutter/material.dart'),
+          cb.Directive.import('package:flutter/widgets.dart'),
+          cb.Directive.import('package:flutter/src/widget_previews/widget_previews.dart'),
+        ])
         ..body.addAll(<cb.Spec>[
           cb.Method(
             (cb.MethodBuilder b) => _buildGeneratedPreviewMethodLsp(previews: update, builder: b),
@@ -311,10 +318,20 @@ class PreviewCodeGenerator {
       }
     }
 
-    return cb.refer(_kWidgetPreviewClass, _kWidgetPreviewLibraryUri).call(
-      [],
-      <String, cb.Expression>{'name': cb.literalString(preview.widgetName), 'child': child},
-    );
+    final cb.Expression transformedPreview = cb
+        .refer('Preview', 'package:flutter/src/widget_previews/widget_previews.dart')
+        .call([], <String, cb.Expression>{'name': cb.literalString(preview.widgetName)})
+        .property(_kTransform)
+        .call([]);
+
+    return cb.refer(_kBuildWidgetPreview, _kUtilsUri).call([], <String, cb.Expression>{
+      _kPackageName: cb.literalString('synthetic'),
+      _kScriptUri: cb.literalString(preview.filePath),
+      _kLine: cb.literalNum(1),
+      _kColumn: cb.literalNum(1),
+      _kPreviewFunction: cb.Method((builder) => builder.body = child.code).closure,
+      _kTransformedPreview: transformedPreview,
+    });
   }
 
   cb.Expression _buildPreviews({

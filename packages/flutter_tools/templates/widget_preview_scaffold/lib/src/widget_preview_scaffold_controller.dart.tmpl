@@ -30,22 +30,26 @@ class WidgetPreviewScaffoldController {
   @visibleForTesting
   static const kFilterBySelectedFilePreference = 'filterBySelectedFile';
 
-  /// Initializes the controller by establishing a connection to DTD and
-  /// listening for events.
   Future<void> initialize() async {
-    await dtdServices.connect();
+    try {
+      await dtdServices.connect();
+    } catch (_) {
+      // DTD connection is optional for standalone browser viewing.
+    }
     context = path.Context(
       style: dtdServices.isWindows ? path.Style.windows : path.Style.posix,
     );
     _registerListeners();
-    await Future.wait<void>([
-      dtdServices
-          .getFlag(kFilterBySelectedFilePreference, defaultValue: true)
-          .then((value) => _filterBySelectedFile.value = value),
-      dtdServices.getDevToolsUri().then((uri) {
-        devToolsUri = uri;
-      }),
-    ]);
+    try {
+      await Future.wait<void>([
+        dtdServices
+            .getFlag(kFilterBySelectedFilePreference, defaultValue: false)
+            .then((value) => _filterBySelectedFile.value = value),
+        dtdServices.getDevToolsUri().then((uri) {
+          devToolsUri = uri;
+        }),
+      ]);
+    } catch (_) {}
   }
 
   /// Cleanup internal controller state.
@@ -82,12 +86,12 @@ class WidgetPreviewScaffoldController {
       dtdServices.editorServiceAvailable;
 
   /// The DevTools instance that's used to display the widget inspector within the previewer.
-  late final Uri devToolsUri;
+  Uri? devToolsUri;
 
   /// Specifies if only previews from the currently selected source file should be rendered.
   ValueListenable<bool> get filterBySelectedFileListenable =>
       _filterBySelectedFile;
-  final _filterBySelectedFile = ValueNotifier<bool>(true);
+  final _filterBySelectedFile = ValueNotifier<bool>(false);
 
   /// Enable or disable filtering by selected source file.
   Future<void> toggleFilterBySelectedFile() async {

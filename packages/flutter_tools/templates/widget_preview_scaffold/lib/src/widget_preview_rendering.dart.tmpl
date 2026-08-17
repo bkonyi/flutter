@@ -17,7 +17,7 @@ import 'package:flutter/widget_previews.dart';
 
 import 'package:stack_trace/stack_trace.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+
 
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/split.dart';
@@ -58,6 +58,7 @@ class WidgetPreviewSnapshotRegistry {
     final GlobalKey? key = _previewKeys[previewId];
     if (key == null || key.currentContext == null) {
       return <String, Object?>{
+        'type': 'CapturePreviewResult',
         'success': false,
         'previewId': previewId,
         'width': 0,
@@ -69,6 +70,7 @@ class WidgetPreviewSnapshotRegistry {
     final RenderObject? renderObject = key.currentContext?.findRenderObject();
     if (renderObject is! RenderRepaintBoundary) {
       return <String, Object?>{
+        'type': 'CapturePreviewResult',
         'success': false,
         'previewId': previewId,
         'width': 0,
@@ -226,10 +228,7 @@ class WidgetPreviewErrorWidget extends StatelessWidget {
             Text.rich(
               TextSpan(
                 children: [
-                  TextSpan(
-                    text: 'Failed to initialize widget tree: ',
-                    style: theme.boldTextStyle,
-                  ),
+                  TextSpan(text: 'Failed to initialize widget tree: ', style: theme.boldTextStyle),
                   TextSpan(text: error.toString(), style: theme.fixedFontStyle),
                 ],
               ),
@@ -240,11 +239,7 @@ class WidgetPreviewErrorWidget extends StatelessWidget {
               builder: (context, editorServiceAvailable, child) {
                 return SelectableText.rich(
                   TextSpan(
-                    children: _formatFrames(
-                      theme,
-                      trace.frames,
-                      editorServiceAvailable,
-                    ),
+                    children: _formatFrames(theme, trace.frames, editorServiceAvailable),
                     style: theme.fixedFontStyle,
                   ),
                 );
@@ -256,15 +251,9 @@ class WidgetPreviewErrorWidget extends StatelessWidget {
     );
   }
 
-  List<TextSpan> _formatFrames(
-    ThemeData theme,
-    List<Frame> frames,
-    bool editorServiceAvailable,
-  ) {
+  List<TextSpan> _formatFrames(ThemeData theme, List<Frame> frames, bool editorServiceAvailable) {
     // Figure out the longest path so we know how much to pad.
-    final int longest = frames
-        .map((frame) => frame.location.length)
-        .fold(0, math.max);
+    final int longest = frames.map((frame) => frame.location.length).fold(0, math.max);
 
     // Print out the stack trace nicely formatted.
     return frames.map<TextSpan>((frame) {
@@ -273,11 +262,8 @@ class WidgetPreviewErrorWidget extends StatelessWidget {
       // so don't allow for navigation to them. Also disable navigation if the
       // Editor service isn't available.
       final isLinkable =
-          (frame.uri.isScheme('file') || frame.uri.isScheme('package')) &&
-          editorServiceAvailable;
-      final style = isLinkable
-          ? theme.fixedFontLinkStyle
-          : theme.fixedFontStyle;
+          (frame.uri.isScheme('file') || frame.uri.isScheme('package')) && editorServiceAvailable;
+      final style = isLinkable ? theme.fixedFontLinkStyle : theme.fixedFontStyle;
       return TextSpan(
         children: [
           TextSpan(
@@ -286,8 +272,7 @@ class WidgetPreviewErrorWidget extends StatelessWidget {
             recognizer: isLinkable
                 ? (TapGestureRecognizer()
                     ..onTap = () async {
-                      final resolvedUri = await controller.dtdServices
-                          .resolveUri(frame.uri);
+                      final resolvedUri = await controller.dtdServices.resolveUri(frame.uri);
                       controller.dtdServices.navigateToCode(
                         CodeLocation(
                           uri: resolvedUri.toString(),
@@ -357,9 +342,7 @@ class PreviewWidget extends StatelessWidget {
 
   @override
   String toStringShort() {
-    final StringBuffer buffer = StringBuffer(
-      '@${preview.previewData.runtimeType}',
-    );
+    final StringBuffer buffer = StringBuffer('@${preview.previewData.runtimeType}');
     if (preview.name != null) {
       buffer.write('(name: "${preview.name}")');
     }
@@ -380,11 +363,7 @@ class PreviewWidgetElement extends StatelessElement {
 }
 
 class WidgetPreviewGroupWidget extends StatelessWidget {
-  const WidgetPreviewGroupWidget({
-    super.key,
-    required this.controller,
-    required this.group,
-  });
+  const WidgetPreviewGroupWidget({super.key, required this.controller, required this.group});
 
   final WidgetPreviewScaffoldController controller;
   final WidgetPreviewGroup group;
@@ -414,10 +393,7 @@ class WidgetPreviewGroupWidget extends StatelessWidget {
       children: [
         for (final preview in previews)
           Center(
-            child: WidgetPreviewWidget(
-              controller: controller,
-              preview: preview,
-            ),
+            child: WidgetPreviewWidget(controller: controller, preview: preview),
           ),
       ],
     );
@@ -430,9 +406,7 @@ class WidgetPreviewGroupWidget extends StatelessWidget {
       child: ListTileTheme(
         data: ListTileTheme.of(context).copyWith(
           dense: true,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(_kCardRadius),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(_kCardRadius)),
         ),
         child: Theme(
           // Prevents divider lines appearing at the top and bottom of the
@@ -448,9 +422,7 @@ class WidgetPreviewGroupWidget extends StatelessWidget {
                 builder: (context, selectedLayout, _) {
                   return switch (selectedLayout) {
                     LayoutType.gridView => _buildGridViewFlex(group.previews),
-                    LayoutType.listView => _buildVerticalListView(
-                      group.previews,
-                    ),
+                    LayoutType.listView => _buildVerticalListView(group.previews),
                   };
                 },
               ),
@@ -463,11 +435,7 @@ class WidgetPreviewGroupWidget extends StatelessWidget {
 }
 
 class WidgetPreviewWidget extends StatefulWidget {
-  const WidgetPreviewWidget({
-    super.key,
-    required this.preview,
-    required this.controller,
-  });
+  const WidgetPreviewWidget({super.key, required this.preview, required this.controller});
 
   final WidgetPreview preview;
 
@@ -489,6 +457,8 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
   final softRestartListenable = ValueNotifier<bool>(false);
   final key = GlobalKey();
   late final repaintBoundaryKey = GlobalKey();
+  Object? _layoutError;
+  StackTrace? _layoutStackTrace;
 
   String get _previewId =>
       widget.preview.name ??
@@ -507,14 +477,16 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
   }
 
   /// Returns the last size of the previewed widget.
-  Size get lastChildSize =>
-      (key.currentContext!.findRenderObject() as RenderBox).size;
+  Size get lastChildSize => (key.currentContext!.findRenderObject() as RenderBox).size;
 
   @override
   void didUpdateWidget(WidgetPreviewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _layoutError = null;
+    _layoutStackTrace = null;
 
-    final String oldPreviewId = oldWidget.preview.name ??
+    final String oldPreviewId =
+        oldWidget.preview.name ??
         '${oldWidget.preview.packageName}_${oldWidget.preview.previewData.group}_${oldWidget.preview.hashCode}';
     if (oldPreviewId != _previewId) {
       WidgetPreviewSnapshotRegistry.unregisterKey(oldPreviewId);
@@ -546,15 +518,14 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final previewerConstraints =
-        WidgetPreviewerWindowConstraints.getRootConstraints(context);
+    final previewerConstraints = WidgetPreviewerWindowConstraints.getRootConstraints(context);
 
     final maxSizeConstraints = previewerConstraints.copyWith(
       minHeight: previewerConstraints.maxHeight / 2.0,
       maxHeight: previewerConstraints.maxHeight / 2.0,
     );
 
-    bool errorThrownDuringTreeConstruction = false;
+    bool errorThrownDuringTreeConstruction = _layoutError != null;
 
     // Wrap the previewed widget with a ValueListenableBuilder responsible for performing a "soft"
     // restart.
@@ -562,44 +533,65 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
     // A soft restart simply removes the previewed widget from the widget tree for a frame before
     // re-inserting it on the next frame. This has the effect of re-running local initializers in
     // State objects, which normally requires a hot restart to accomplish in a normal application.
-    Widget preview = ValueListenableBuilder<bool>(
-      valueListenable: softRestartListenable,
-      builder: (context, performRestart, _) {
-        try {
-          final previewWidget = RepaintBoundary(
-            key: repaintBoundaryKey,
-            child: Container(
-              key: key,
-              child: WidgetPreviewTheming(
-                theme: widget.preview.theme,
-                child: EnableWidgetInspectorScope(
-                  child: PreviewWidget(
-                    preview: widget.preview,
-                    child: widget.preview.previewBuilder(),
+    Widget preview = ValueListenableBuilder<Brightness>(
+      valueListenable: brightnessListenable,
+      builder: (context, currentBrightness, _) {
+        return ValueListenableBuilder<bool>(
+          valueListenable: softRestartListenable,
+          builder: (context, performRestart, _) {
+            if (performRestart) {
+              _layoutError = null;
+              _layoutStackTrace = null;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                // Trigger a rebuild on the next frame to re-insert previewWidget.
+                softRestartListenable.value = false;
+              }, debugLabel: 'Soft Restart');
+              return SizedBox.fromSize(size: lastChildSize);
+            }
+
+            if (_layoutError != null) {
+              errorThrownDuringTreeConstruction = true;
+              return WidgetPreviewErrorWidget(
+                controller: widget.controller,
+                error: _layoutError!,
+                stackTrace: _layoutStackTrace ?? StackTrace.current,
+                size: maxSizeConstraints.biggest,
+              );
+            }
+
+            try {
+              final previewWidget = RepaintBoundary(
+                key: repaintBoundaryKey,
+                child: Container(
+                  key: key,
+                  child: Theme(
+                    data: ThemeData(brightness: currentBrightness, colorSchemeSeed: Colors.indigo),
+                    child: WidgetPreviewTheming(
+                      theme: widget.preview.theme,
+                      child: EnableWidgetInspectorScope(
+                        child: PreviewWidget(
+                          preview: widget.preview,
+                          child: widget.preview.previewBuilder(),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          );
-          if (performRestart) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              // Trigger a rebuild on the next frame to re-insert previewWidget.
-              softRestartListenable.value = false;
-            }, debugLabel: 'Soft Restart');
-            return SizedBox.fromSize(size: lastChildSize);
-          }
-          return previewWidget;
-        } on Object catch (error, stackTrace) {
-          // Catch any unhandled exceptions and display an error widget instead of taking
-          // down the entire preview environment.
-          errorThrownDuringTreeConstruction = true;
-          return WidgetPreviewErrorWidget(
-            controller: widget.controller,
-            error: error,
-            stackTrace: stackTrace,
-            size: maxSizeConstraints.biggest,
-          );
-        }
+              );
+              return previewWidget;
+            } on Object catch (error, stackTrace) {
+              // Catch any unhandled exceptions and display an error widget instead of taking
+              // down the entire preview environment.
+              errorThrownDuringTreeConstruction = true;
+              return WidgetPreviewErrorWidget(
+                controller: widget.controller,
+                error: error,
+                stackTrace: stackTrace,
+                size: maxSizeConstraints.biggest,
+              );
+            }
+          },
+        );
       },
     );
 
@@ -608,12 +600,11 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
     // Add support for selecting only previewed widgets via the widget
     // inspector.
     preview = ValueListenableBuilder(
-      valueListenable:
-          WidgetsBinding.instance.debugShowWidgetInspectorOverrideNotifier,
+      valueListenable: WidgetsBinding.instance.debugShowWidgetInspectorOverrideNotifier,
       builder: (context, enableWidgetInspector, child) {
         // Don't allow inspecting the error widget.
-        if (child is WidgetPreviewErrorWidget) {
-          return child;
+        if (child is WidgetPreviewErrorWidget || _layoutError != null) {
+          return child!;
         }
         if (enableWidgetInspector) {
           return WidgetInspector(
@@ -633,6 +624,23 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
       },
       child: _WidgetPreviewWrapper(
         previewerConstraints: maxSizeConstraints,
+        onError: (error, stackTrace) {
+          final diagnostic = WidgetPreviewDiagnosticsRegistry.parseLayoutError(
+            message: error.toString(),
+            stackTrace: stackTrace.toString(),
+          );
+          WidgetPreviewDiagnosticsRegistry.recordDiagnostic(_previewId, diagnostic);
+          if (mounted && _layoutError == null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _layoutError = error;
+                  _layoutStackTrace = stackTrace;
+                });
+              }
+            });
+          }
+        },
         child: SizedBox(
           width: size?.width == double.infinity ? null : size?.width,
           height: size?.height == double.infinity ? null : size?.height,
@@ -676,9 +684,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
             padding: const EdgeInsets.only(bottom: 8.0),
             child: Text(
               widget.preview.name!,
-              style: fixBlurryText(
-                TextStyle(fontSize: 16, fontWeight: FontWeight.w300),
-              ),
+              style: fixBlurryText(TextStyle(fontSize: 16, fontWeight: FontWeight.w300)),
             ),
           ),
         Container(
@@ -687,16 +693,13 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
             horizontal: 16.0,
           ).add(hasName ? const EdgeInsets.only(top: 8.0) : EdgeInsets.zero),
           decoration: hasName
-              ? BoxDecoration(
-                  border: Border(top: Divider.createBorderSide(context)),
-                )
+              ? BoxDecoration(border: Border(top: Divider.createBorderSide(context)))
               : null,
           child: Column(
             children: [
               ZoomablePreviewArea(
                 transformationController: transformationController,
-                errorThrownDuringTreeConstruction:
-                    errorThrownDuringTreeConstruction,
+                errorThrownDuringTreeConstruction: errorThrownDuringTreeConstruction,
                 child: preview,
               ),
               const VerticalSpacer(),
@@ -704,8 +707,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
                 builder: (context) {
                   return _WidgetPreviewControlRow(
                     transformationController: transformationController,
-                    errorThrownDuringTreeConstruction:
-                        errorThrownDuringTreeConstruction,
+                    errorThrownDuringTreeConstruction: errorThrownDuringTreeConstruction,
                     brightnessListenable: brightnessListenable,
                     softRestartListenable: softRestartListenable,
                   );
@@ -720,10 +722,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Card.outlined(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          child: preview,
-        ),
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: 16.0), child: preview),
       ),
     );
   }
@@ -766,11 +765,7 @@ class _WidgetPreviewControlRow extends StatelessWidget {
 
 /// Applies theming defined in [theme] to [child].
 class WidgetPreviewTheming extends StatelessWidget {
-  const WidgetPreviewTheming({
-    super.key,
-    required this.theme,
-    required this.child,
-  });
+  const WidgetPreviewTheming({super.key, required this.theme, required this.child});
 
   final Widget child;
 
@@ -811,10 +806,7 @@ class WidgetPreviewMediaQueryOverride extends StatelessWidget {
       valueListenable: brightnessListenable,
       builder: (context, brightness, _) {
         return MediaQuery(
-          data: _buildMediaQueryOverride(
-            context: context,
-            brightness: brightness,
-          ),
+          data: _buildMediaQueryOverride(context: context, brightness: brightness),
           // Use mediaQueryPreview instead of preview to avoid capturing preview
           // and creating an infinite loop.
           child: child,
@@ -827,9 +819,7 @@ class WidgetPreviewMediaQueryOverride extends StatelessWidget {
     required BuildContext context,
     required Brightness brightness,
   }) {
-    var mediaQueryData = MediaQuery.of(
-      context,
-    ).copyWith(platformBrightness: brightness);
+    var mediaQueryData = MediaQuery.of(context).copyWith(platformBrightness: brightness);
 
     if (preview.textScaleFactor != null) {
       mediaQueryData = mediaQueryData.copyWith(
@@ -863,36 +853,30 @@ class WidgetPreviewLocalizations extends StatefulWidget {
   final Widget child;
 
   @override
-  State<WidgetPreviewLocalizations> createState() =>
-      _WidgetPreviewLocalizationsState();
+  State<WidgetPreviewLocalizations> createState() => _WidgetPreviewLocalizationsState();
 }
 
-class _WidgetPreviewLocalizationsState
-    extends State<WidgetPreviewLocalizations> {
+class _WidgetPreviewLocalizationsState extends State<WidgetPreviewLocalizations> {
   PreviewLocalizationsData get _localizationsData => widget.localizationsData!;
-  late final LocalizationsResolver _localizationsResolver =
-      LocalizationsResolver(
-        supportedLocales: _localizationsData.supportedLocales,
-        locale: _localizationsData.locale,
-        localeListResolutionCallback:
-            _localizationsData.localeListResolutionCallback,
-        localeResolutionCallback: _localizationsData.localeResolutionCallback,
-        localizationsDelegates: _localizationsData.localizationsDelegates,
-      );
+  late final LocalizationsResolver _localizationsResolver = LocalizationsResolver(
+    supportedLocales: _localizationsData.supportedLocales,
+    locale: _localizationsData.locale,
+    localeListResolutionCallback: _localizationsData.localeListResolutionCallback,
+    localeResolutionCallback: _localizationsData.localeResolutionCallback,
+    localizationsDelegates: _localizationsData.localizationsDelegates,
+  );
 
   @override
   void didUpdateWidget(WidgetPreviewLocalizations oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final PreviewLocalizationsData? localizationsData =
-        widget.localizationsData;
+    final PreviewLocalizationsData? localizationsData = widget.localizationsData;
     if (localizationsData == null) {
       return;
     }
     _localizationsResolver.update(
       supportedLocales: localizationsData.supportedLocales,
       locale: localizationsData.locale,
-      localeListResolutionCallback:
-          localizationsData.localeListResolutionCallback,
+      localeListResolutionCallback: localizationsData.localeListResolutionCallback,
       localeResolutionCallback: localizationsData.localeResolutionCallback,
       localizationsDelegates: localizationsData.localizationsDelegates,
     );
@@ -931,13 +915,13 @@ class WidgetPreviewerWindowConstraints extends InheritedWidget {
   final BoxConstraints constraints;
 
   static BoxConstraints getRootConstraints(BuildContext context) {
-    final result = context
-        .dependOnInheritedWidgetOfExactType<WidgetPreviewerWindowConstraints>();
-    assert(
-      result != null,
-      'No WidgetPreviewerWindowConstraints founds in context',
-    );
-    return result!.constraints;
+    final result = context.dependOnInheritedWidgetOfExactType<WidgetPreviewerWindowConstraints>();
+    if (result == null) {
+      return MediaQuery.sizeOf(context).isEmpty
+          ? const BoxConstraints(maxWidth: 1200, maxHeight: 800)
+          : BoxConstraints.loose(MediaQuery.sizeOf(context));
+    }
+    return result.constraints;
   }
 
   @override
@@ -990,17 +974,13 @@ class _ScaledLayoutWrapper extends SingleChildRenderObjectWidget {
   }
 
   @override
-  void updateRenderObject(
-    BuildContext context,
-    _ScaledLayoutRenderObject renderObject,
-  ) {
+  void updateRenderObject(BuildContext context, _ScaledLayoutRenderObject renderObject) {
     renderObject.scale = scale;
   }
 }
 
 class _ScaledLayoutRenderObject extends RenderShiftedBox {
-  _ScaledLayoutRenderObject({required this._scale, RenderBox? child})
-    : super(child);
+  _ScaledLayoutRenderObject({required this._scale, RenderBox? child}) : super(child);
 
   double _scale;
   double get scale => _scale;
@@ -1108,28 +1088,26 @@ class _ScaledLayoutRenderObject extends RenderShiftedBox {
 /// Wrapper applying a custom render object to force constraints on
 /// unconstrained widgets.
 class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
-  const _WidgetPreviewWrapper({
-    super.child,
-    required this.previewerConstraints,
-  });
+  const _WidgetPreviewWrapper({super.child, required this.previewerConstraints, this.onError});
 
   /// The size of the previewer render surface.
   final BoxConstraints previewerConstraints;
+  final void Function(Object error, StackTrace stackTrace)? onError;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
     return _WidgetPreviewWrapperBox(
       previewerConstraints: previewerConstraints,
+      onError: onError,
       child: null,
     );
   }
 
   @override
-  void updateRenderObject(
-    BuildContext context,
-    _WidgetPreviewWrapperBox renderObject,
-  ) {
-    renderObject.setPreviewerConstraints(previewerConstraints);
+  void updateRenderObject(BuildContext context, _WidgetPreviewWrapperBox renderObject) {
+    renderObject
+      ..setPreviewerConstraints(previewerConstraints)
+      ..onError = onError;
   }
 }
 
@@ -1138,10 +1116,12 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
   _WidgetPreviewWrapperBox({
     required RenderBox? child,
     required this._previewerConstraints,
+    this.onError,
   }) : super(child);
 
   BoxConstraints _constraintOverride = const BoxConstraints();
   BoxConstraints _previewerConstraints;
+  void Function(Object error, StackTrace stackTrace)? onError;
 
   void setPreviewerConstraints(BoxConstraints previewerConstraints) {
     if (_previewerConstraints == previewerConstraints) {
@@ -1154,22 +1134,43 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
   @override
   void layout(Constraints constraints, {bool parentUsesSize = false}) {
     if (child != null && constraints is BoxConstraints) {
-      double minInstrinsicHeight;
+      final double widthForHeight = constraints.maxWidth.isFinite
+          ? constraints.maxWidth
+          : _previewerConstraints.maxWidth;
+      double minIntrinsicHeight;
       try {
-        minInstrinsicHeight = child!.getMinIntrinsicHeight(
-          constraints.maxWidth,
-        );
+        minIntrinsicHeight = child!.getMinIntrinsicHeight(widthForHeight);
       } on Object {
-        minInstrinsicHeight = 0.0;
+        minIntrinsicHeight = 0.0;
       }
-      // Determine if the previewed widget is vertically constrained. If the
-      // widget has a minimum intrinsic height of zero given the widget's max
-      // width, it has an unconstrained height and will cause an overflow in
-      // the previewer. In this case, apply finite constraints (e.g., the
-      // constraints for the root of the previewer). Otherwise, use the
-      // widget's actual constraints.
-      _constraintOverride = minInstrinsicHeight == 0
-          ? _previewerConstraints
+
+      final double heightForWidth = constraints.maxHeight.isFinite
+          ? constraints.maxHeight
+          : _previewerConstraints.maxHeight;
+      double minIntrinsicWidth;
+      try {
+        minIntrinsicWidth = child!.getMinIntrinsicWidth(heightForWidth);
+      } on Object {
+        minIntrinsicWidth = 0.0;
+      }
+
+      final fallbackConstraints = BoxConstraints(
+        minWidth: 0.0,
+        maxWidth: constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : _previewerConstraints.maxWidth,
+        minHeight: 0.0,
+        maxHeight: constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : _previewerConstraints.maxHeight,
+      );
+
+      _constraintOverride =
+          (minIntrinsicHeight == 0 ||
+              minIntrinsicWidth == 0 ||
+              !constraints.hasBoundedWidth ||
+              !constraints.hasBoundedHeight)
+          ? fallbackConstraints
           : const BoxConstraints();
     }
     super.layout(constraints, parentUsesSize: parentUsesSize);
@@ -1182,9 +1183,24 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
       size = Size.zero;
       return;
     }
-    final updatedConstraints = _constraintOverride.enforce(constraints);
-    child.layout(updatedConstraints, parentUsesSize: true);
-    size = constraints.constrain(child.size);
+    final finiteConstraints = BoxConstraints(
+      minWidth: constraints.minWidth,
+      maxWidth: constraints.maxWidth.isFinite
+          ? constraints.maxWidth
+          : _previewerConstraints.maxWidth,
+      minHeight: constraints.minHeight,
+      maxHeight: constraints.maxHeight.isFinite
+          ? constraints.maxHeight
+          : _previewerConstraints.maxHeight,
+    );
+    final updatedConstraints = _constraintOverride.enforce(finiteConstraints);
+    try {
+      child.layout(updatedConstraints, parentUsesSize: true);
+      size = constraints.constrain(child.size);
+    } on Object catch (error, stackTrace) {
+      size = finiteConstraints.constrain(const Size(400, 300));
+      onError?.call(error, stackTrace);
+    }
   }
 }
 
@@ -1256,21 +1272,87 @@ Future<void> mainImpl() async {
   // [WidgetsApp]. [WidgetInspector] instances will be created for each
   // individual preview so the widget inspector won't allow for users to select
   // widgets that make up the widget preview scaffolding.
-  binding.debugExcludeRootWidgetInspector = true;
+  final originalOnError = FlutterError.onError;
+  FlutterError.onError = (FlutterErrorDetails details) {
+    originalOnError?.call(details);
+    final String message = details.exceptionAsString();
+    final diagnostic = WidgetPreviewDiagnosticsRegistry.parseLayoutError(
+      message: message,
+      stackTrace: details.stack?.toString(),
+    );
+    for (final preview in previews()) {
+      final name =
+          preview.name ?? '${preview.packageName}_${preview.previewData.group}_${preview.hashCode}';
+      WidgetPreviewDiagnosticsRegistry.recordDiagnostic(name, diagnostic);
+    }
+  };
+
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return WidgetPreviewErrorWidget(
+      controller: controller,
+      error: details.exception,
+      stackTrace: details.stack ?? StackTrace.current,
+      size: const Size(400, 300),
+    );
+  };
+  final String? standalonePreviewId =
+      Uri.base.queryParameters['previewId'] ?? Uri.base.queryParameters['preview'];
+
+  final Widget rootWidget = standalonePreviewId != null
+      ? StandalonePreviewApp(controller: controller, previewId: standalonePreviewId)
+      : WidgetPreviewScaffold(controller: controller, ideTheme: getIdeTheme());
+
   runWidget(
     DisableWidgetInspectorScope(
       child: binding.wrapWithDefaultView(
         // Forces the set of previews to be recalculated after a hot reload.
-        HotReloadListener(
-          onHotReload: controller.onHotReload,
-          child: WidgetPreviewScaffold(
-            controller: controller,
-            ideTheme: getIdeTheme(),
-          ),
-        ),
+        HotReloadListener(onHotReload: controller.onHotReload, child: rootWidget),
       ),
     ),
   );
+}
+
+/// Standalone single preview runner for embedding individual interactive previews
+/// inside iframes, agent chat embeds, and IDE webviews.
+class StandalonePreviewApp extends StatelessWidget {
+  const StandalonePreviewApp({super.key, required this.controller, required this.previewId});
+
+  final WidgetPreviewScaffoldController controller;
+  final String previewId;
+
+  @override
+  Widget build(BuildContext context) {
+    final allPreviews = previews();
+    final matchingPreview = allPreviews.firstWhere(
+      (p) =>
+          p.name == previewId ||
+          '${p.packageName}_${p.previewData.group}_${p.hashCode}' == previewId,
+      orElse: () =>
+          allPreviews.isNotEmpty ? allPreviews.first : throw StateError('No previews available'),
+    );
+
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            return WidgetPreviewerWindowConstraints(
+              constraints: constraints,
+              child: Center(
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: WidgetPreviewWidget(controller: controller, preview: matchingPreview),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class WidgetPreviewScaffold extends StatefulWidget {
@@ -1290,31 +1372,12 @@ class WidgetPreviewScaffold extends StatefulWidget {
 }
 
 class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
-  WebViewController? _webViewController;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.enableWebView) {
-      _webViewController = WebViewController()
-        ..loadRequest(widget.controller.devToolsUri);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: themeFor(
-        isDarkTheme: false,
-        ideTheme: widget.ideTheme,
-        theme: ThemeData(),
-      ),
-      darkTheme: themeFor(
-        isDarkTheme: true,
-        ideTheme: widget.ideTheme,
-        theme: ThemeData.dark(),
-      ),
+      theme: themeFor(isDarkTheme: false, ideTheme: widget.ideTheme, theme: ThemeData()),
+      darkTheme: themeFor(isDarkTheme: true, ideTheme: widget.ideTheme, theme: ThemeData.dark()),
       themeMode: widget.ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       home: Material(
         child: OutlineDecoration.onlyTop(
@@ -1330,25 +1393,17 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
                 children: [
                   OutlineDecoration.onlyRight(child: previewView!),
                   OutlineDecoration.onlyLeft(
-                    child: widget.enableWebView
-                        ? WebViewWidget(controller: _webViewController!)
-                        : Container(),
+                    child: Container(),
                   ),
                 ],
               );
             },
             // Display the previewer
-            child: Column(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8.0),
-                    child: WidgetPreviews(controller: widget.controller),
-                  ),
-                ),
-                WidgetPreviewControls(controller: widget.controller),
-              ],
+            child: Container(
+              padding: const EdgeInsets.all(8.0),
+              child: WidgetPreviews(controller: widget.controller),
             ),
+
           ),
         ),
       ),

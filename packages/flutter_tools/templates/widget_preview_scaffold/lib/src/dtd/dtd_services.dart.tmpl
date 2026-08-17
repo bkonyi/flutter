@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:dtd/dtd.dart';
+import 'package:flutter/foundation.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_connection_info.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
@@ -55,28 +56,35 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   /// If the connection is successful, the Widget Preview Scaffold will register services and
   /// subscribe to various streams to interact directly with other tooling (e.g., IDEs).
   Future<void> connect({Uri? dtdUri}) async {
-    final Uri dtdWsUri = dtdUri ?? Uri.parse(kWidgetPreviewDtdUri);
-    dtd = await DartToolingDaemon.connect(dtdWsUri);
-    unawaited(
-      dtd.postEvent(
-        kWidgetPreviewScaffoldStream,
-        'Connected',
-        const <String, Object?>{},
-      ),
-    );
-    await _determineIfWindows();
-    await initializeEditorService(this);
-    await _registerScaffoldServices();
+    Uri dtdWsUri = dtdUri ?? Uri.parse(kWidgetPreviewDtdUri);
+
+    if (kIsWeb && Uri.base.queryParameters.containsKey('dtdUri')) {
+      dtdWsUri = Uri.parse(Uri.base.queryParameters['dtdUri']!);
+    }
+
+
+    try {
+      final daemon = await DartToolingDaemon.connect(dtdWsUri);
+      _dtd = daemon;
+      unawaited(
+        daemon.postEvent(kWidgetPreviewScaffoldStream, 'Connected', const <String, Object?>{}),
+      );
+      await _determineIfWindows();
+      await initializeEditorService(this);
+      await _registerScaffoldServices();
+    } catch (_) {
+      // DTD connection may not be reachable over certain proxies; standalone UI continues rendering.
+    }
   }
 
   Future<void> _registerScaffoldServices() async {
+    final client = _dtd;
+    if (client == null) {
+      return;
+    }
     try {
-      await dtd.registerService(
-        kPreviewScaffoldService,
-        kCapturePreview,
-        _handleCapturePreview,
-      );
-      await dtd.registerService(
+      await client.registerService(kPreviewScaffoldService, kCapturePreview, _handleCapturePreview);
+      await client.registerService(
         kPreviewScaffoldService,
         kGetLayoutDiagnostics,
         _handleGetLayoutDiagnostics,
@@ -120,21 +128,26 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   @override
   Future<void> dispose() async {
     super.dispose();
-    await dtd.close();
+    await dtd?.close();
   }
 
-  Future<DTDResponse?> _call(
-    String methodName, {
-    Map<String, Object?>? params,
-  }) => dtd.safeCall(kWidgetPreviewService, methodName, params: params);
+  Future<DTDResponse?> _call(String methodName, {Map<String, Object?>? params}) async {
+    final client = dtd;
+    if (client == null) {
+      return null;
+    }
+    return client.safeCall(kWidgetPreviewService, methodName, params: params);
+  }
 
   /// Returns `true` if the operating system is Windows.
-  late final bool isWindows;
+  bool get isWindows => _isWindows;
+  bool _isWindows = false;
 
   Future<void> _determineIfWindows() async {
-    isWindows = (BoolResponse.fromDTDResponse(
-      (await _call(kIsWindows))!,
-    )).value!;
+    final response = await _call(kIsWindows);
+    if (response != null) {
+      _isWindows = (BoolResponse.fromDTDResponse(response)).value ?? false;
+    }
   }
 
   /// Trigger a hot restart of the widget preview scaffold.
@@ -205,13 +218,17 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   }
 
   /// Retrieves the DevTools URI for the previewer instance.
-  Future<Uri> getDevToolsUri() async {
-    final result = StringResponse.fromDTDResponse(
-      (await _call(kGetDevToolsUri))!,
-    );
-    return Uri.parse(result.value!);
+  Future<Uri?> getDevToolsUri() async {
+    final response = await _call(kGetDevToolsUri);
+    if (response == null) {
+      return null;
+    }
+    final result = StringResponse.fromDTDResponse(response);
+    return result.value != null ? Uri.parse(result.value!) : null;
   }
 
   @override
-  late final DartToolingDaemon dtd;
+  DartToolingDaemon get dtd => _dtd!;
+  set dtd(DartToolingDaemon value) => _dtd = value;
+  DartToolingDaemon? _dtd;
 }

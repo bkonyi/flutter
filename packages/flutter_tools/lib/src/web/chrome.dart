@@ -270,9 +270,8 @@ class ChromiumLauncher {
         '--disable-notifications',
         '--disable-features=GCM',
         if (_platform.isLinux) ...<String>[
-          '--use-gl=angle',
-          '--use-angle=swiftshader',
-          '--enable-unsafe-swiftshader',
+          '--disable-gpu',
+          '--disable-dev-shm-usage',
           '--disable-gpu-sandbox',
         ],
       ],

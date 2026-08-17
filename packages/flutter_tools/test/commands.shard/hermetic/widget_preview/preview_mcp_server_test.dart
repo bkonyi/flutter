@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+import 'dart:io' as io;
+
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/widget_preview/preview_mcp_server.dart';
+
 import 'package:test/fake.dart';
 
 import '../../../src/common.dart';
@@ -42,9 +46,17 @@ class FakeDartToolingDaemon extends Fake implements DartToolingDaemon {
     return FakeDTDResponse(responseMap);
   }
 
+  final Completer<void> _doneCompleter = Completer<void>();
+
+  @override
+  Future<void> get done => _doneCompleter.future;
+
   @override
   Future<void> close() async {
     closed = true;
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
+    }
   }
 }
 
@@ -219,5 +231,41 @@ void main() {
       expect(result.isError, isTrue);
       expect(result.content.first['text'], contains('Unknown tool "unknown_tool"'));
     });
+
+    testUsingContext('runStdio handles initialize and tools/list protocol messages', () async {
+      final inputLines = <String>[
+        '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+      ];
+      final inputStream = Stream<List<int>>.fromIterable(
+        inputLines.map((String line) => '$line\n'.codeUnits),
+      );
+
+      final outputBuffer = StringBuffer();
+      final customSink = io.IOSink(StreamConsumerAdapter(outputBuffer));
+
+      await server.runStdio(input: inputStream, output: customSink);
+
+      final outputStr = outputBuffer.toString();
+      expect(outputStr, contains('"name":"flutter-widget-preview"'));
+      expect(outputStr, contains('"name":"preview_and_inspect"'));
+      expect(outputStr, contains('"name":"render_preview"'));
+    });
   });
+}
+
+class StreamConsumerAdapter implements StreamConsumer<List<int>> {
+  StreamConsumerAdapter(this.buffer);
+  final StringBuffer buffer;
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    await for (final chunk in stream) {
+      buffer.write(String.fromCharCodes(chunk));
+    }
+  }
+
+  @override
+  Future<void> close() async {}
 }
