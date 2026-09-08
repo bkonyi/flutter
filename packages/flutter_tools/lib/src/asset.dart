@@ -263,6 +263,10 @@ class ManifestAssetBundle implements AssetBundle {
   // updated without changes to the manifest. These are only tracked for
   // the current project.
   final _wildcardDirectories = <Uri, Directory>{};
+  // A snapshot of file paths present in each wildcard directory at the time
+  // of the last build, used in [needsBuild] to detect additions, deletions,
+  // and renames.
+  final _wildcardDirectoryFiles = <Uri, Set<String>>{};
 
   DateTime? _lastBuildTimestamp;
 
@@ -302,13 +306,24 @@ class ManifestAssetBundle implements AssetBundle {
       return true;
     }
 
-    for (final Directory directory in _wildcardDirectories.values) {
+    for (final File file in inputFiles) {
+      final FileStat stat = file.statSync();
+      if (stat.type == FileSystemEntityType.notFound || stat.modified.isAfter(lastBuildTimestamp)) {
+        return true;
+      }
+    }
+
+    for (final MapEntry(key: uri, value: directory) in _wildcardDirectories.entries) {
       if (!directory.existsSync()) {
         return true; // directory was deleted.
       }
-      for (final File file in directory.listSync().whereType<File>()) {
-        final DateTime lastModified = file.statSync().modified;
-        if (lastModified.isAfter(lastBuildTimestamp)) {
+      final List<File> files = directory.listSync().whereType<File>().toList();
+      final Set<String>? previousFiles = _wildcardDirectoryFiles[uri];
+      if (previousFiles == null || files.length != previousFiles.length) {
+        return true;
+      }
+      for (final file in files) {
+        if (!previousFiles.contains(file.path)) {
           return true;
         }
       }
@@ -345,6 +360,11 @@ class ManifestAssetBundle implements AssetBundle {
     _lastBuildTimestamp = DateTime.now();
     _lastHookResult = flutterHookResult ?? FlutterHookResult.empty();
     if (flutterManifest.isEmpty) {
+      inputFiles.clear();
+      _wildcardDirectories.clear();
+      _wildcardDirectoryFiles.clear();
+      deferredComponentsEntries.clear();
+      additionalDependencies.clear();
       final ByteData emptyAssetManifest = const StandardMessageCodec().encodeMessage(
         <dynamic, dynamic>{},
       )!;
@@ -363,8 +383,16 @@ class ManifestAssetBundle implements AssetBundle {
           transformers: const <AssetTransformerEntry>[],
         );
       }
+      final validKeys = <String>{
+        _kAssetManifestBinFilename,
+        if (targetPlatform == TargetPlatform.web_javascript) _kAssetManifestBinJsonFilename,
+      };
+      entries.removeWhere((key, _) => !validKeys.contains(key));
       return 0;
     }
+
+    inputFiles.clear();
+    final validKeys = <String>{};
 
     final String assetBasePath = _fileSystem.path.dirname(_fileSystem.path.absolute(manifestPath));
     final File packageConfigFile = _fileSystem.file(packageConfigPath);
@@ -581,6 +609,7 @@ class ManifestAssetBundle implements AssetBundle {
         final File variantFile = variant.lookupAssetFile(_fileSystem);
         inputFiles.add(variantFile);
         assert(variantFile.existsSync());
+        validKeys.add(variant.entryUri.path);
         _setIfConfigurationChanged(
           entries,
           variant.entryUri.path,
@@ -618,6 +647,7 @@ class ManifestAssetBundle implements AssetBundle {
         }
         for (final _Asset variant in assetsMap[asset]!) {
           final File variantFile = variant.lookupAssetFile(_fileSystem);
+          inputFiles.add(variantFile);
           assert(variantFile.existsSync());
           _setIfConfigurationChanged(
             deferredComponentsEntries[componentName]!,
@@ -641,6 +671,7 @@ class ManifestAssetBundle implements AssetBundle {
     for (final asset in materialAndFrameworkAssets) {
       final File assetFile = asset.lookupAssetFile(_fileSystem);
       assert(assetFile.existsSync(), 'Missing ${assetFile.path}');
+      validKeys.add(asset.entryUri.path);
       entries[asset.entryUri.path] ??= AssetBundleEntry(
         DevFSFileContent(assetFile),
         kind: asset.kind,
@@ -648,9 +679,19 @@ class ManifestAssetBundle implements AssetBundle {
       );
     }
 
-    // Update wildcard directories we can detect changes in them.
+    // Update wildcard directories so we can detect changes in them.
+    _wildcardDirectories.clear();
+    _wildcardDirectoryFiles.clear();
     for (final uri in wildcardDirectories) {
-      _wildcardDirectories[uri] ??= _fileSystem.directory(uri);
+      final Directory directory = _fileSystem.directory(uri);
+      _wildcardDirectories[uri] = directory;
+      if (directory.existsSync()) {
+        _wildcardDirectoryFiles[uri] = directory
+            .listSync()
+            .whereType<File>()
+            .map((File file) => file.path)
+            .toSet();
+      }
     }
 
     final Map<String, List<String>> assetManifest = _createAssetManifest(
@@ -686,15 +727,27 @@ class ManifestAssetBundle implements AssetBundle {
     }
 
     _setIfChanged(_kAssetManifestBinFilename, assetManifestBinary, AssetKind.regular);
+    validKeys.add(_kAssetManifestBinFilename);
     // Create .bin.json on web builds.
     if (targetPlatform == TargetPlatform.web_javascript) {
       final assetManifestBinaryJson = DevFSStringContent(
         json.encode(base64.encode(assetManifestBinary.bytes)),
       );
       _setIfChanged(_kAssetManifestBinJsonFilename, assetManifestBinaryJson, AssetKind.regular);
+      validKeys.add(_kAssetManifestBinJsonFilename);
     }
     _setIfChanged(kFontManifestJson, fontManifest, AssetKind.regular);
+    validKeys.add(kFontManifestJson);
     _setLicenseIfChanged(licenseResult.combinedLicenses, targetPlatform);
+    validKeys.add(switch (targetPlatform) {
+      TargetPlatform.web_javascript => _kNoticeFile,
+      _ => _kNoticeZippedFile,
+    });
+
+    entries.removeWhere((key, _) => !validKeys.contains(key));
+    deferredComponentsEntries.removeWhere(
+      (componentName, _) => !deferredComponentsAssetVariants.containsKey(componentName),
+    );
     return 0;
   }
 

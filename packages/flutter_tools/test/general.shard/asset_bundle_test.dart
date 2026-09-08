@@ -248,9 +248,7 @@ name: my_app''')
         // touch the package config to make sure its change time is after pubspec.yaml's
         packageConfig.setLastModifiedSync(modifiedTime);
 
-        // Even though the previous file was removed, it is left in the
-        // asset manifest and not updated. This is due to the devfs not
-        // supporting file deletion.
+        // Removed files are pruned from bundle entries.
         expect(bundle.needsBuild(), true);
         await bundle.build(
           packageConfigPath: '.dart_tool/package_config.json',
@@ -258,13 +256,145 @@ name: my_app''')
         );
         expect(
           bundle.entries.keys,
-          unorderedEquals(<String>[
-            'AssetManifest.bin',
-            'FontManifest.json',
-            'NOTICES.Z',
-            'assets/foo/bar.txt',
-          ]),
+          unorderedEquals(<String>['AssetManifest.bin', 'FontManifest.json', 'NOTICES.Z']),
         );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => testFileSystem,
+        Platform: () => platform,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    testUsingContext(
+      'needsBuild detects when an asset file in a wildcard directory is deleted',
+      () async {
+        final File assetFile = globals.fs.file(globals.fs.path.join('assets', 'foo', 'bar.txt'))
+          ..createSync(recursive: true);
+        globals.fs.file('pubspec.yaml')
+          ..createSync()
+          ..writeAsStringSync(r'''
+name: my_app
+flutter:
+  assets:
+    - assets/foo/
+''');
+        writePackageConfigFiles(directory: globals.fs.currentDirectory, mainLibName: 'my_app');
+        final AssetBundle bundle = AssetBundleFactory.instance.createBundle();
+        await bundle.build(
+          packageConfigPath: '.dart_tool/package_config.json',
+          targetPlatform: TargetPlatform.tester,
+        );
+        expect(bundle.needsBuild(), false);
+
+        assetFile.deleteSync();
+        expect(bundle.needsBuild(), true);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => testFileSystem,
+        Platform: () => platform,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    testUsingContext(
+      'needsBuild detects when an asset file in a wildcard directory is renamed',
+      () async {
+        final File assetFile = globals.fs.file(globals.fs.path.join('assets', 'foo', 'bar.txt'))
+          ..createSync(recursive: true);
+        globals.fs.file('pubspec.yaml')
+          ..createSync()
+          ..writeAsStringSync(r'''
+name: my_app
+flutter:
+  assets:
+    - assets/foo/
+''');
+        writePackageConfigFiles(directory: globals.fs.currentDirectory, mainLibName: 'my_app');
+        final AssetBundle bundle = AssetBundleFactory.instance.createBundle();
+        await bundle.build(
+          packageConfigPath: '.dart_tool/package_config.json',
+          targetPlatform: TargetPlatform.tester,
+        );
+        expect(bundle.needsBuild(), false);
+
+        final DateTime originalMtime = assetFile.lastModifiedSync();
+        final File renamedFile = globals.fs.file(globals.fs.path.join('assets', 'foo', 'baz.txt'));
+        assetFile.renameSync(renamedFile.path);
+        renamedFile.setLastModifiedSync(originalMtime);
+
+        expect(bundle.needsBuild(), true);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => testFileSystem,
+        Platform: () => platform,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    testUsingContext(
+      'bundle.entries removes stale asset when asset is deleted',
+      () async {
+        final File assetFile = globals.fs.file(globals.fs.path.join('assets', 'foo', 'bar.txt'))
+          ..createSync(recursive: true);
+        globals.fs.file('pubspec.yaml')
+          ..createSync()
+          ..writeAsStringSync(r'''
+name: my_app
+flutter:
+  assets:
+    - assets/foo/
+''');
+        writePackageConfigFiles(directory: globals.fs.currentDirectory, mainLibName: 'my_app');
+        final AssetBundle bundle = AssetBundleFactory.instance.createBundle();
+        await bundle.build(
+          packageConfigPath: '.dart_tool/package_config.json',
+          targetPlatform: TargetPlatform.tester,
+        );
+        expect(bundle.entries.containsKey('assets/foo/bar.txt'), isTrue);
+
+        assetFile.deleteSync();
+        await bundle.build(
+          packageConfigPath: '.dart_tool/package_config.json',
+          targetPlatform: TargetPlatform.tester,
+        );
+        expect(bundle.entries.containsKey('assets/foo/bar.txt'), isFalse);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => testFileSystem,
+        Platform: () => platform,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    testUsingContext(
+      'needsBuild detects when a new asset file is added to a wildcard directory with an older timestamp',
+      () async {
+        final File assetFile = globals.fs.file(globals.fs.path.join('assets', 'foo', 'bar.txt'))
+          ..createSync(recursive: true);
+        globals.fs.file('pubspec.yaml')
+          ..createSync()
+          ..writeAsStringSync(r'''
+name: my_app
+flutter:
+  assets:
+    - assets/foo/
+''');
+        writePackageConfigFiles(directory: globals.fs.currentDirectory, mainLibName: 'my_app');
+        final AssetBundle bundle = AssetBundleFactory.instance.createBundle();
+        await bundle.build(
+          packageConfigPath: '.dart_tool/package_config.json',
+          targetPlatform: TargetPlatform.tester,
+        );
+        expect(bundle.needsBuild(), isFalse);
+
+        // Create a new file with mtime in the past.
+        final DateTime mtime = assetFile.lastModifiedSync();
+        globals.fs.file(globals.fs.path.join('assets', 'foo', 'baz.txt'))
+          ..createSync(recursive: true)
+          ..setLastModifiedSync(mtime);
+
+        expect(bundle.needsBuild(), isTrue);
       },
       overrides: <Type, Generator>{
         FileSystem: () => testFileSystem,
