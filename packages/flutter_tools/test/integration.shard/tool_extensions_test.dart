@@ -29,7 +29,23 @@ void main() {
       'USERPROFILE': tempHome.path,
       'APPDATA': tempHome.path,
       'BOT': 'true',
+      if (const LocalPlatform().environment['DISPLAY'] case final String display)
+        'DISPLAY': display,
     };
+    final String prototypePath = fileSystem.path.join(
+      getFlutterRoot(),
+      'packages',
+      'flutter_tools',
+      'packages',
+      'flutter_tools_extension_linux_prototype',
+    );
+    tempHome.childFile('flutter_extensions.yaml').writeAsStringSync('''
+extensions:
+  flutter_tools_extension_linux_prototype:
+    path: '$prototypePath'
+    supportedPlatforms:
+      - linux
+''');
   });
 
   tearDownAll(() {
@@ -39,6 +55,7 @@ void main() {
   testWithoutContext('flutter doctor executes extension validators when enabled', () async {
     final ProcessResult result = await processManager.run(
       <String>[flutterBin, 'doctor', '-v'],
+      workingDirectory: tempHome.path,
       environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
     );
 
@@ -54,6 +71,7 @@ void main() {
   testWithoutContext('flutter config outputs extension settings when enabled', () async {
     final ProcessResult result = await processManager.run(
       <String>[flutterBin, 'config', '--list'],
+      workingDirectory: tempHome.path,
       environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
     );
 
@@ -70,6 +88,7 @@ void main() {
   testWithoutContext('flutter devices outputs custom extension device when enabled', () async {
     final ProcessResult result = await processManager.run(
       <String>[flutterBin, 'devices'],
+      workingDirectory: tempHome.path,
       environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
     );
 
@@ -81,26 +100,26 @@ void main() {
     expect(result.exitCode, 0);
   });
   testWithoutContext('tool extensions are disabled by default', () async {
-    final ProcessResult doctorResult = await processManager.run(<String>[
-      flutterBin,
-      'doctor',
-      '-v',
-    ], environment: baseEnv);
+    final ProcessResult doctorResult = await processManager.run(
+      <String>[flutterBin, 'doctor', '-v'],
+      workingDirectory: tempHome.path,
+      environment: baseEnv,
+    );
     expect(doctorResult.stdout, isNot(contains('Linux Custom Extension Prototype')));
     expect(doctorResult.exitCode, 0);
-
-    final ProcessResult configResult = await processManager.run(<String>[
-      flutterBin,
-      'config',
-      '--list',
-    ], environment: baseEnv);
+    final ProcessResult configResult = await processManager.run(
+      <String>[flutterBin, 'config', '--list'],
+      workingDirectory: tempHome.path,
+      environment: baseEnv,
+    );
     expect(configResult.stdout, isNot(contains('Extension Settings:')));
     expect(configResult.exitCode, 0);
 
-    final ProcessResult devicesResult = await processManager.run(<String>[
-      flutterBin,
-      'devices',
-    ], environment: baseEnv);
+    final ProcessResult devicesResult = await processManager.run(
+      <String>[flutterBin, 'devices'],
+      workingDirectory: tempHome.path,
+      environment: baseEnv,
+    );
     expect(devicesResult.stdout, isNot(contains('Linux Custom Extension Prototype Device')));
     expect(devicesResult.exitCode, 0);
   });
@@ -113,6 +132,7 @@ void main() {
 
     final ProcessResult result = await processManager.run(
       <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+      workingDirectory: tempHome.path,
       environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
     );
 
@@ -134,6 +154,7 @@ void main() {
 
     final ProcessResult result = await processManager.run(
       <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+      workingDirectory: tempHome.path,
       environment: baseEnv, // disabled by default
     );
 
@@ -156,6 +177,7 @@ void main() {
       // 1. Create custom project
       final ProcessResult createResult = await processManager.run(
         <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+        workingDirectory: tempHome.path,
         environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
       );
       expect(
@@ -212,6 +234,7 @@ void main() {
       // 1. Create custom project
       final ProcessResult createResult = await processManager.run(
         <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+        workingDirectory: tempHome.path,
         environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
       );
       expect(
@@ -302,6 +325,7 @@ void main() {
       // 1. Create custom project
       final ProcessResult createResult = await processManager.run(
         <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+        workingDirectory: tempHome.path,
         environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
       );
       expect(createResult.exitCode, 0);
@@ -374,6 +398,89 @@ void main() {
         print('=== TEST RUN OUTPUT ===\n$combinedOutput\n=======================');
         rethrow;
       }
+    },
+  );
+
+  testWithoutContext(
+    'flutter precache downloads custom extension artifacts when enabled',
+    () async {
+      if (!isLinux) {
+        return;
+      }
+      final Directory projectDir = tempHome.childDirectory('custom_precache_app');
+      if (projectDir.existsSync()) {
+        projectDir.deleteSync(recursive: true);
+      }
+
+      final ProcessResult createResult = await processManager.run(
+        <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+        workingDirectory: tempHome.path,
+        environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
+      );
+      expect(createResult.exitCode, 0);
+
+      final ProcessResult precacheResult = await processManager.run(
+        <String>[flutterBin, 'precache', '-v'],
+        workingDirectory: projectDir.path,
+        environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
+      );
+      expect(
+        precacheResult.exitCode,
+        0,
+        reason: 'precache stdout: ${precacheResult.stdout}\nstderr: ${precacheResult.stderr}',
+      );
+      expect(
+        precacheResult.stdout,
+        contains(
+          'Downloading 1 artifact(s) for extension "flutter_tools_extension_linux_prototype"...',
+        ),
+      );
+      final File artifactFile = projectDir
+          .childDirectory('.dart_tool')
+          .childDirectory('flutter_tools')
+          .childDirectory('artifacts')
+          .childDirectory('flutter_tools_extension_linux_prototype')
+          .childFile('linux-headers');
+      expect(artifactFile.existsSync(), isTrue);
+      expect(artifactFile.readAsStringSync(), contains('artifact payload for linux-headers'));
+    },
+  );
+
+  testWithoutContext(
+    'flutter clean cleans custom extension build directory when enabled',
+    () async {
+      if (!isLinux) {
+        return;
+      }
+      final Directory projectDir = tempHome.childDirectory('custom_clean_app');
+      if (projectDir.existsSync()) {
+        projectDir.deleteSync(recursive: true);
+      }
+
+      final ProcessResult createResult = await processManager.run(
+        <String>[flutterBin, 'create', '--template=custom-linux-app', projectDir.path],
+        workingDirectory: tempHome.path,
+        environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
+      );
+      expect(createResult.exitCode, 0);
+
+      final Directory linuxBuildDir = projectDir.childDirectory('build').childDirectory('linux');
+      linuxBuildDir.createSync(recursive: true);
+      final File dummyFile = linuxBuildDir.childFile('dummy_binary.bin');
+      dummyFile.writeAsStringSync('dummy content');
+      expect(dummyFile.existsSync(), isTrue);
+
+      final ProcessResult cleanResult = await processManager.run(
+        <String>[flutterBin, 'clean'],
+        workingDirectory: projectDir.path,
+        environment: <String, String>{...baseEnv, 'FLUTTER_TOOL_EXTENSIONS': 'true'},
+      );
+      expect(
+        cleanResult.exitCode,
+        0,
+        reason: 'clean stdout: ${cleanResult.stdout}\nstderr: ${cleanResult.stderr}',
+      );
+      expect(linuxBuildDir.existsSync(), isFalse);
     },
   );
 }

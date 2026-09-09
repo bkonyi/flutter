@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter_tools_extension_linux_prototype/flutter_tools_extension_linux_prototype.dart';
-
 import 'runner.dart' as runner;
 import 'src/base/context.dart';
 import 'src/base/io.dart';
@@ -50,7 +48,6 @@ import 'src/devtools_launcher.dart';
 import 'src/experimental/extension_artifact_manager.dart';
 import 'src/experimental/extension_build_manager.dart';
 import 'src/experimental/extension_clean_manager.dart';
-import 'src/experimental/extension_discovery.dart';
 import 'src/experimental/extension_manager.dart';
 import 'src/experimental/templates.dart';
 import 'src/features.dart';
@@ -116,7 +113,6 @@ Future<void> main(List<String> args) async {
         logger: globals.logger,
         fileSystem: globals.fs,
         platform: globals.platform,
-        entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
         featureFlags: featureFlags,
       );
       final artifactManager = ExtensionArtifactManager(

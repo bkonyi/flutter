@@ -5,7 +5,6 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
-import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
@@ -161,6 +160,23 @@ void main() {
           'lib',
           'templates',
           'custom-linux-app',
+        ),
+      );
+
+      final Directory customDir = templateManager.resolveTemplateDirectory(
+        'package:custom_extension_tool/templates/sample',
+      );
+      expect(
+        customDir.path,
+        fs.path.join(
+          '/flutter',
+          'packages',
+          'flutter_tools',
+          'packages',
+          'custom_extension_tool',
+          'lib',
+          'templates',
+          'sample',
         ),
       );
 

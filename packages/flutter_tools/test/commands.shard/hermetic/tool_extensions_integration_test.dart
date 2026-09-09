@@ -3,15 +3,19 @@
 // found in the LICENSE file.
 
 import 'package:args/command_runner.dart';
+import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/time.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/doctor.dart';
+import 'package:flutter_tools/src/experimental/extension_artifact_manager.dart';
+import 'package:flutter_tools/src/experimental/extension_clean_manager.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools_extension_linux_prototype/flutter_tools_extension_linux_prototype.dart';
 
 import '../../src/context.dart';
@@ -85,6 +89,64 @@ void main() {
       },
       overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()},
     );
+
+    testUsingContext(
+      'ExtensionArtifactManager.precache() does not download artifacts when feature flag disabled',
+      () async {
+        final featureFlags = TestFeatureFlags();
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
+          featureFlags: featureFlags,
+        );
+        final artifactManager = ExtensionArtifactManager(
+          extensionManager: manager,
+          featureFlags: featureFlags,
+          fileSystem: globals.fs,
+          logger: testLogger,
+        );
+
+        await artifactManager.precache();
+        expect(testLogger.statusText, isNot(contains('Downloading')));
+
+        await manager.dispose();
+      },
+      overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()},
+    );
+
+    testUsingContext(
+      'ExtensionCleanManager.cleanProject() does not clean extension build directory when feature flag disabled',
+      () async {
+        final featureFlags = TestFeatureFlags();
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
+          featureFlags: featureFlags,
+        );
+        final cleanManager = ExtensionCleanManager(
+          extensionManager: manager,
+          featureFlags: featureFlags,
+          logger: testLogger,
+        );
+        final Directory projectDir = globals.fs.systemTempDirectory.createTempSync(
+          'clean_test_disabled',
+        );
+        final Directory linuxBuildDir = projectDir.childDirectory('build').childDirectory('linux')
+          ..createSync(recursive: true);
+        final File dummyFile = linuxBuildDir.childFile('dummy.txt')..writeAsStringSync('dummy');
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+
+        await cleanManager.cleanProject(project);
+        expect(dummyFile.existsSync(), isTrue);
+
+        await manager.dispose();
+      },
+      overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()},
+    );
   });
 
   group('Tool Extensions Integration - Enabled', () {
@@ -148,6 +210,86 @@ void main() {
 
         await doctor.diagnose(extensionManager: manager);
         expect(testLogger.statusText, contains('[✓] Linux Custom Extension Prototype'));
+
+        await manager.dispose();
+      },
+      overrides: <Type, Generator>{
+        FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+      },
+    );
+
+    testUsingContext(
+      'ExtensionArtifactManager.precache() downloads extension artifacts when feature flag enabled',
+      () async {
+        final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
+          featureFlags: featureFlags,
+        );
+        final artifactManager = ExtensionArtifactManager(
+          extensionManager: manager,
+          featureFlags: featureFlags,
+          fileSystem: globals.fs,
+          logger: testLogger,
+        );
+
+        final Directory projectDir = globals.fs.systemTempDirectory.createTempSync(
+          'precache_test_enabled',
+        );
+        await artifactManager.precache(projectRoot: projectDir.uri);
+
+        expect(
+          testLogger.statusText,
+          contains(
+            'Downloading 1 artifact(s) for extension "flutter_tools_extension_linux_prototype"...',
+          ),
+        );
+        final File artifactFile = artifactManager
+            .getArtifactDirectory(
+              'flutter_tools_extension_linux_prototype',
+              projectRoot: projectDir.uri,
+            )
+            .childFile('linux-headers');
+        expect(artifactFile.existsSync(), isTrue);
+        expect(artifactFile.readAsStringSync(), contains('artifact payload for linux-headers'));
+
+        await manager.dispose();
+      },
+      overrides: <Type, Generator>{
+        FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+      },
+    );
+
+    testUsingContext(
+      'ExtensionCleanManager.cleanProject() cleans extension build directory when feature flag enabled',
+      () async {
+        final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: testLogger,
+          fileSystem: globals.fs,
+          entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
+          featureFlags: featureFlags,
+        );
+        final cleanManager = ExtensionCleanManager(
+          extensionManager: manager,
+          featureFlags: featureFlags,
+          logger: testLogger,
+        );
+        final Directory projectDir = globals.fs.systemTempDirectory.createTempSync(
+          'clean_test_enabled',
+        );
+        final Directory linuxBuildDir = projectDir.childDirectory('build').childDirectory('linux')
+          ..createSync(recursive: true);
+        final File dummyFile = linuxBuildDir.childFile('dummy.txt')..writeAsStringSync('dummy');
+        expect(dummyFile.existsSync(), isTrue);
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+
+        await cleanManager.cleanProject(project);
+        expect(linuxBuildDir.existsSync(), isFalse);
 
         await manager.dispose();
       },

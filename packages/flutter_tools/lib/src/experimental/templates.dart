@@ -82,36 +82,34 @@ base class ExtensionTemplateManager extends TemplateService {
 
   /// Resolves a template package URI to a local directory.
   ///
-  /// Currently only supports 'package:flutter_tools/' and
-  /// 'package:flutter_tools_extension_linux_prototype/' URIs, resolving them
-  /// relative to the Flutter SDK root.
+  /// Supports `package:flutter_tools/` and arbitrary `package:<name>/` URIs
+  /// resolved relative to the Flutter SDK or workspace packages.
   Directory resolveTemplateDirectory(String templatePath) {
-    if (templatePath.startsWith('package:flutter_tools/')) {
-      final String relativePath = templatePath.substring('package:flutter_tools/'.length);
-      final String absolutePath = _fileSystem.path.join(
-        Cache.flutterRoot!,
-        'packages',
-        'flutter_tools',
-        'lib',
-        relativePath,
-      );
-      return _fileSystem.directory(absolutePath);
-    }
-    // TODO(bkonyi): Resolve package URIs generically using package config or discovered paths.
-    if (templatePath.startsWith('package:flutter_tools_extension_linux_prototype/')) {
-      final String relativePath = templatePath.substring(
-        'package:flutter_tools_extension_linux_prototype/'.length,
-      );
-      final String absolutePath = _fileSystem.path.join(
-        Cache.flutterRoot!,
-        'packages',
-        'flutter_tools',
-        'packages',
-        'flutter_tools_extension_linux_prototype',
-        'lib',
-        relativePath,
-      );
-      return _fileSystem.directory(absolutePath);
+    if (Uri.tryParse(templatePath) case final Uri uri when uri.scheme == 'package') {
+      final List<String> segments = uri.pathSegments;
+      if (segments.isNotEmpty && Cache.flutterRoot != null) {
+        final String packageName = segments.first;
+        final String relativePath = segments.skip(1).join('/');
+        final String packagePath = switch (packageName) {
+          'flutter_tools' => _fileSystem.path.join(
+            Cache.flutterRoot!,
+            'packages',
+            'flutter_tools',
+            'lib',
+            relativePath,
+          ),
+          _ => _fileSystem.path.join(
+            Cache.flutterRoot!,
+            'packages',
+            'flutter_tools',
+            'packages',
+            packageName,
+            'lib',
+            relativePath,
+          ),
+        };
+        return _fileSystem.directory(packagePath);
+      }
     }
     throw ArgumentError('Unsupported template path format: $templatePath');
   }

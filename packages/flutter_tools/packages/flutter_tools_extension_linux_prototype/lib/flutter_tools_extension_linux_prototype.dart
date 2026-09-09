@@ -38,3 +38,8 @@ void linuxExtensionEntryPoint(SendPort sendPort) {
     supportedPlatforms: const <String>{'linux'},
   );
 }
+
+/// Dynamic isolate entrypoint when spawned via [Isolate.spawnUri].
+void main(List<String> args, SendPort sendPort) {
+  linuxExtensionEntryPoint(sendPort);
+}

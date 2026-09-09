@@ -253,7 +253,9 @@ class ExtensionManifestFinder {
   Uri? resolveExtensionEntrypoint(ExtensionDeclaration declaration, File manifestFile) {
     if (declaration.path != null) {
       final String packageDir = _fs.path.normalize(
-        _fs.path.join(manifestFile.parent.path, declaration.path),
+        _fs.path.isAbsolute(declaration.path!)
+            ? declaration.path!
+            : _fs.path.join(manifestFile.parent.path, declaration.path),
       );
       final String entrypointRelative =
           declaration.entrypoint ??
@@ -261,6 +263,14 @@ class ExtensionManifestFinder {
       final File entrypointFile = _fs.file(_fs.path.join(packageDir, entrypointRelative));
       if (entrypointFile.existsSync()) {
         return entrypointFile.uri;
+      }
+      if (declaration.entrypoint == null) {
+        final File libEntrypoint = _fs.file(
+          _fs.path.join(packageDir, 'lib', '${declaration.name}.dart'),
+        );
+        if (libEntrypoint.existsSync()) {
+          return libEntrypoint.uri;
+        }
       }
       _logger.printTrace(
         'Entrypoint for extension "${declaration.name}" does not exist at: ${entrypointFile.path}',
@@ -292,6 +302,13 @@ class ExtensionManifestFinder {
               final File entrypointFile = _fs.file(entrypointUri);
               if (entrypointFile.existsSync()) {
                 return entrypointUri;
+              }
+              if (declaration.entrypoint == null) {
+                final Uri libEntrypointUri = rootUri.resolve('lib/${declaration.name}.dart');
+                final File libEntrypointFile = _fs.file(libEntrypointUri);
+                if (libEntrypointFile.existsSync()) {
+                  return libEntrypointUri;
+                }
               }
               _logger.printTrace('Resolved entrypoint file does not exist: ${entrypointFile.path}');
               return null;
