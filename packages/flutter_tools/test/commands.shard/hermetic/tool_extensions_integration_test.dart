@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools_extension_linux_prototype/flutter_tools_extension_linux_prototype.dart';
 
 import '../../src/context.dart';
@@ -30,6 +31,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -48,6 +50,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -69,6 +72,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -91,6 +95,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -111,6 +116,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -134,6 +140,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );

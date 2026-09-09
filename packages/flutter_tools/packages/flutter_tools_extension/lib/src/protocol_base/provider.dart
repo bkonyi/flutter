@@ -16,6 +16,26 @@ import 'service.dart';
 /// entrypoint function, passing the initial Isolate send port and list of supported
 /// extension services.
 class ToolExtensionEntryPoint {
+  /// Top-level main entrypoint runner for extensions loaded via [Isolate.spawnUri].
+  ///
+  /// The [message] object is expected to be the host's [SendPort].
+  static Future<void> runMain(
+    List<String> args,
+    Object? message,
+    List<ToolExtensionService> services, {
+    void Function(String message)? logger,
+    Set<String>? supportedPlatforms,
+  }) async {
+    if (message is! SendPort) {
+      throw ArgumentError.value(
+        message,
+        'message',
+        'Expected SendPort for isolate communication handshake.',
+      );
+    }
+    await run(message, services, logger: logger, supportedPlatforms: supportedPlatforms);
+  }
+
   /// Entrypoint function to serve [services] over the Isolate [sendPort].
   static Future<void> run(
     SendPort sendPort,

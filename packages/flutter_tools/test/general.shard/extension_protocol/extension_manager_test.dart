@@ -4,10 +4,13 @@
 
 import 'dart:isolate';
 
+import 'package:file/memory.dart';
+
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
+import 'package:flutter_tools/src/experimental/extension_manifest.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 import 'package:test/test.dart';
 
@@ -32,6 +35,7 @@ void main() {
       final manager = ExtensionManager(
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
+        fileSystem: MemoryFileSystem.test(),
         featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[_dummyExtensionEntryPoint]);
@@ -46,12 +50,37 @@ void main() {
       final manager = ExtensionManager(
         hostPlatform: HostPlatform.darwin_arm64,
         logger: logger,
+        fileSystem: MemoryFileSystem.test(),
         featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[_linuxOnlyExtensionEntryPoint]);
 
       expect(manager.connections, isEmpty);
       await manager.dispose();
+    });
+
+    test('ExtensionManager exposes default and custom manifestFinder', () async {
+      final logger = BufferLogger.test();
+      final fs = MemoryFileSystem.test();
+      final manager = ExtensionManager(
+        hostPlatform: HostPlatform.linux_x64,
+        logger: logger,
+        fileSystem: fs,
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+      );
+
+      expect(manager.manifestFinder, isNotNull);
+
+      final customFinder = ExtensionManifestFinder(fileSystem: fs, logger: logger);
+      final customManager = ExtensionManager(
+        hostPlatform: HostPlatform.linux_x64,
+        logger: logger,
+        fileSystem: fs,
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        manifestFinder: customFinder,
+      );
+
+      expect(customManager.manifestFinder, equals(customFinder));
     });
   });
 }

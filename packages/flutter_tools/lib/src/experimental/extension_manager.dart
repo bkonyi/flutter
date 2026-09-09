@@ -6,7 +6,7 @@ import 'dart:async';
 
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
-import '../base/context.dart';
+import '../base/file_system.dart';
 import '../base/logger.dart';
 import '../base/os.dart';
 import '../features.dart';
@@ -14,42 +14,41 @@ import 'config.dart';
 import 'diagnostics.dart';
 import 'extension_device_manager.dart';
 import 'extension_discovery.dart';
+import 'extension_manifest.dart';
 
 /// Manages active tool extension isolate connections and exposes capability proxies.
 class ExtensionManager {
-  /// Creates an [ExtensionManager] targeting the active [hostPlatform].
+  /// Creates an [ExtensionManager] configured with explicit dependencies.
   ExtensionManager({
     required this.hostPlatform,
     required Logger logger,
+    required FileSystem fileSystem,
+    required FeatureFlags featureFlags,
     List<ExtensionEntryPoint> entryPoints = const <ExtensionEntryPoint>[],
     ExtensionDiscovery? discovery,
-    FeatureFlags? featureFlags,
+    ExtensionManifestFinder? manifestFinder,
   }) : _logger = logger,
-       _entryPoints = entryPoints,
+       _fs = fileSystem,
+       _featureFlags = featureFlags,
+       _entryPoints = List<ExtensionEntryPoint>.from(entryPoints),
        _discovery = discovery ?? ExtensionDiscovery(logger: logger),
-       _featureFlags = featureFlags ?? context.get<FeatureFlags>()!;
+       _manifestFinder =
+           manifestFinder ?? ExtensionManifestFinder(fileSystem: fileSystem, logger: logger);
 
   /// The active [HostPlatform].
   final HostPlatform hostPlatform;
   final Logger _logger;
-  final ExtensionDiscovery _discovery;
-  final List<ExtensionEntryPoint> _entryPoints;
+  final FileSystem _fs;
+
+  /// The [FileSystem] used by this manager.
+  FileSystem get fileSystem => _fs;
   final FeatureFlags _featureFlags;
-  Future<void>? _initFuture;
+  final List<ExtensionEntryPoint> _entryPoints;
+  final ExtensionDiscovery _discovery;
+  final ExtensionManifestFinder _manifestFinder;
 
-  /// Ensures entrypoints are initialized; idempotent.
-  Future<void> ensureInitialized() {
-    return _initFuture ??= _doInitialize();
-  }
-
-  Future<void> _doInitialize() async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
-      return;
-    }
-    if (_entryPoints.isNotEmpty) {
-      await initialize(entryPoints: _entryPoints);
-    }
-  }
+  /// The [ExtensionManifestFinder] used to discover extension manifests.
+  ExtensionManifestFinder get manifestFinder => _manifestFinder;
 
   /// Active extension connections compatible with [hostPlatform].
   List<ExtensionConnection> get connections => _discovery.connections;
@@ -60,6 +59,29 @@ class ExtensionManager {
     HostPlatform.linux_x64 || HostPlatform.linux_arm64 || HostPlatform.linux_riscv64 => 'linux',
     HostPlatform.windows_x64 || HostPlatform.windows_arm64 => 'windows',
   };
+
+  final List<DiagnosticsExtension> _diagnosticsExtensions = <DiagnosticsExtension>[];
+  final List<ConfigurationExtension> _configurationExtensions = <ConfigurationExtension>[];
+  Future<void>? _initFuture;
+  bool get isInitialized => _isInitialized;
+  bool _isInitialized = false;
+
+  /// Ensures entrypoints are initialized; idempotent.
+  Future<void> ensureInitialized() {
+    return _initFuture ??= _doInitialize();
+  }
+
+  Future<void> _doInitialize() async {
+    if (!_featureFlags.isToolExtensionsEnabled) {
+      _isInitialized = true;
+      return;
+    }
+    if (_entryPoints.isNotEmpty) {
+      await initialize(entryPoints: _entryPoints);
+    } else {
+      _isInitialized = true;
+    }
+  }
 
   /// Spawns entrypoints without host OS checks; disposes any extension that reports
   /// it does not support [hostPlatform].
@@ -88,34 +110,39 @@ class ExtensionManager {
         await connection.dispose();
       }
     }
+    _diagnosticsExtensions.clear();
+    _configurationExtensions.clear();
+    for (final ExtensionConnection connection in _discovery.connections) {
+      if (connection.capabilities.services.contains(DiagnosticsExtension.serviceNamespace)) {
+        final client = DiagnosticsExtensionClient(connection, logger: _logger);
+        await client.fetchTitle();
+        _diagnosticsExtensions.add(client);
+      }
+      if (connection.capabilities.services.contains(ConfigurationExtension.serviceNamespace)) {
+        final client = ConfigurationExtensionClient(connection, logger: _logger);
+        await client.fetchTitle();
+        _configurationExtensions.add(client);
+      }
+    }
+    _isInitialized = true;
   }
 
   /// Active [DiagnosticsExtension] proxies for extensions supporting `'diagnostics'`.
   List<DiagnosticsExtension> get diagnosticsExtensions {
-    _logger.printTrace('ExtensionManager querying active diagnosticsExtensions.');
-    return _discovery.connections
-        .where(
-          (ExtensionConnection c) =>
-              c.capabilities.services.contains(DiagnosticsExtension.serviceNamespace),
-        )
-        .map<DiagnosticsExtension>(
-          (ExtensionConnection c) => DiagnosticsExtensionClient(c, logger: _logger),
-        )
-        .toList();
+    assert(
+      _isInitialized,
+      'ExtensionManager.ensureInitialized() must be called before accessing diagnosticsExtensions.',
+    );
+    return List<DiagnosticsExtension>.unmodifiable(_diagnosticsExtensions);
   }
 
   /// Active [ConfigurationExtension] proxies for extensions supporting `'configuration'`.
   List<ConfigurationExtension> get configurationExtensions {
-    _logger.printTrace('ExtensionManager querying active configurationExtensions.');
-    return _discovery.connections
-        .where(
-          (ExtensionConnection c) =>
-              c.capabilities.services.contains(ConfigurationExtension.serviceNamespace),
-        )
-        .map<ConfigurationExtension>(
-          (ExtensionConnection c) => ConfigurationExtensionClient(c, logger: _logger),
-        )
-        .toList();
+    assert(
+      _isInitialized,
+      'ExtensionManager.ensureInitialized() must be called before accessing configurationExtensions.',
+    );
+    return List<ConfigurationExtension>.unmodifiable(_configurationExtensions);
   }
 
   /// Active [DeviceService] proxies for extensions supporting `'device'`.
@@ -133,6 +160,10 @@ class ExtensionManager {
   /// Disposes all active extension isolate connections.
   Future<void> dispose() async {
     _logger.printTrace('ExtensionManager disposing all active connections.');
+    _diagnosticsExtensions.clear();
+    _configurationExtensions.clear();
+    _isInitialized = false;
+    _initFuture = null;
     await _discovery.dispose();
   }
 }

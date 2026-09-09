@@ -114,6 +114,7 @@ Future<void> main(List<String> args) async {
       final manager = ExtensionManager(
         hostPlatform: globals.os.hostPlatform,
         logger: globals.logger,
+        fileSystem: globals.fs,
         entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
         featureFlags: featureFlags,
       );

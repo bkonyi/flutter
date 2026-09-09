@@ -31,6 +31,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -57,6 +58,7 @@ void main() {
         disabledManager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -92,6 +94,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
@@ -122,6 +125,7 @@ void main() {
         enabledManager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: testLogger,
+          fileSystem: globals.fs,
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );

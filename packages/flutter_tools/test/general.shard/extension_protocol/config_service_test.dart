@@ -4,6 +4,7 @@
 
 import 'dart:isolate';
 
+import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/commands/config.dart';
@@ -52,7 +53,13 @@ void main() {
       'ExtensionConfiguration fetches feature flags and config options from single extension',
       () async {
         final logger = BufferLogger.test();
-        final manager = ExtensionManager(hostPlatform: HostPlatform.linux_x64, logger: logger);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: MemoryFileSystem.test(),
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        );
+
         await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
 
         final config = ExtensionConfiguration(
@@ -87,7 +94,12 @@ void main() {
       'ExtensionConfiguration aggregates feature flags and config options across multiple extensions',
       () async {
         final logger = BufferLogger.test();
-        final manager = ExtensionManager(hostPlatform: HostPlatform.linux_x64, logger: logger);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: MemoryFileSystem.test(),
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        );
         await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
 
         final config = ExtensionConfiguration(
@@ -125,7 +137,13 @@ void main() {
       'ConfigCommand settingsText incorporates extension flags and options grouped by extension title',
       () async {
         final logger = BufferLogger.test();
-        final manager = ExtensionManager(hostPlatform: HostPlatform.linux_x64, logger: logger);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: MemoryFileSystem.test(),
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        );
+
         await manager.initialize(
           entryPoints: <ExtensionEntryPoint>[
             linuxExtensionEntryPoint,

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/experimental/diagnostics.dart';
@@ -35,6 +36,7 @@ void main() {
       final manager = ExtensionManager(
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
+        fileSystem: MemoryFileSystem.test(),
         featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
@@ -59,6 +61,7 @@ void main() {
         final manager = ExtensionManager(
           hostPlatform: HostPlatform.linux_x64,
           logger: logger,
+          fileSystem: MemoryFileSystem.test(),
           featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
         );
         await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
