@@ -52,8 +52,6 @@ Future<int> run(
   final bool usingLocalEngine = args.any((a) => a.startsWith('--local-engine'));
 
   return runInContext<int>(() async {
-    globals.terminal.applyFeatureFlags(featureFlags);
-
     reportCrashes ??= !await globals.isRunningOnBot;
     final runner = FlutterCommandRunner(verboseHelp: verboseHelp);
     commands().forEach(runner.addCommand);

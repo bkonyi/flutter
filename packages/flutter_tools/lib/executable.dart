@@ -115,6 +115,7 @@ Future<void> main(List<String> args) async {
         hostPlatform: globals.os.hostPlatform,
         logger: globals.logger,
         fileSystem: globals.fs,
+        platform: globals.platform,
         entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
         featureFlags: featureFlags,
       );

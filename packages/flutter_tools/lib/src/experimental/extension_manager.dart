@@ -9,6 +9,7 @@ import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
 import '../base/file_system.dart';
 import '../base/logger.dart';
+import '../base/platform.dart';
 import '../features.dart';
 import 'config.dart';
 import 'diagnostics.dart';
@@ -25,6 +26,7 @@ class ExtensionManager {
     required Logger logger,
     required FileSystem fileSystem,
     required FeatureFlags featureFlags,
+    Platform? platform,
     ExtensionCapabilityCacheManager? cacheManager,
     List<ExtensionEntryPoint> entryPoints = const <ExtensionEntryPoint>[],
     ExtensionDiscovery? discovery,
@@ -33,6 +35,7 @@ class ExtensionManager {
   }) : _logger = logger,
        _fs = fileSystem,
        _featureFlags = featureFlags,
+       _platform = platform ?? const LocalPlatform(),
        _cacheManager =
            cacheManager ?? ExtensionCapabilityCacheManager(fileSystem: fileSystem, logger: logger),
        _discovery = discovery ?? ExtensionDiscovery(logger: logger),
@@ -49,6 +52,7 @@ class ExtensionManager {
   /// The [FileSystem] used by this manager.
   FileSystem get fileSystem => _fs;
   final FeatureFlags _featureFlags;
+  final Platform _platform;
   final ExtensionCapabilityCacheManager _cacheManager;
   final ExtensionDiscovery _discovery;
   final List<ExtensionEntryPoint> _entryPoints;
@@ -79,9 +83,12 @@ class ExtensionManager {
   bool get isInitialized => _isInitialized;
   bool _isInitialized = false;
 
+  /// Whether safe mode bypass is engaged via the host environment.
+  bool get isSafeMode => isSafeModeActive(_platform.environment);
+
   /// Ensures entrypoints and discovered extensions are initialized; idempotent per service requirement.
   Future<void> ensureInitialized({Set<String>? requiredServices, Directory? startDir}) async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+    if (isSafeMode || !_featureFlags.isToolExtensionsEnabled) {
       _isInitialized = true;
       return;
     }

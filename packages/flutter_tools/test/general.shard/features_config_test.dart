@@ -165,4 +165,203 @@ void main() {
       isFalse,
     );
   });
+
+  group('toolExtensionsFeature safe mode and environment overrides', () {
+    test('disabled when FLUTTER_NO_EXTENSIONS=1 even if config enables it', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '1'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('disabled when FLUTTER_NO_EXTENSIONS=true even if config enables it', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'true'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('disabled when FLUTTER_NO_EXTENSIONS=yes even if config enables it', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'yes'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('disabled when FLUTTER_NO_EXTENSIONS contains whitespace', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': ' TRUE '},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': ' 1 '},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('inactive when FLUTTER_NO_EXTENSIONS is set to 0, false, or no', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '0'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isTrue,
+      );
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'false'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isTrue,
+      );
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'no'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isTrue,
+      );
+    });
+
+    test('disabled when FLUTTER_TOOL_EXTENSIONS=false', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': 'false'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('disabled when FLUTTER_TOOL_EXTENSIONS=0', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': '0'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('disabled when FLUTTER_TOOL_EXTENSIONS=no', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': 'no'},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('enabled when FLUTTER_TOOL_EXTENSIONS=true overriding config false', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': 'true'},
+          globalConfig: <String, Object>{'enable-tool-extensions': false},
+        ),
+        isTrue,
+      );
+    });
+
+    test('enabled when FLUTTER_TOOL_EXTENSIONS=yes overriding config false', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': 'yes'},
+          globalConfig: <String, Object>{'enable-tool-extensions': false},
+        ),
+        isTrue,
+      );
+    });
+
+    test('enabled when FLUTTER_TOOL_EXTENSIONS contains whitespace', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': ' 1 '},
+        ),
+        isTrue,
+      );
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': ' 0 '},
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isFalse,
+      );
+    });
+
+    test('FLUTTER_TOOL_EXTENSIONS overrides pubspec.yaml project config', () {
+      const projectManifest = '''
+name: test_project
+flutter:
+  config:
+    enable-tool-extensions: false
+''';
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': 'true'},
+          projectManifest: projectManifest,
+        ),
+        isTrue,
+      );
+    });
+
+    test('enabled when FLUTTER_TOOL_EXTENSIONS=1', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          environment: <String, String>{'FLUTTER_TOOL_EXTENSIONS': '1'},
+        ),
+        isTrue,
+      );
+    });
+
+    test('falls back to config when environment overrides omitted', () {
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          globalConfig: <String, Object>{'enable-tool-extensions': true},
+        ),
+        isTrue,
+      );
+
+      expect(
+        isEnabled(
+          toolExtensionsFeature,
+          globalConfig: <String, Object>{'enable-tool-extensions': false},
+        ),
+        isFalse,
+      );
+    });
+  });
 }

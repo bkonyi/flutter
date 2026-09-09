@@ -102,6 +102,12 @@ interface class FlutterFeaturesConfig {
   /// ENABLE_FOO=any-other-value flutter some-command
   /// ```
   bool? isEnabled(Feature feature) {
+    if (feature == toolExtensionsFeature) {
+      if (isSafeModeActive(_platform.environment)) {
+        return false;
+      }
+      return _isEnabledByPlatformEnvironment(feature) ?? _isEnabledByConfigValue(feature);
+    }
     return _isEnabledByConfigValue(feature) ?? _isEnabledByPlatformEnvironment(feature);
   }
 
@@ -120,11 +126,12 @@ interface class FlutterFeaturesConfig {
     if (environmentName == null) {
       return null;
     }
-    final Object? environmentValue = _platform.environment[environmentName]?.toLowerCase();
-    if (environmentValue == null) {
+    final Object? rawValue = _platform.environment[environmentName];
+    if (rawValue is! String) {
       return null;
     }
-    return environmentValue == 'true';
+    final String environmentValue = rawValue.trim().toLowerCase();
+    return environmentValue == 'true' || environmentValue == '1' || environmentValue == 'yes';
   }
 
   bool? _isEnabledAtProjectLevel(String featureName) {

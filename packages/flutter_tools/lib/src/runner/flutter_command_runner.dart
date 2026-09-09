@@ -47,9 +47,39 @@ abstract final class FlutterGlobalOptions {
   static const kVerboseFlag = 'verbose';
   static const kVersionCheckFlag = 'version-check';
   static const kVersionFlag = 'version';
+  static const kExtensionsFlag = 'extensions';
+  static const kToolExtensionsAlias = 'tool-extensions';
   static const kWrapColumnOption = 'wrap-column';
   static const kWrapFlag = 'wrap';
   static const kDebugLogsDirectoryFlag = 'debug-logs-dir';
+
+  /// Inspects [args] to determine whether the user explicitly enabled or disabled tool extensions
+  /// via CLI flags (`--extensions`, `--no-extensions`, `--tool-extensions`, `--no-tool-extensions`).
+  ///
+  /// Returns `false` if explicitly disabled, `true` if explicitly enabled, or `null` if not specified.
+  static bool? evaluateToolExtensionsCliFlag(Iterable<String> args) {
+    bool? result;
+    for (final rawArg in args) {
+      if (rawArg == '--') {
+        break;
+      }
+      final String lowerArg = rawArg.toLowerCase();
+      if (lowerArg == '--no-$kExtensionsFlag' || lowerArg == '--no-$kToolExtensionsAlias') {
+        result = false;
+      } else if (lowerArg == '--$kExtensionsFlag' || lowerArg == '--$kToolExtensionsAlias') {
+        result = true;
+      } else if (lowerArg.startsWith('--$kExtensionsFlag=') ||
+          lowerArg.startsWith('--$kToolExtensionsAlias=')) {
+        final String value = lowerArg.substring(lowerArg.indexOf('=') + 1);
+        result = switch (value) {
+          'true' || '1' || 'yes' => true,
+          'false' || '0' || 'no' => false,
+          _ => result,
+        };
+      }
+    }
+    return result;
+  }
 }
 
 class FlutterCommandRunner extends CommandRunner<void> {
@@ -241,6 +271,12 @@ class FlutterCommandRunner extends CommandRunner<void> {
       help: 'Path to a directory where logs for debugging may be added.',
       hide: !verboseHelp,
     );
+    argParser.addFlag(
+      FlutterGlobalOptions.kExtensionsFlag,
+      defaultsTo: true,
+      aliases: const <String>[FlutterGlobalOptions.kToolExtensionsAlias],
+      help: 'Enable or disable Flutter tool extensions (safe mode bypass).',
+    );
   }
 
   @override
@@ -352,9 +388,23 @@ class FlutterCommandRunner extends CommandRunner<void> {
         }
       }
 
-      if (featureFlags.isToolExtensionsEnabled && command is ExtensionArgParserMixin) {
-        await command.initializeDynamicOptions();
-        rebuildArgParser();
+      if (!isSafeModeActive(globals.platform.environment)) {
+        final bool? cliOverride = FlutterGlobalOptions.evaluateToolExtensionsCliFlag(args);
+        final bool isEnabled = cliOverride ?? featureFlags.isToolExtensionsEnabled;
+        if (isEnabled) {
+          var needsRebuild = false;
+          var current = command;
+          while (current != null) {
+            if (current case final ExtensionArgParserMixin dynamicCommand) {
+              await dynamicCommand.initializeDynamicOptions();
+              needsRebuild = true;
+            }
+            current = current.parent;
+          }
+          if (needsRebuild) {
+            rebuildArgParser();
+          }
+        }
       }
     }
 

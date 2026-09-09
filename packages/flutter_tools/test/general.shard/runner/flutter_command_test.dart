@@ -30,7 +30,6 @@ import 'package:flutter_tools/src/pre_run_validator.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/version.dart';
-import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:meta/meta.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/testing.dart';
@@ -635,6 +634,138 @@ void main() {
             label: 'fail',
           ),
         ),
+      );
+    });
+
+    group('areToolExtensionsEnabled', () {
+      testUsingContext(
+        'defaults to featureFlags.isToolExtensionsEnabled when no flag is passed',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isTrue);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+        },
+      );
+
+      testUsingContext(
+        'defaults to false when feature flag is disabled and no flag is passed',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isFalse);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(),
+        },
+      );
+
+      testUsingContext(
+        'returns false when --no-extensions is passed even if feature flag is true',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--no-extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isFalse);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+        },
+      );
+
+      testUsingContext(
+        'returns false when --no-tool-extensions alias is passed',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--no-tool-extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isFalse);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+        },
+      );
+
+      testUsingContext(
+        'returns true when --extensions is passed even if feature flag is false',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isTrue);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(),
+        },
+      );
+
+      testUsingContext(
+        'returns true when --tool-extensions alias is passed even if feature flag is false',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--tool-extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isTrue);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          FeatureFlags: () => TestFeatureFlags(),
+        },
+      );
+
+      testUsingContext(
+        'returns false when safe mode FLUTTER_NO_EXTENSIONS=1 is active even if --extensions is passed',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isFalse);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          Platform: () => FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '1'}),
+          FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+        },
+      );
+
+      testUsingContext(
+        'returns false when safe mode FLUTTER_NO_EXTENSIONS=1 is active even if --tool-extensions is passed',
+        () async {
+          final command = _FakeToolExtensionsCommand();
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['--tool-extensions', 'ext-cmd']);
+
+          expect(command.areExtensionsEnabledDuringRun, isFalse);
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          Platform: () => FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '1'}),
+          FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
+        },
       );
     });
 
@@ -2207,5 +2338,21 @@ class DummyMachineFlutterCommand extends DummyFlutterCommand {
 class DummyHcppFlutterCommand extends DummyFlutterCommand {
   DummyHcppFlutterCommand() : super(name: 'dummy') {
     addEnableHcppFlag(verboseHelp: false);
+  }
+}
+
+final class _FakeToolExtensionsCommand extends FlutterCommand {
+  bool? areExtensionsEnabledDuringRun;
+
+  @override
+  String get name => 'ext-cmd';
+
+  @override
+  String get description => 'A fake command to test areToolExtensionsEnabled';
+
+  @override
+  Future<FlutterCommandResult> runCommand() async {
+    areExtensionsEnabledDuringRun = areToolExtensionsEnabled;
+    return FlutterCommandResult.success();
   }
 }

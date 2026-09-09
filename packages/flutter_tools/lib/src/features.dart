@@ -331,6 +331,15 @@ const macOSArm64Only = Feature(
   stable: FeatureChannelSetting(available: true),
 );
 
+/// Environment variable to bypass tool extensions (safe mode).
+const String kFlutterNoExtensionsEnv = 'FLUTTER_NO_EXTENSIONS';
+
+/// Returns true if [environment] enables safe mode (emergency extensions bypass).
+bool isSafeModeActive(Map<String, String> environment) {
+  final String? val = environment[kFlutterNoExtensionsEnv]?.trim().toLowerCase();
+  return val == '1' || val == 'true' || val == 'yes';
+}
+
 /// Enable tool extensions feature.
 const toolExtensionsFeature = Feature(
   name: 'support for tool extensions',

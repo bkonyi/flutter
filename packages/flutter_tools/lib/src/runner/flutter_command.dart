@@ -5,7 +5,6 @@
 import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:file/file.dart';
-import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config_types.dart';
 import 'package:unified_analytics/unified_analytics.dart';
@@ -469,6 +468,24 @@ abstract class FlutterCommand extends Command<void> {
 
   String? get debugLogsDirectoryPath =>
       stringArg(FlutterGlobalOptions.kDebugLogsDirectoryFlag, global: true);
+
+  /// Whether Flutter tool extensions are enabled for this command invocation.
+  ///
+  /// Evaluates CLI flags (`--extensions`, `--no-extensions`, `--tool-extensions`,
+  /// `--no-tool-extensions`), followed by environment variables (`FLUTTER_NO_EXTENSIONS`
+  /// and `FLUTTER_TOOL_EXTENSIONS`) and the configured [featureFlags].
+  bool get areToolExtensionsEnabled {
+    if (isSafeModeActive(globals.platform.environment)) {
+      return false;
+    }
+    if (globalResults case final ArgResults results) {
+      if (results.options.contains(FlutterGlobalOptions.kExtensionsFlag) &&
+          results.wasParsed(FlutterGlobalOptions.kExtensionsFlag)) {
+        return boolArg(FlutterGlobalOptions.kExtensionsFlag, global: true);
+      }
+    }
+    return featureFlags.isToolExtensionsEnabled;
+  }
 
   /// The value of the `--filesystem-scheme` argument.
   ///

@@ -8,6 +8,7 @@ import 'package:file/memory.dart';
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools/src/experimental/extension_manifest.dart';
@@ -82,5 +83,77 @@ void main() {
 
       expect(customManager.manifestFinder, equals(customFinder));
     });
+
+    test('isSafeMode returns true when FLUTTER_NO_EXTENSIONS is set', () {
+      final safePlatforms = <Platform>[
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '1'}),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'true'}),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'yes'}),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': ' TRUE '}),
+      ];
+
+      for (final platform in safePlatforms) {
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: BufferLogger.test(),
+          fileSystem: MemoryFileSystem.test(),
+          platform: platform,
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        );
+        expect(manager.isSafeMode, isTrue);
+      }
+    });
+
+    test('isSafeMode returns false when FLUTTER_NO_EXTENSIONS is not set or false', () {
+      final normalPlatforms = <Platform>[
+        FakePlatform(),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '0'}),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'false'}),
+        FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': 'no'}),
+      ];
+
+      for (final platform in normalPlatforms) {
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: BufferLogger.test(),
+          fileSystem: MemoryFileSystem.test(),
+          platform: platform,
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        );
+        expect(manager.isSafeMode, isFalse);
+      }
+    });
+
+    test('ensureInitialized bypasses discovery and isolate spawning in safe mode', () async {
+      final logger = BufferLogger.test();
+      final manager = ExtensionManager(
+        hostPlatform: HostPlatform.linux_x64,
+        logger: logger,
+        fileSystem: MemoryFileSystem.test(),
+        platform: FakePlatform(environment: <String, String>{'FLUTTER_NO_EXTENSIONS': '1'}),
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+      );
+
+      await manager.ensureInitialized();
+      expect(manager.connections, isEmpty);
+      expect(manager.isInitialized, isTrue);
+    });
+
+    test(
+      'ensureInitialized bypasses discovery and isolate spawning when feature flag is disabled',
+      () async {
+        final logger = BufferLogger.test();
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: MemoryFileSystem.test(),
+          featureFlags: TestFeatureFlags(),
+        );
+
+        await manager.ensureInitialized();
+        expect(manager.connections, isEmpty);
+        expect(manager.isInitialized, isTrue);
+      },
+    );
   });
 }

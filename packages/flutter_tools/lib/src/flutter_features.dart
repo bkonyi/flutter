@@ -85,14 +85,22 @@ mixin FlutterFeatureFlagsIsEnabled implements FeatureFlags {
 
 interface class FlutterFeatureFlags extends FeatureFlags with FlutterFeatureFlagsIsEnabled {
   FlutterFeatureFlags({
-    required FlutterVersion flutterVersion,
     required FlutterFeaturesConfig featuresConfig,
+    required FlutterVersion flutterVersion,
+    this.isToolExtensionsEnabledOverride,
     required this.platform,
-  }) : _flutterVersion = flutterVersion,
-       _featuresConfig = featuresConfig;
+  }) : _featuresConfig = featuresConfig,
+       _flutterVersion = flutterVersion;
 
-  final FlutterVersion _flutterVersion;
   final FlutterFeaturesConfig _featuresConfig;
+  final FlutterVersion _flutterVersion;
+
+  /// Optional override for [isToolExtensionsEnabled] (e.g. from CLI safe mode flags).
+  final bool? isToolExtensionsEnabledOverride;
+
+  @override
+  bool get isToolExtensionsEnabled =>
+      isToolExtensionsEnabledOverride ?? isEnabled(toolExtensionsFeature);
 
   @override
   @protected
@@ -100,6 +108,9 @@ interface class FlutterFeatureFlags extends FeatureFlags with FlutterFeatureFlag
 
   @override
   bool isEnabled(Feature feature) {
+    if (feature == toolExtensionsFeature && isToolExtensionsEnabledOverride != null) {
+      return isToolExtensionsEnabledOverride!;
+    }
     final String currentChannel = _flutterVersion.channel;
     final FeatureChannelSetting featureSetting = feature.getSettingForChannel(currentChannel);
 
