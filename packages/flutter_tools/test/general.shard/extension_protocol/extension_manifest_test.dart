@@ -434,5 +434,95 @@ extensions:
         ),
       );
     });
+
+    test('normalizes supportedPlatforms to lowercase', () {
+      final File manifestFile = fs.file('/case_platforms_manifest.yaml')
+        ..writeAsStringSync('''
+extensions:
+  my_pkg:
+    supportedPlatforms:
+      - Linux
+      - MacOS
+      - Windows
+''');
+
+      final ExtensionManifest manifest = finder.parseManifest(manifestFile);
+      expect(manifest.extensions.single.supportedPlatforms, <String>['linux', 'macos', 'windows']);
+    });
+
+    test('findPackageConfig traverses upward and stops at sentinel boundaries', () {
+      final Directory workspaceDir = fs.directory('/boundary_test')..createSync();
+      workspaceDir.childFile('.git').createSync();
+      final Directory subDir = workspaceDir.childDirectory('sub').childDirectory('inner')
+        ..createSync(recursive: true);
+
+      // No package_config.json yet: returns null when reaching .git
+      expect(finder.findPackageConfig(subDir), isNull);
+
+      // Create package_config.json at workspace root
+      final File packageConfigFile =
+          workspaceDir.childDirectory('.dart_tool').childFile('package_config.json')
+            ..createSync(recursive: true);
+      packageConfigFile.writeAsStringSync('{"configVersion": 2, "packages": []}');
+
+      expect(finder.findPackageConfig(subDir)?.path, equals(packageConfigFile.path));
+    });
+
+    test('findPackageConfig stops at pub workspace root', () {
+      final Directory rootDir = fs.directory('/ws_root')..createSync();
+      rootDir.childFile('pubspec.yaml').writeAsStringSync('workspace:\n  - pkg_a\n');
+      final Directory childDir = rootDir.childDirectory('pkg_a')..createSync();
+
+      expect(finder.findPackageConfig(childDir), isNull);
+
+      final File packageConfigFile =
+          rootDir.childDirectory('.dart_tool').childFile('package_config.json')
+            ..createSync(recursive: true);
+      packageConfigFile.writeAsStringSync('{"configVersion": 2, "packages": []}');
+
+      expect(finder.findPackageConfig(childDir)?.path, equals(packageConfigFile.path));
+    });
+
+    test('findPackageConfig handles relative paths', () {
+      final Directory relDir = fs.directory('rel_pkg_test')..createSync(recursive: true);
+      final File pkgConfigFile =
+          relDir.childDirectory('.dart_tool').childFile('package_config.json')
+            ..createSync(recursive: true);
+      pkgConfigFile.writeAsStringSync('{"configVersion": 2, "packages": []}');
+
+      expect(finder.findPackageConfig(relDir)?.path, equals(pkgConfigFile.absolute.path));
+    });
+
+    test('loadMergedDeclarationsWithFiles associates each declaration with originating file', () {
+      final Directory wsDir = fs.directory('/merge_files_ws')..createSync();
+      final File rootManifest = wsDir.childFile('flutter_extensions.yaml')
+        ..writeAsStringSync('''
+extensions:
+  ext_root_only:
+    entrypoint: bin/root.dart
+  ext_shared:
+    entrypoint: bin/shared_root.dart
+''');
+
+      final Directory appDir = wsDir.childDirectory('app')..createSync();
+      final File leafManifest = appDir.childFile('flutter_extensions.yaml')
+        ..writeAsStringSync('''
+extensions:
+  ext_shared:
+    entrypoint: bin/shared_leaf.dart
+  ext_leaf_only:
+    entrypoint: bin/leaf.dart
+''');
+
+      final Map<String, ({ExtensionDeclaration declaration, File manifestFile})> merged = finder
+          .loadMergedDeclarationsWithFiles(<File>[rootManifest, leafManifest]);
+
+      expect(merged.keys, containsAll(<String>['ext_root_only', 'ext_shared', 'ext_leaf_only']));
+      expect(merged['ext_root_only']!.manifestFile.path, equals(rootManifest.path));
+      expect(merged['ext_leaf_only']!.manifestFile.path, equals(leafManifest.path));
+      // Leaf overrides root
+      expect(merged['ext_shared']!.manifestFile.path, equals(leafManifest.path));
+      expect(merged['ext_shared']!.declaration.entrypoint, equals('bin/shared_leaf.dart'));
+    });
   });
 }

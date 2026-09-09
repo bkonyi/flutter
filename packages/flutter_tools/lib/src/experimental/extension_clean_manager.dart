@@ -33,7 +33,9 @@ base class ExtensionCleanManager {
     if (!_featureFlags.isToolExtensionsEnabled) {
       return;
     }
-    await _extensionManager.ensureInitialized();
+    await _extensionManager.ensureInitialized(
+      requiredServices: const <String>{CleanService.serviceNamespace},
+    );
     final Directory targetBuildDir = buildDirectory ?? project.buildDirectory;
     final environment = CleanEnvironment(
       buildDir: targetBuildDir.uri,

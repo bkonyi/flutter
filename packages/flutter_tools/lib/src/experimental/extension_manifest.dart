@@ -30,13 +30,14 @@ class ExtensionManifestFinder {
   static const String _kDefaultEntrypointDir = 'bin';
 
   /// Locates all [kManifestFileName] files from [startDir] upwards to the repository
-  /// or pub workspace root.
+  /// or pub workspace root. If [startDir] is omitted, defaults to current directory.
   ///
   /// Returns the files ordered from the root-most directory to [startDir], so that
   /// leaf/project declarations can override root/workspace declarations.
-  List<File> findManifestFiles(Directory startDir) {
+  List<File> findManifestFiles([Directory? startDir]) {
     final discovered = <File>[];
-    Directory current = startDir.absolute;
+    final Directory targetDir = startDir ?? _fs.currentDirectory;
+    Directory current = targetDir.absolute;
 
     while (true) {
       final File manifestCandidate = current.childFile(kManifestFileName);
@@ -197,7 +198,7 @@ class ExtensionManifestFinder {
         if (platformNode is! YamlScalar || platformNode.value is! String) {
           throw FormatException(platformNode.span.message('Platform entry must be a string.'));
         }
-        platforms.add(platformNode.value as String);
+        platforms.add((platformNode.value as String).toLowerCase());
       }
       supportedPlatforms = platforms;
     }
@@ -221,6 +222,22 @@ class ExtensionManifestFinder {
       final ExtensionManifest manifest = parseManifest(file);
       for (final ExtensionDeclaration declaration in manifest.extensions) {
         merged[declaration.name] = declaration;
+      }
+    }
+    return merged;
+  }
+
+  /// Parses and merges declarations from [manifestFiles] in order, pairing each
+  /// declaration with its source [File].
+  ///
+  /// Later files (e.g. project-level) override earlier files (e.g. workspace-level).
+  Map<String, ({ExtensionDeclaration declaration, File manifestFile})>
+  loadMergedDeclarationsWithFiles(List<File> manifestFiles) {
+    final merged = <String, ({ExtensionDeclaration declaration, File manifestFile})>{};
+    for (final file in manifestFiles) {
+      final ExtensionManifest manifest = parseManifest(file);
+      for (final ExtensionDeclaration declaration in manifest.extensions) {
+        merged[declaration.name] = (declaration: declaration, manifestFile: file);
       }
     }
     return merged;
@@ -252,7 +269,7 @@ class ExtensionManifestFinder {
     }
 
     // Resolve through package_config.json.
-    final File? packageConfigFile = _findPackageConfig(manifestFile.parent);
+    final File? packageConfigFile = findPackageConfig(manifestFile.parent);
     if (packageConfigFile == null || !packageConfigFile.existsSync()) {
       _logger.printTrace(
         'Could not locate .dart_tool/package_config.json for extension "${declaration.name}".',
@@ -289,7 +306,8 @@ class ExtensionManifestFinder {
     return null;
   }
 
-  File? _findPackageConfig(Directory directory) {
+  /// Locates `.dart_tool/package_config.json` starting at [directory] and traversing upward.
+  File? findPackageConfig(Directory directory) {
     Directory current = directory.absolute;
     while (true) {
       final File configCandidate = current

@@ -4,14 +4,15 @@
 
 import 'dart:async';
 
+import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
 import '../base/file_system.dart';
 import '../base/logger.dart';
-import '../base/os.dart';
 import '../features.dart';
 import 'config.dart';
 import 'diagnostics.dart';
+import 'extension_cache.dart';
 import 'extension_device_manager.dart';
 import 'extension_discovery.dart';
 import 'extension_manifest.dart';
@@ -24,16 +25,21 @@ class ExtensionManager {
     required Logger logger,
     required FileSystem fileSystem,
     required FeatureFlags featureFlags,
+    ExtensionCapabilityCacheManager? cacheManager,
     List<ExtensionEntryPoint> entryPoints = const <ExtensionEntryPoint>[],
     ExtensionDiscovery? discovery,
     ExtensionManifestFinder? manifestFinder,
+    ExtensionUriSpawner spawner = ExtensionConnection.spawnUri,
   }) : _logger = logger,
        _fs = fileSystem,
        _featureFlags = featureFlags,
-       _entryPoints = List<ExtensionEntryPoint>.from(entryPoints),
+       _cacheManager =
+           cacheManager ?? ExtensionCapabilityCacheManager(fileSystem: fileSystem, logger: logger),
        _discovery = discovery ?? ExtensionDiscovery(logger: logger),
+       _entryPoints = List<ExtensionEntryPoint>.from(entryPoints),
        _manifestFinder =
-           manifestFinder ?? ExtensionManifestFinder(fileSystem: fileSystem, logger: logger);
+           manifestFinder ?? ExtensionManifestFinder(fileSystem: fileSystem, logger: logger),
+       _spawner = spawner;
 
   /// The active [HostPlatform].
   final HostPlatform hostPlatform;
@@ -43,9 +49,14 @@ class ExtensionManager {
   /// The [FileSystem] used by this manager.
   FileSystem get fileSystem => _fs;
   final FeatureFlags _featureFlags;
-  final List<ExtensionEntryPoint> _entryPoints;
+  final ExtensionCapabilityCacheManager _cacheManager;
   final ExtensionDiscovery _discovery;
+  final List<ExtensionEntryPoint> _entryPoints;
   final ExtensionManifestFinder _manifestFinder;
+  final ExtensionUriSpawner _spawner;
+
+  /// The [ExtensionCapabilityCacheManager] managing capability cache on disk.
+  ExtensionCapabilityCacheManager get cacheManager => _cacheManager;
 
   /// The [ExtensionManifestFinder] used to discover extension manifests.
   ExtensionManifestFinder get manifestFinder => _manifestFinder;
@@ -62,24 +73,176 @@ class ExtensionManager {
 
   final List<DiagnosticsExtension> _diagnosticsExtensions = <DiagnosticsExtension>[];
   final List<ConfigurationExtension> _configurationExtensions = <ConfigurationExtension>[];
-  Future<void>? _initFuture;
+  final Set<String> _spawnedExtensionNames = <String>{};
+  final Set<String> _failedExtensionNames = <String>{};
+  bool _entryPointsSpawned = false;
   bool get isInitialized => _isInitialized;
   bool _isInitialized = false;
 
-  /// Ensures entrypoints are initialized; idempotent.
-  Future<void> ensureInitialized() {
-    return _initFuture ??= _doInitialize();
-  }
-
-  Future<void> _doInitialize() async {
+  /// Ensures entrypoints and discovered extensions are initialized; idempotent per service requirement.
+  Future<void> ensureInitialized({Set<String>? requiredServices, Directory? startDir}) async {
     if (!_featureFlags.isToolExtensionsEnabled) {
       _isInitialized = true;
       return;
     }
-    if (_entryPoints.isNotEmpty) {
+    await _doInitialize(requiredServices: requiredServices, startDir: startDir);
+  }
+
+  Future<void> _doInitialize({Set<String>? requiredServices, Directory? startDir}) async {
+    if (_entryPoints.isNotEmpty && !_entryPointsSpawned) {
+      _entryPointsSpawned = true;
       await initialize(entryPoints: _entryPoints);
+    }
+
+    final List<File> manifestFiles = _manifestFinder.findManifestFiles(startDir);
+    if (manifestFiles.isNotEmpty) {
+      final Map<String, ({ExtensionDeclaration declaration, File manifestFile})> declarations =
+          _manifestFinder.loadMergedDeclarationsWithFiles(manifestFiles);
+      final loadedCaches = <Directory, Map<String, ExtensionCapabilityCacheEntry>>{};
+
+      for (final MapEntry(key: extensionName, value: (:declaration, :manifestFile))
+          in declarations.entries) {
+        if (!declaration.enabled) {
+          _logger.printTrace('Extension "$extensionName" is disabled in manifest; skipping.');
+          continue;
+        }
+        if (_failedExtensionNames.contains(extensionName)) {
+          _logger.printTrace('Extension "$extensionName" previously failed; skipping.');
+          continue;
+        }
+        if (declaration.supportedPlatforms != null &&
+            !declaration.supportedPlatforms!.contains(hostPlatformName) &&
+            !declaration.supportedPlatforms!.contains(hostPlatform.cliName)) {
+          _logger.printTrace(
+            'Extension "$extensionName" does not support host platform "$hostPlatformName"; skipping.',
+          );
+          continue;
+        }
+        if (_spawnedExtensionNames.contains(extensionName)) {
+          continue;
+        }
+
+        final Uri? entrypointUri = _manifestFinder.resolveExtensionEntrypoint(
+          declaration,
+          manifestFile,
+        );
+        if (entrypointUri == null) {
+          _logger.printTrace(
+            'Could not resolve entrypoint for extension "$extensionName"; skipping.',
+          );
+          continue;
+        }
+
+        final File entrypointFile = _fs.file(entrypointUri);
+        final Map<String, ExtensionCapabilityCacheEntry> cache = loadedCaches.putIfAbsent(
+          manifestFile.parent,
+          () => _cacheManager.loadCache(manifestFile.parent),
+        );
+        final ExtensionCapabilityCacheEntry? cachedEntry = cache[extensionName];
+        final bool isCacheValid =
+            cachedEntry != null &&
+            _cacheManager.isCacheValid(cachedEntry, entrypointFile, manifestFile: manifestFile);
+
+        if (isCacheValid) {
+          if (!_supportsPlatform(cachedEntry.capabilities)) {
+            _logger.printTrace(
+              'Cached extension "$extensionName" does not support host platform "$hostPlatformName"; skipping.',
+            );
+            continue;
+          }
+          if (requiredServices != null) {
+            final bool providesRequiredService = cachedEntry.capabilities.services.any(
+              requiredServices.contains,
+            );
+            if (!providesRequiredService) {
+              _logger.printTrace(
+                'Cached extension "$extensionName" does not provide required services $requiredServices; skipping isolate spawn.',
+              );
+              continue;
+            }
+          }
+        }
+
+        try {
+          final File? packageConfigFile = _manifestFinder.findPackageConfig(manifestFile.parent);
+          _logger.printTrace(
+            'Spawning isolate for extension "$extensionName" at $entrypointUri...',
+          );
+          final ExtensionConnection connection = await _spawner(
+            entrypointUri,
+            logger: _logger,
+            packageConfigUri: packageConfigFile?.uri,
+          );
+          _spawnedExtensionNames.add(extensionName);
+
+          final int entrypointModifiedMs = entrypointFile.existsSync()
+              ? entrypointFile.statSync().modified.millisecondsSinceEpoch
+              : 0;
+          final int manifestModifiedMs = manifestFile.existsSync()
+              ? manifestFile.statSync().modified.millisecondsSinceEpoch
+              : 0;
+          _cacheManager.updateEntry(
+            ExtensionCapabilityCacheEntry(
+              capabilities: connection.capabilities,
+              entrypointUri: entrypointUri,
+              extensionName: extensionName,
+              modifiedTimeMs: entrypointModifiedMs,
+              manifestModifiedTimeMs: manifestModifiedMs,
+            ),
+            manifestFile.parent,
+          );
+
+          await _registerOrDisposeConnection(connection, extensionName: extensionName);
+        } on TimeoutException {
+          _failedExtensionNames.add(extensionName);
+          _logger.printWarning(
+            'Handshake with tool extension "$extensionName" timed out; disabling for this session.',
+          );
+        } on Object catch (error, stackTrace) {
+          _failedExtensionNames.add(extensionName);
+          _logger.printWarning('Failed to spawn tool extension "$extensionName": $error');
+          _logger.printTrace('Extension "$extensionName" spawn error details: $error\n$stackTrace');
+        }
+      }
+    }
+
+    _isInitialized = true;
+  }
+
+  bool _supportsPlatform(ToolExtensionCapabilities capabilities) {
+    return capabilities.supportsHostPlatform(hostPlatformName) ||
+        capabilities.supportsHostPlatform(hostPlatform.cliName);
+  }
+
+  Future<void> _registerOrDisposeConnection(
+    ExtensionConnection connection, {
+    String? extensionName,
+  }) async {
+    if (_supportsPlatform(connection.capabilities)) {
+      _logger.printTrace(
+        'Extension ${extensionName != null ? '"$extensionName" ' : ''}connection supported on "$hostPlatformName"; registering.',
+      );
+      _discovery.registerConnection(connection);
+      await _registerClientProxies(connection);
     } else {
-      _isInitialized = true;
+      _logger.printTrace(
+        'Extension ${extensionName != null ? '"$extensionName" ' : ''}does not support "$hostPlatformName" '
+        '(supported platforms: ${connection.capabilities.supportedPlatforms}); disposing connection.',
+      );
+      await connection.dispose();
+    }
+  }
+
+  Future<void> _registerClientProxies(ExtensionConnection connection) async {
+    if (connection.capabilities.services.contains(DiagnosticsExtension.serviceNamespace)) {
+      final client = DiagnosticsExtensionClient(connection, logger: _logger);
+      await client.fetchTitle();
+      _diagnosticsExtensions.add(client);
+    }
+    if (connection.capabilities.services.contains(ConfigurationExtension.serviceNamespace)) {
+      final client = ConfigurationExtensionClient(connection, logger: _logger);
+      await client.fetchTitle();
+      _configurationExtensions.add(client);
     }
   }
 
@@ -96,33 +259,7 @@ class ExtensionManager {
         entryPoint,
         logger: _logger,
       );
-      if (connection.capabilities.supportsHostPlatform(hostPlatformName) ||
-          connection.capabilities.supportsHostPlatform(hostPlatform.cliName)) {
-        _logger.printTrace(
-          'Extension connection supported on host platform "$hostPlatformName"; registering.',
-        );
-        _discovery.registerConnection(connection);
-      } else {
-        _logger.printTrace(
-          'Extension connection does not support host platform "$hostPlatformName" '
-          '(supported platforms: ${connection.capabilities.supportedPlatforms}); disposing connection.',
-        );
-        await connection.dispose();
-      }
-    }
-    _diagnosticsExtensions.clear();
-    _configurationExtensions.clear();
-    for (final ExtensionConnection connection in _discovery.connections) {
-      if (connection.capabilities.services.contains(DiagnosticsExtension.serviceNamespace)) {
-        final client = DiagnosticsExtensionClient(connection, logger: _logger);
-        await client.fetchTitle();
-        _diagnosticsExtensions.add(client);
-      }
-      if (connection.capabilities.services.contains(ConfigurationExtension.serviceNamespace)) {
-        final client = ConfigurationExtensionClient(connection, logger: _logger);
-        await client.fetchTitle();
-        _configurationExtensions.add(client);
-      }
+      await _registerOrDisposeConnection(connection);
     }
     _isInitialized = true;
   }
@@ -162,8 +299,10 @@ class ExtensionManager {
     _logger.printTrace('ExtensionManager disposing all active connections.');
     _diagnosticsExtensions.clear();
     _configurationExtensions.clear();
+    _spawnedExtensionNames.clear();
+    _failedExtensionNames.clear();
     _isInitialized = false;
-    _initFuture = null;
+    _entryPointsSpawned = false;
     await _discovery.dispose();
   }
 }

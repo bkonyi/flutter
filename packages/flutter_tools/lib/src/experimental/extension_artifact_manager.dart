@@ -52,7 +52,9 @@ base class ExtensionArtifactManager {
     if (!_featureFlags.isToolExtensionsEnabled) {
       return const <String, Set<ArtifactDependency>>{};
     }
-    await _extensionManager.ensureInitialized();
+    await _extensionManager.ensureInitialized(
+      requiredServices: const <String>{ArtifactService.serviceNamespace},
+    );
     final result = <String, Set<ArtifactDependency>>{};
     for (final ExtensionConnection connection in _extensionManager.connections) {
       if (!connection.capabilities.services.contains(ArtifactService.serviceNamespace)) {
@@ -81,7 +83,9 @@ base class ExtensionArtifactManager {
     if (!_featureFlags.isToolExtensionsEnabled) {
       return;
     }
-    await _extensionManager.ensureInitialized();
+    await _extensionManager.ensureInitialized(
+      requiredServices: const <String>{ArtifactService.serviceNamespace},
+    );
     final HostPlatform currentHostPlatform = hostPlatform ?? _extensionManager.hostPlatform;
 
     for (final ExtensionConnection connection in _extensionManager.connections) {
