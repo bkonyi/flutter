@@ -49,6 +49,7 @@ import 'src/commands/widget_preview.dart';
 import 'src/devtools_launcher.dart';
 import 'src/experimental/extension_artifact_manager.dart';
 import 'src/experimental/extension_build_manager.dart';
+import 'src/experimental/extension_clean_manager.dart';
 import 'src/experimental/extension_discovery.dart';
 import 'src/experimental/extension_manager.dart';
 import 'src/experimental/templates.dart';
@@ -133,11 +134,17 @@ Future<void> main(List<String> args) async {
         logger: globals.logger,
         featureFlags: featureFlags,
       );
+      final cleanManager = ExtensionCleanManager(
+        extensionManager: manager,
+        featureFlags: featureFlags,
+        logger: globals.logger,
+      );
       return generateCommands(
         verbose: verbose,
         verboseHelp: verboseHelp,
         extensionArtifactManager: artifactManager,
         extensionBuildManager: buildManager,
+        extensionCleanManager: cleanManager,
         extensionManager: manager,
         extensionTemplateManager: templateManager,
       );
@@ -200,6 +207,7 @@ List<FlutterCommand> generateCommands({
   required bool verboseHelp,
   ExtensionArtifactManager? extensionArtifactManager,
   ExtensionBuildManager? extensionBuildManager,
+  ExtensionCleanManager? extensionCleanManager,
   ExtensionManager? extensionManager,
   ExtensionTemplateManager? extensionTemplateManager,
 }) => <FlutterCommand>[
@@ -262,7 +270,7 @@ List<FlutterCommand> generateCommands({
     extensionBuildManager: extensionBuildManager,
   ),
   ChannelCommand(verboseHelp: verboseHelp),
-  CleanCommand(verbose: verbose),
+  CleanCommand(extensionCleanManager: extensionCleanManager, verbose: verbose),
   ConfigCommand(verboseHelp: verboseHelp, extensionManager: extensionManager),
   CustomDevicesCommand(
     customDevicesConfig: globals.customDevicesConfig,

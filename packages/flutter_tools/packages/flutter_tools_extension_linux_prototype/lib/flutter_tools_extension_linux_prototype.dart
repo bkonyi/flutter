@@ -11,6 +11,7 @@ import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
 import 'src/artifact.dart';
 import 'src/build.dart';
+import 'src/clean.dart';
 import 'src/config.dart';
 import 'src/device.dart';
 import 'src/diagnostics.dart';
@@ -27,6 +28,7 @@ void linuxExtensionEntryPoint(SendPort sendPort) {
       LinuxDeviceService(),
       LinuxBuildService(),
       LinuxArtifactService(),
+      LinuxCleanService(),
     ],
     extensionName: 'flutter_tools_extension_linux_prototype',
     logger: (String message) {

@@ -12,6 +12,7 @@ library flutter_tools_core;
 
 export 'src/artifacts.dart';
 export 'src/build.dart';
+export 'src/clean.dart';
 export 'src/config.dart';
 export 'src/device.dart';
 export 'src/diagnostics.dart';

@@ -69,6 +69,9 @@ class ToolExtensionCapabilities {
   /// Whether the extension provides an artifact service.
   bool get artifactServiceProvided => services.contains('artifact');
 
+  /// Whether the extension provides a clean service.
+  bool get cleanServiceProvided => services.contains('clean');
+
   /// Serializes capabilities to a map payload.
   Map<String, Object?> toMap() => <String, Object?>{
     'services': services,
@@ -82,6 +85,7 @@ abstract base class FlutterToolsExtension {
   FlutterToolsExtension({
     this.artifactService,
     this.buildService,
+    this.cleanService,
     this.configurationService,
     this.deviceService,
     this.diagnosticsService,
@@ -94,6 +98,9 @@ abstract base class FlutterToolsExtension {
 
   /// The primary coordinator between the tool and extension compilation logic.
   final ToolExtensionService? buildService;
+
+  /// The service responsible for cleaning extension-managed build outputs and temporary artifacts.
+  final ToolExtensionService? cleanService;
 
   /// The service responsible for managing custom configuration options for an extension.
   final ToolExtensionService? configurationService;
@@ -123,6 +130,9 @@ final class FlutterToolExtensionCapabilities extends ToolExtensionCapabilities {
     }
     if (ext.buildService != null) {
       services.add(ext.buildService!.namespace);
+    }
+    if (ext.cleanService != null) {
+      services.add(ext.cleanService!.namespace);
     }
     if (ext.configurationService != null) {
       services.add(ext.configurationService!.namespace);

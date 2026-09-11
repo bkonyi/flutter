@@ -9,6 +9,7 @@ import '../base/error_handling_io.dart';
 import '../base/file_system.dart';
 import '../base/logger.dart';
 import '../build_info.dart';
+import '../experimental/extension_clean_manager.dart';
 import '../globals.dart' as globals;
 import '../ios/xcodeproj.dart';
 import '../macos/xcode.dart';
@@ -16,7 +17,9 @@ import '../project.dart';
 import '../runner/flutter_command.dart';
 
 class CleanCommand extends FlutterCommand {
-  CleanCommand({bool verbose = false}) : _verbose = verbose {
+  CleanCommand({ExtensionCleanManager? extensionCleanManager, bool verbose = false})
+    : _extensionCleanManager = extensionCleanManager,
+      _verbose = verbose {
     requiresPubspecYaml();
     argParser.addOption(
       'scheme',
@@ -38,6 +41,7 @@ class CleanCommand extends FlutterCommand {
     );
   }
 
+  final ExtensionCleanManager? _extensionCleanManager;
   final bool _verbose;
 
   @override
@@ -100,6 +104,11 @@ class CleanCommand extends FlutterCommand {
     await deleteFile(flutterProject.macos.ephemeralDirectory, flutterProject);
     await deleteFile(flutterProject.windows.ephemeralDirectory, flutterProject);
     await deleteFile(flutterProject.flutterPluginsDependenciesFile, flutterProject);
+
+    final ExtensionCleanManager? extensionCleanManager = _extensionCleanManager;
+    if (extensionCleanManager != null) {
+      await extensionCleanManager.cleanProject(flutterProject, buildDirectory: buildDir);
+    }
   }
 
   Future<void> _cleanXcode(XcodeBasedProject xcodeProject) async {
