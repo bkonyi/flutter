@@ -23,6 +23,7 @@ import '../build_system/build_system.dart';
 import '../build_system/targets/extension.dart';
 import '../cache.dart';
 import '../experimental/extension_arg_parser.dart';
+import '../experimental/extension_artifact_manager.dart';
 import '../experimental/extension_build_manager.dart';
 import '../features.dart';
 import '../ios/code_signing.dart';
@@ -63,9 +64,11 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
     required Terminal terminal,
     required PlistParser plistParser,
     required Xcode? xcode,
+    ExtensionArtifactManager? extensionArtifactManager,
     ExtensionBuildManager? extensionBuildManager,
     bool verboseHelp = false,
   }) : _artifacts = artifacts,
+       _extensionArtifactManager = extensionArtifactManager,
        _fileSystem = fileSystem,
        _logger = logger,
        _extensionBuildManager = extensionBuildManager,
@@ -167,9 +170,10 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
   }
 
   final Artifacts _artifacts;
+  final ExtensionArtifactManager? _extensionArtifactManager;
+  final ExtensionBuildManager? _extensionBuildManager;
   final FileSystem _fileSystem;
   final Logger _logger;
-  final ExtensionBuildManager? _extensionBuildManager;
   final bool _verboseHelp;
 
   @override
@@ -245,6 +249,7 @@ class BuildCommand extends FlutterCommand with ExtensionArgParserMixin {
             ExtensionBuildSubCommand(
               target: target,
               buildManager: extensionBuildManager,
+              extensionArtifactManager: _extensionArtifactManager,
               fileSystem: _fileSystem,
               logger: _logger,
               verboseHelp: _verboseHelp,
@@ -290,15 +295,17 @@ abstract class BuildSubCommand extends FlutterCommand {
 
 class ExtensionBuildSubCommand extends BuildSubCommand {
   ExtensionBuildSubCommand({
-    required this.target,
+    required Artifacts artifacts,
     required ExtensionBuildManager buildManager,
     required FileSystem fileSystem,
     required super.logger,
+    required this.target,
     required bool verboseHelp,
-    required Artifacts artifacts,
-  }) : _buildManager = buildManager,
+    ExtensionArtifactManager? extensionArtifactManager,
+  }) : _artifacts = artifacts,
+       _buildManager = buildManager,
+       _extensionArtifactManager = extensionArtifactManager,
        _fileSystem = fileSystem,
-       _artifacts = artifacts,
        super(verboseHelp: verboseHelp) {
     usesTargetOption();
     usesPubOption();
@@ -306,9 +313,10 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
   }
 
   final ExtensionBuildTarget target;
+  final Artifacts _artifacts;
+  final ExtensionArtifactManager? _extensionArtifactManager;
   final ExtensionBuildManager _buildManager;
   final FileSystem _fileSystem;
-  final Artifacts _artifacts;
 
   @override
   String get name => target.name;
@@ -322,6 +330,14 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
     final String mainPath = targetFile;
     final BuildInfo buildInfo = await getBuildInfo();
     final String buildModeName = buildInfo.mode.name;
+
+    if (_extensionArtifactManager case final ExtensionArtifactManager extensionArtifactManager?) {
+      await extensionArtifactManager.ensureArtifactsDownloaded(
+        buildMode: buildInfo.mode,
+        projectRoot: _fileSystem.currentDirectory.uri,
+        targetPlatform: TargetPlatform.fromName(target.targetPlatform),
+      );
+    }
 
     final String outputDir = _fileSystem.path.normalize(
       target.outputDir

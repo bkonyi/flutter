@@ -25,6 +25,7 @@ import '../build_system/targets/macos.dart';
 import '../build_system/targets/windows.dart';
 import '../cache.dart';
 import '../convert.dart';
+import '../experimental/extension_artifact_manager.dart';
 import '../experimental/extension_build_manager.dart';
 import '../globals.dart' as globals;
 import '../project.dart';
@@ -107,9 +108,11 @@ var _kDefaultTargets = <Target>[
 class AssembleCommand extends FlutterCommand {
   AssembleCommand({
     required BuildSystem buildSystem,
+    ExtensionArtifactManager? extensionArtifactManager,
     ExtensionBuildManager? extensionBuildManager,
     bool verboseHelp = false,
   }) : _buildSystem = buildSystem,
+       _extensionArtifactManager = extensionArtifactManager,
        _extensionBuildManager = extensionBuildManager,
        _verboseHelp = verboseHelp {
     requiresPubspecYaml();
@@ -182,6 +185,7 @@ class AssembleCommand extends FlutterCommand {
   bool get hidden => !_verboseHelp;
 
   final BuildSystem _buildSystem;
+  final ExtensionArtifactManager? _extensionArtifactManager;
   final ExtensionBuildManager? _extensionBuildManager;
 
   late final FlutterProject _flutterProject = FlutterProject.current();
@@ -367,6 +371,11 @@ class AssembleCommand extends FlutterCommand {
   Future<FlutterCommandResult> runCommand() async {
     if (_extensionBuildManager case final ExtensionBuildManager extensionBuildManager?) {
       await extensionBuildManager.getBuildTargets();
+    }
+    if (_extensionArtifactManager case final ExtensionArtifactManager extensionArtifactManager?) {
+      await extensionArtifactManager.ensureArtifactsDownloaded(
+        projectRoot: _environment.projectDir.uri,
+      );
     }
     final List<Target> targets = createTargets();
     final nonDeferredTargets = <Target>[];

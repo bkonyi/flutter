@@ -9,6 +9,7 @@ import 'dart:isolate';
 
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
+import 'src/artifact.dart';
 import 'src/build.dart';
 import 'src/config.dart';
 import 'src/device.dart';
@@ -25,11 +26,13 @@ void linuxExtensionEntryPoint(SendPort sendPort) {
       LinuxTemplateService(),
       LinuxDeviceService(),
       LinuxBuildService(),
+      LinuxArtifactService(),
     ],
-    supportedPlatforms: const <String>{'linux'},
+    extensionName: 'flutter_tools_extension_linux_prototype',
     logger: (String message) {
       // ignore: avoid_print
       print('[LinuxExtension] $message');
     },
+    supportedPlatforms: const <String>{'linux'},
   );
 }

@@ -7,6 +7,7 @@ import '../base/logger.dart';
 import '../base/os.dart';
 import '../base/platform.dart';
 import '../cache.dart';
+import '../experimental/extension_artifact_manager.dart';
 import '../features.dart';
 import '../runner/flutter_command.dart';
 
@@ -14,15 +15,23 @@ import '../runner/flutter_command.dart';
 /// the use of device/artifact autodetection.
 class PrecacheCommand extends FlutterCommand {
   PrecacheCommand({
-    bool verboseHelp = false,
     required Cache cache,
-    required Platform platform,
-    required Logger logger,
     required FeatureFlags featureFlags,
+    required Logger logger,
+    required Platform platform,
+    ExtensionArtifactManager? extensionArtifactManager,
+    bool verboseHelp = false,
   }) : _cache = cache,
-       _platform = platform,
+       _extensionArtifactManager = extensionArtifactManager,
+       _featureFlags = featureFlags,
        _logger = logger,
-       _featureFlags = featureFlags {
+       _platform = platform {
+    argParser.addFlag(
+      'tool-extension-artifacts',
+      defaultsTo: true,
+      help: 'Precache artifacts provided by active tool extensions.',
+      hide: !verboseHelp,
+    );
     argParser.addFlag(
       'all-platforms',
       abbr: 'a',
@@ -93,9 +102,10 @@ class PrecacheCommand extends FlutterCommand {
   }
 
   final Cache _cache;
+  final ExtensionArtifactManager? _extensionArtifactManager;
+  final FeatureFlags _featureFlags;
   final Logger _logger;
   final Platform _platform;
-  final FeatureFlags _featureFlags;
 
   @override
   final name = 'precache';
@@ -213,6 +223,9 @@ class PrecacheCommand extends FlutterCommand {
       await _cache.updateAll(requiredArtifacts);
     } else {
       _logger.printStatus('Already up-to-date.');
+    }
+    if (boolArg('tool-extension-artifacts') && _extensionArtifactManager != null) {
+      await _extensionArtifactManager.precache(force: boolArg('force'));
     }
     return FlutterCommandResult.success();
   }

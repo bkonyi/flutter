@@ -47,6 +47,7 @@ import 'src/commands/update_packages.dart';
 import 'src/commands/upgrade.dart';
 import 'src/commands/widget_preview.dart';
 import 'src/devtools_launcher.dart';
+import 'src/experimental/extension_artifact_manager.dart';
 import 'src/experimental/extension_build_manager.dart';
 import 'src/experimental/extension_discovery.dart';
 import 'src/experimental/extension_manager.dart';
@@ -115,6 +116,12 @@ Future<void> main(List<String> args) async {
         entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
         featureFlags: featureFlags,
       );
+      final artifactManager = ExtensionArtifactManager(
+        extensionManager: manager,
+        featureFlags: featureFlags,
+        fileSystem: globals.fs,
+        logger: globals.logger,
+      );
       final templateManager = ExtensionTemplateManager(
         extensionManager: manager,
         fileSystem: globals.fs,
@@ -127,11 +134,12 @@ Future<void> main(List<String> args) async {
         featureFlags: featureFlags,
       );
       return generateCommands(
-        verboseHelp: verboseHelp,
         verbose: verbose,
+        verboseHelp: verboseHelp,
+        extensionArtifactManager: artifactManager,
+        extensionBuildManager: buildManager,
         extensionManager: manager,
         extensionTemplateManager: templateManager,
-        extensionBuildManager: buildManager,
       );
     },
     verbose: verbose,
@@ -188,11 +196,12 @@ Future<void> main(List<String> args) async {
 }
 
 List<FlutterCommand> generateCommands({
-  required bool verboseHelp,
   required bool verbose,
+  required bool verboseHelp,
+  ExtensionArtifactManager? extensionArtifactManager,
+  ExtensionBuildManager? extensionBuildManager,
   ExtensionManager? extensionManager,
   ExtensionTemplateManager? extensionTemplateManager,
-  ExtensionBuildManager? extensionBuildManager,
 }) => <FlutterCommand>[
   AnalyzeCommand(
     verboseHelp: verboseHelp,
@@ -216,6 +225,7 @@ List<FlutterCommand> generateCommands({
   ),
   AssembleCommand(
     buildSystem: globals.buildSystem,
+    extensionArtifactManager: extensionArtifactManager,
     extensionBuildManager: extensionBuildManager,
     verboseHelp: verboseHelp,
   ),
@@ -248,6 +258,7 @@ List<FlutterCommand> generateCommands({
     artifacts: globals.artifacts!,
     cache: globals.cache,
     flutterVersion: globals.flutterVersion,
+    extensionArtifactManager: extensionArtifactManager,
     extensionBuildManager: extensionBuildManager,
   ),
   ChannelCommand(verboseHelp: verboseHelp),
@@ -290,13 +301,18 @@ List<FlutterCommand> generateCommands({
   LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
   PackagesCommand(),
   PrecacheCommand(
-    verboseHelp: verboseHelp,
     cache: globals.cache,
+    extensionArtifactManager: extensionArtifactManager,
+    featureFlags: featureFlags,
     logger: globals.logger,
     platform: globals.platform,
-    featureFlags: featureFlags,
+    verboseHelp: verboseHelp,
   ),
-  RunCommand(verboseHelp: verboseHelp, extensionManager: extensionManager),
+  RunCommand(
+    extensionArtifactManager: extensionArtifactManager,
+    extensionManager: extensionManager,
+    verboseHelp: verboseHelp,
+  ),
   ScreenshotCommand(fs: globals.fs),
   ShellCompletionCommand(),
   TestCommand(

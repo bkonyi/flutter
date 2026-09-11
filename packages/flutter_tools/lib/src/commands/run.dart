@@ -4,7 +4,6 @@
 
 import 'dart:async';
 
-import 'package:flutter_tools_core/flutter_tools_core.dart' show BuildMode;
 import 'package:meta/meta.dart';
 import 'package:unified_analytics/unified_analytics.dart' as analytics;
 import 'package:vm_service/vm_service.dart';
@@ -15,6 +14,7 @@ import '../base/file_system.dart';
 import '../base/io.dart';
 import '../build_info.dart';
 import '../device.dart';
+import '../experimental/extension_artifact_manager.dart';
 import '../experimental/extension_device_manager.dart';
 import '../experimental/extension_manager.dart';
 import '../features.dart';
@@ -457,9 +457,13 @@ abstract class RunCommandBase extends FlutterCommand with DeviceBasedDevelopment
 }
 
 class RunCommand extends RunCommandBase {
-  RunCommand({bool verboseHelp = false, ExtensionManager? extensionManager})
-    : _extensionManager = extensionManager,
-      super(verboseHelp: verboseHelp) {
+  RunCommand({
+    ExtensionArtifactManager? extensionArtifactManager,
+    ExtensionManager? extensionManager,
+    bool verboseHelp = false,
+  }) : _extensionArtifactManager = extensionArtifactManager,
+       _extensionManager = extensionManager,
+       super(verboseHelp: verboseHelp) {
     requiresPubspecYaml();
     usesFilesystemOptions(hide: !verboseHelp);
     usesExtraDartFlagOptions(verboseHelp: verboseHelp);
@@ -706,6 +710,7 @@ class RunCommand extends RunCommandBase {
   bool get stayResident => boolArg('resident');
   bool get awaitFirstFrameWhenTracing => boolArg('await-first-frame-when-tracing');
 
+  final ExtensionArtifactManager? _extensionArtifactManager;
   final ExtensionManager? _extensionManager;
 
   @override
@@ -840,6 +845,9 @@ class RunCommand extends RunCommandBase {
   @override
   Future<FlutterCommandResult> runCommand() async {
     final BuildInfo buildInfo = await getBuildInfo();
+    if (_extensionArtifactManager case final ExtensionArtifactManager extensionArtifactManager?) {
+      await extensionArtifactManager.ensureArtifactsDownloaded(buildMode: buildInfo.mode);
+    }
     // Enable hot mode by default if `--no-hot` was not passed and we are in
     // debug mode.
     final bool hotMode = shouldUseHotMode(buildInfo);

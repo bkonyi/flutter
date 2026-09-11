@@ -32,6 +32,7 @@ class ToolExtensionCapabilities {
   /// Creates [ToolExtensionCapabilities] listing supported [services] and [supportedPlatforms].
   const ToolExtensionCapabilities({
     required this.services,
+    this.extensionName,
     this.supportedPlatforms = const <String>{'linux', 'macos', 'windows'},
   });
 
@@ -43,11 +44,19 @@ class ToolExtensionCapabilities {
     final Set<String> supportedPlatforms = platformsList is Iterable
         ? platformsList.map((Object? p) => p.toString().toLowerCase()).toSet()
         : const <String>{'linux', 'macos', 'windows'};
-    return ToolExtensionCapabilities(services: services, supportedPlatforms: supportedPlatforms);
+    final extensionName = json['extensionName'] as String?;
+    return ToolExtensionCapabilities(
+      services: services,
+      supportedPlatforms: supportedPlatforms,
+      extensionName: extensionName,
+    );
   }
 
   /// The list of service namespace identifiers supported by the extension.
   final List<String> services;
+
+  /// The unique name of the extension, if reported.
+  final String? extensionName;
 
   /// The set of host operating system platforms supported by the extension in lowercase (e.g., `{'linux'}`).
   final Set<String> supportedPlatforms;
@@ -57,9 +66,85 @@ class ToolExtensionCapabilities {
     return supportedPlatforms.contains(hostPlatform.toLowerCase());
   }
 
+  /// Whether the extension provides an artifact service.
+  bool get artifactServiceProvided => services.contains('artifact');
+
   /// Serializes capabilities to a map payload.
   Map<String, Object?> toMap() => <String, Object?>{
     'services': services,
     'supportedPlatforms': supportedPlatforms.toList(),
+    if (extensionName != null) 'extensionName': extensionName,
   };
+}
+
+/// The representation of a Flutter Tools extension bundle.
+abstract base class FlutterToolsExtension {
+  FlutterToolsExtension({
+    this.artifactService,
+    this.buildService,
+    this.configurationService,
+    this.deviceService,
+    this.diagnosticsService,
+    this.templateService,
+  });
+
+  /// The service responsible for acquiring the necessary files to develop
+  /// and deploy Flutter applications for a custom target platform.
+  final ToolExtensionService? artifactService;
+
+  /// The primary coordinator between the tool and extension compilation logic.
+  final ToolExtensionService? buildService;
+
+  /// The service responsible for managing custom configuration options for an extension.
+  final ToolExtensionService? configurationService;
+
+  /// The service responsible for managing custom hardware and emulators.
+  final ToolExtensionService? deviceService;
+
+  /// The service responsible for executing custom diagnostic checks that can be reported via `flutter doctor`.
+  final ToolExtensionService? diagnosticsService;
+
+  /// The service responsible for adding custom platform support to `flutter create`.
+  final ToolExtensionService? templateService;
+}
+
+/// Determines the set of capabilities provided by a [FlutterToolsExtension].
+final class FlutterToolExtensionCapabilities extends ToolExtensionCapabilities {
+  const FlutterToolExtensionCapabilities({
+    required super.services,
+    super.extensionName,
+    super.supportedPlatforms,
+  });
+
+  factory FlutterToolExtensionCapabilities.fromExtension(FlutterToolsExtension ext) {
+    final services = <String>[];
+    if (ext.artifactService != null) {
+      services.add(ext.artifactService!.namespace);
+    }
+    if (ext.buildService != null) {
+      services.add(ext.buildService!.namespace);
+    }
+    if (ext.configurationService != null) {
+      services.add(ext.configurationService!.namespace);
+    }
+    if (ext.deviceService != null) {
+      services.add(ext.deviceService!.namespace);
+    }
+    if (ext.diagnosticsService != null) {
+      services.add(ext.diagnosticsService!.namespace);
+    }
+    if (ext.templateService != null) {
+      services.add(ext.templateService!.namespace);
+    }
+    return FlutterToolExtensionCapabilities(services: services);
+  }
+
+  factory FlutterToolExtensionCapabilities.fromJson(Map<String, Object?> json) {
+    final base = ToolExtensionCapabilities.fromJson(json);
+    return FlutterToolExtensionCapabilities(
+      services: base.services,
+      extensionName: base.extensionName,
+      supportedPlatforms: base.supportedPlatforms,
+    );
+  }
 }
