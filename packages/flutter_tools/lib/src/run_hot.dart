@@ -83,29 +83,23 @@ class HotRunner extends ResidentRunner {
     super.fileSystem,
     super.flutterVersion,
     this.hostIsIde = false,
-    HotRunnerConfig? hotRunnerConfig,
+    this._hotRunnerConfig,
     super.logger,
     super.machine,
-    String? nativeAssetsYamlFile,
+    this._nativeAssetsYamlFile,
     super.osUtils,
     super.outputPreferences,
     super.platform,
     super.processManager,
-    ProjectFileInvalidator? projectFileInvalidator,
+    this._projectFileInvalidator,
     super.projectRootPath,
-    ReassembleHelper reassembleHelper = _defaultReassembleHelper,
-    ReloadSourcesHelper reloadSourcesHelper = defaultReloadSourcesHelper,
+    this._reassembleHelper = _defaultReassembleHelper,
+    this._reloadSourcesHelper = defaultReloadSourcesHelper,
     super.stayResident,
-    StopwatchFactory stopwatchFactory = const StopwatchFactory(),
+    this._stopwatchFactory = const StopwatchFactory(),
     super.terminal,
     super.xcode,
-  }) : _hotRunnerConfig = hotRunnerConfig,
-       _nativeAssetsYamlFile = nativeAssetsYamlFile,
-       _projectFileInvalidator = projectFileInvalidator,
-       _reassembleHelper = reassembleHelper,
-       _reloadSourcesHelper = reloadSourcesHelper,
-       _stopwatchFactory = stopwatchFactory,
-       super(hotMode: true);
+  }) : super(hotMode: true);
 
   final StopwatchFactory _stopwatchFactory;
   final ReloadSourcesHelper _reloadSourcesHelper;
@@ -1447,12 +1441,10 @@ class InvalidationResult {
 /// application to determine when they are dirty.
 class ProjectFileInvalidator {
   ProjectFileInvalidator({
-    required FileSystem fileSystem,
-    required Platform platform,
-    required Logger logger,
-  }) : _fileSystem = fileSystem,
-       _platform = platform,
-       _logger = logger;
+    required this._fileSystem,
+    required this._platform,
+    required this._logger,
+  });
 
   final FileSystem _fileSystem;
   final Platform _platform;

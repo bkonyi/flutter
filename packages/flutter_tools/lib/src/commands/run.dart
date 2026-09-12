@@ -310,21 +310,15 @@ abstract class RunCommandBase extends FlutterCommand with DeviceBasedDevelopment
 
 class RunCommand extends RunCommandBase {
   RunCommand({
-    required AppleContext appleContext,
+    required this._appleContext,
     required super.toolContext,
-    AndroidContext? androidContext,
-    AndroidWorkflow? androidWorkflow,
-    BuildSystem? buildSystem,
-    BuildTargets? buildTargets,
-    DeviceManager? deviceManager,
-    bool verboseHelp = false,
-  }) : _androidContext = androidContext,
-       _androidWorkflow = androidWorkflow,
-       _appleContext = appleContext,
-       _buildSystem = buildSystem,
-       _buildTargets = buildTargets,
-       _deviceManager = deviceManager,
-       super(verboseHelp: verboseHelp) {
+    this._androidContext,
+    this._androidWorkflow,
+    this._buildSystem,
+    this._buildTargets,
+    this._deviceManager,
+    super.verboseHelp = false,
+  }) {
     requiresPubspecYaml();
     usesFilesystemOptions(hide: !verboseHelp);
     usesExtraDartFlagOptions(verboseHelp: verboseHelp);
@@ -363,8 +357,7 @@ class RunCommand extends RunCommandBase {
       ..addFlag(
         'hot',
         defaultsTo: kHotReloadDefault,
-        help:
-            'Run with support for hot reloading. Only available for debug mode. Not available with "--trace-startup".',
+        help: 'Run with support for hot reloading. Only available for debug mode. Not available with "--trace-startup".',
       )
       ..addFlag(
         'resident',
