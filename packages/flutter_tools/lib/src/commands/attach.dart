@@ -67,8 +67,8 @@ import 'daemon.dart';
 class AttachCommand extends FlutterCommand {
   AttachCommand({
     required super.toolContext,
-    bool verboseHelp = false,
     HotRunnerFactory? hotRunnerFactory,
+    super.verboseHelp = false,
   }) : _hotRunnerFactory = hotRunnerFactory ?? HotRunnerFactory() {
     addBuildModeFlags(verboseHelp: verboseHelp, defaultToRelease: false, excludeRelease: true);
     usesTargetOption();

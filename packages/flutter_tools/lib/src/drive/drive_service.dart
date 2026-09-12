@@ -26,28 +26,18 @@ import 'web_driver_service.dart';
 
 class FlutterDriverFactory {
   FlutterDriverFactory({
-    required ApplicationPackageFactory applicationPackageFactory,
-    required String dartSdkPath,
-    required DevtoolsLauncher devtoolsLauncher,
-    required FileSystem fileSystem,
-    required Logger logger,
-    required OutputPreferences outputPreferences,
-    required Platform platform,
-    required ProcessUtils processUtils,
-    required Terminal terminal,
-    Analytics? analytics,
-    SystemClock? systemClock,
-  }) : _applicationPackageFactory = applicationPackageFactory,
-       _dartSdkPath = dartSdkPath,
-       _devtoolsLauncher = devtoolsLauncher,
-       _fileSystem = fileSystem,
-       _logger = logger,
-       _outputPreferences = outputPreferences,
-       _platform = platform,
-       _processUtils = processUtils,
-       _terminal = terminal,
-       _analytics = analytics,
-       _systemClock = systemClock;
+    required this._applicationPackageFactory,
+    required this._dartSdkPath,
+    required this._devtoolsLauncher,
+    required this._fileSystem,
+    required this._logger,
+    required this._outputPreferences,
+    required this._platform,
+    required this._processUtils,
+    required this._terminal,
+    this._analytics,
+    this._systemClock,
+  });
 
   final ApplicationPackageFactory _applicationPackageFactory;
   final String _dartSdkPath;
@@ -131,22 +121,15 @@ abstract class DriverService {
 /// applications.
 class FlutterDriverService extends DriverService {
   FlutterDriverService({
-    required ApplicationPackageFactory applicationPackageFactory,
-    required Logger logger,
-    required Platform platform,
-    required ProcessUtils processUtils,
-    required String dartSdkPath,
-    required DevtoolsLauncher devtoolsLauncher,
-    @visibleForTesting VMServiceConnector vmServiceConnector = connectToVmService,
-    @visibleForTesting Duration logFlushDelay = const Duration(milliseconds: 500),
-  }) : _applicationPackageFactory = applicationPackageFactory,
-       _logger = logger,
-       _platform = platform,
-       _processUtils = processUtils,
-       _dartSdkPath = dartSdkPath,
-       _vmServiceConnector = vmServiceConnector,
-       _devtoolsLauncher = devtoolsLauncher,
-       _logFlushDelay = logFlushDelay;
+    required this._applicationPackageFactory,
+    required this._logger,
+    required this._platform,
+    required this._processUtils,
+    required this._dartSdkPath,
+    required this._devtoolsLauncher,
+    @visibleForTesting this._vmServiceConnector = connectToVmService,
+    @visibleForTesting this._logFlushDelay = const Duration(milliseconds: 500),
+  });
 
   static const _kLaunchAttempts = 3;
 

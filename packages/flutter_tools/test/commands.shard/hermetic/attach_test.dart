@@ -144,12 +144,11 @@ void main() {
             }
           });
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -283,12 +282,11 @@ void main() {
             }
           });
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           var passedArtifactTest = false;
@@ -359,12 +357,11 @@ void main() {
           );
           testDeviceManager.devices = <Device>[device];
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -430,12 +427,11 @@ void main() {
           );
           testDeviceManager.devices = <Device>[device];
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -506,12 +502,11 @@ void main() {
           );
           testDeviceManager.devices = <Device>[device];
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -595,12 +590,11 @@ void main() {
           );
           testDeviceManager.devices = <Device>[device];
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -760,12 +754,11 @@ void main() {
           const outputDill = '/tmp/output.dill';
 
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
 
@@ -850,12 +843,11 @@ void main() {
             }
           });
           final hotRunner = FakeHotRunner();
-          hotRunner.onAttach =
-              (
-                Completer<DebugConnectionInfo>? connectionInfoCompleter,
-                Completer<void>? appStartedCompleter,
-                bool enableDevTools,
-              ) async => 0;
+          hotRunner.onAttach = (
+            Completer<DebugConnectionInfo>? connectionInfoCompleter,
+            Completer<void>? appStartedCompleter,
+            bool enableDevTools,
+          ) async => 0;
           hotRunner.exited = false;
           hotRunner.isWaitingForVmService = false;
           final hotRunnerFactory = FakeHotRunnerFactory()..hotRunner = hotRunner;
@@ -1744,11 +1736,11 @@ class FakeAndroidDevice extends Fake implements AndroidDevice {
 
 class FakeIOSDevice extends Fake implements IOSDevice {
   FakeIOSDevice({
-    DevicePortForwarder? portForwarder,
+    this._portForwarder,
     this.onGetLogReader,
     this.connectionInterface = DeviceConnectionInterface.attached,
     this.majorSdkVersion = 0,
-  }) : _portForwarder = portForwarder;
+  });
 
   final DevicePortForwarder? _portForwarder;
   @override
@@ -1950,9 +1942,8 @@ class FakeMDnsClient extends Fake implements MDnsClient {
     if (T == IPAddressResourceRecord) {
       final String key = query.fullyQualifiedName;
       return Stream<IPAddressResourceRecord>.fromIterable(
-            ipResponse[key] ?? <IPAddressResourceRecord>[],
-          )
-          as Stream<T>;
+        ipResponse[key] ?? <IPAddressResourceRecord>[],
+      ) as Stream<T>;
     }
     throw UnsupportedError('Unsupported query type $T');
   }

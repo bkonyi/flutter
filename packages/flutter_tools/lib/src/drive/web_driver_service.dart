@@ -31,23 +31,16 @@ import 'drive_service.dart';
 /// An implementation of the driver service for web debug and release applications.
 class WebDriverService extends DriverService {
   WebDriverService({
-    required String dartSdkPath,
-    required FileSystem fileSystem,
-    required Logger logger,
-    required OutputPreferences outputPreferences,
-    required Platform platform,
-    required ProcessUtils processUtils,
-    required Terminal terminal,
+    required this._dartSdkPath,
+    required this._fileSystem,
+    required this._logger,
+    required this._outputPreferences,
+    required this._platform,
+    required this._processUtils,
+    required this._terminal,
     Analytics? analytics,
     SystemClock? systemClock,
-  }) : _dartSdkPath = dartSdkPath,
-       _fileSystem = fileSystem,
-       _logger = logger,
-       _outputPreferences = outputPreferences,
-       _platform = platform,
-       _processUtils = processUtils,
-       _terminal = terminal,
-       _analytics = analytics ?? const NoOpAnalytics(),
+  }) : _analytics = analytics ?? const NoOpAnalytics(),
        _systemClock = systemClock ?? const SystemClock();
 
   final String _dartSdkPath;

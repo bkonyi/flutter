@@ -2361,8 +2361,8 @@ flutter:
           terminal: Terminal.test(),
           platform: FakePlatform(),
           outputPreferences: OutputPreferences.test(),
-          analytics: globals.analytics,
-          systemClock: globals.systemClock,
+          analytics: const NoOpAnalytics(),
+          systemClock: SystemClock.fixed(DateTime(2001)),
         );
 
         expect(await residentWebRunner.run(), 0);
@@ -2410,8 +2410,8 @@ flutter:
           terminal: Terminal.test(),
           platform: FakePlatform(),
           outputPreferences: OutputPreferences.test(),
-          analytics: globals.analytics,
-          systemClock: globals.systemClock,
+          analytics: const NoOpAnalytics(),
+          systemClock: SystemClock.fixed(DateTime(2001)),
         );
 
         expect(await residentWebRunner.run(), 0);
@@ -2693,7 +2693,7 @@ class FakeChromeConnection extends Fake implements ChromeConnection {
 }
 
 class FakeChromeTab extends Fake implements ChromeTab {
-  FakeChromeTab(this.url, {Exception? connectException}) : _connectException = connectException;
+  FakeChromeTab(this.url, {this._connectException});
 
   @override
   final String url;

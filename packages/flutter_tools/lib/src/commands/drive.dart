@@ -58,13 +58,12 @@ import 'run.dart';
 /// exit code.
 class DriveCommand extends RunCommandBase {
   DriveCommand({
-    super.toolContext,
-    @visibleForTesting FlutterDriverFactory? flutterDriverFactory,
+    @visibleForTesting this._flutterDriverFactory,
     @visibleForTesting
     this.signalsToHandle = const <ProcessSignal>{ProcessSignal.sigint, ProcessSignal.sigterm},
-    bool verboseHelp = false,
-  }) : _flutterDriverFactory = flutterDriverFactory,
-       super(verboseHelp: verboseHelp) {
+    super.toolContext,
+    super.verboseHelp = false,
+  }) {
     requiresPubspecYaml();
     addEnableExperimentation(hide: !verboseHelp);
 

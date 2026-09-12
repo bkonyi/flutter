@@ -10,6 +10,7 @@ import 'package:unified_analytics/unified_analytics.dart';
 import 'package:vm_service/vm_service.dart' hide Event;
 
 import '../android/android_device.dart';
+import '../android/android_workflow.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
@@ -21,6 +22,7 @@ import '../base/time.dart';
 import '../build_info.dart';
 import '../build_system/build_system.dart';
 import '../build_system/build_targets.dart';
+import '../context/android_context.dart';
 import '../context/apple_context.dart';
 import '../context/tool_context.dart';
 import '../device.dart';
@@ -307,17 +309,15 @@ abstract class RunCommandBase extends FlutterCommand with DeviceBasedDevelopment
 
 class RunCommand extends RunCommandBase {
   RunCommand({
-    required AppleContext appleContext,
+    required this._appleContext,
     required super.toolContext,
-    BuildSystem? buildSystem,
-    BuildTargets? buildTargets,
-    DeviceManager? deviceManager,
-    bool verboseHelp = false,
-  }) : _appleContext = appleContext,
-       _buildSystem = buildSystem,
-       _buildTargets = buildTargets,
-       _deviceManager = deviceManager,
-       super(verboseHelp: verboseHelp) {
+    this._androidContext,
+    this._androidWorkflow,
+    this._buildSystem,
+    this._buildTargets,
+    this._deviceManager,
+    super.verboseHelp = false,
+  }) {
     requiresPubspecYaml();
     usesFilesystemOptions(hide: !verboseHelp);
     usesExtraDartFlagOptions(verboseHelp: verboseHelp);
@@ -356,8 +356,7 @@ class RunCommand extends RunCommandBase {
       ..addFlag(
         'hot',
         defaultsTo: kHotReloadDefault,
-        help:
-            'Run with support for hot reloading. Only available for debug mode. Not available with "--trace-startup".',
+        help: 'Run with support for hot reloading. Only available for debug mode. Not available with "--trace-startup".',
       )
       ..addFlag(
         'resident',
@@ -395,6 +394,8 @@ class RunCommand extends RunCommandBase {
       );
   }
 
+  final AndroidContext? _androidContext;
+  final AndroidWorkflow? _androidWorkflow;
   final AppleContext _appleContext;
   final BuildSystem? _buildSystem;
   final BuildTargets? _buildTargets;
@@ -739,23 +740,27 @@ class RunCommand extends RunCommandBase {
 
   @visibleForTesting
   Daemon createMachineDaemon() {
+    final Analytics analytics = this.analytics;
     final ToolContext(
-      fs: FileSystem fs,
-      logger: Logger logger,
-      outputPreferences: OutputPreferences outputPreferences,
-      platform: Platform platform,
-      processManager: ProcessManager processManager,
-      stdio: Stdio stdio,
-      systemClock: SystemClock systemClock,
-      terminal: AnsiTerminal terminal,
+      :FileSystem fs,
+      :Logger logger,
+      :OutputPreferences outputPreferences,
+      :Platform platform,
+      :ProcessManager processManager,
+      :Stdio stdio,
+      :SystemClock systemClock,
+      :AnsiTerminal terminal,
     ) = _toolContext;
     return Daemon.createMachineDaemon(
       featureFlags: featureFlags,
       logger: logger,
       stdio: stdio,
       analytics: analytics,
+      androidSdk: _androidContext?.androidSdk,
+      androidWorkflow: _androidWorkflow,
       deviceManager: _deviceManager,
       fileSystem: fs,
+      java: _androidContext?.java,
       outputPreferences: outputPreferences,
       platform: platform,
       processManager: processManager,

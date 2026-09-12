@@ -294,22 +294,20 @@ class FlutterDevice {
     // shuts down, including after an error. If `done` completes before `connectToVmService`,
     // something went wrong that caused DDS to shutdown early.
     try {
-      service =
-          await Future.any<dynamic>(<Future<dynamic>>[
-                connectToVmService(
-                  debuggingOptions.enableDds ? (device!.dds.uri ?? vmServiceUri) : vmServiceUri,
-                  reloadSources: reloadSources,
-                  restart: restart,
-                  compileExpression: compileExpression,
-                  flutterProject: FlutterProject.current(),
-                  printStructuredErrorLogMethod: printStructuredErrorLogMethod,
-                  device: device,
-                  logger: logger,
-                ),
-                if (!existingDds)
-                  device!.dds.done.whenComplete(() => throw Exception('DDS shut down too early')),
-              ])
-              as FlutterVmService?;
+      service = await Future.any<dynamic>(<Future<dynamic>>[
+        connectToVmService(
+          debuggingOptions.enableDds ? (device!.dds.uri ?? vmServiceUri) : vmServiceUri,
+          reloadSources: reloadSources,
+          restart: restart,
+          compileExpression: compileExpression,
+          flutterProject: FlutterProject.current(),
+          printStructuredErrorLogMethod: printStructuredErrorLogMethod,
+          device: device,
+          logger: logger,
+        ),
+        if (!existingDds)
+          device!.dds.done.whenComplete(() => throw Exception('DDS shut down too early')),
+      ]) as FlutterVmService?;
     } on Exception catch (exception) {
       logger.printTrace('Fail to connect to service protocol: $vmServiceUri: $exception');
       rethrow;
@@ -1000,43 +998,35 @@ abstract class ResidentRunner extends ResidentHandlers {
     required this.debuggingOptions,
     required this.target,
     Analytics? analytics,
-    Artifacts? artifacts,
-    BuildSystem? buildSystem,
-    BuildTargets? buildTargets,
-    Cache? cache,
+    this._artifacts,
+    this._buildSystem,
+    this._buildTargets,
+    this._cache,
     CommandHelp? commandHelp,
-    Config? config,
+    this._config,
     this.dartBuilder,
     String? dillOutputPath,
     FileSystem? fileSystem,
-    FlutterVersion? flutterVersion,
+    this._flutterVersion,
     this.hotMode = true,
     Logger? logger,
     this.machine = false,
-    OperatingSystemUtils? osUtils,
+    this._osUtils,
     OutputPreferences? outputPreferences,
     Platform? platform,
     ProcessManager? processManager,
     String? projectRootPath,
     this.stayResident = true,
     Terminal? terminal,
-    Xcode? xcode,
+    this._xcode,
   }) : _analytics = analytics ?? const NoOpAnalytics(),
-       _artifacts = artifacts,
-       _buildSystem = buildSystem,
-       _buildTargets = buildTargets,
-       _cache = cache,
-       _config = config,
        _dillOutputPath = dillOutputPath,
        _fileSystem = fileSystem ?? MemoryFileSystem.test(),
-       _flutterVersion = flutterVersion,
        _logger = logger ?? BufferLogger.test(),
-       _osUtils = osUtils,
        _outputPreferences = outputPreferences ?? OutputPreferences.test(),
        _platform = platform ?? const LocalPlatform(),
        _processManager = processManager ?? const LocalProcessManager(),
        _terminal = terminal ?? Terminal.test(),
-       _xcode = xcode,
        mainPath = (fileSystem ?? MemoryFileSystem.test()).file(target).absolute.path,
        packagesFilePath = debuggingOptions.buildInfo.packageConfigPath,
        projectRootPath =
@@ -1799,18 +1789,13 @@ Future<String?> getMissingPackageHintForPlatform(
 class TerminalHandler {
   TerminalHandler(
     this.residentRunner, {
-    required Logger logger,
-    required Terminal terminal,
-    required Signals signals,
-    required io.ProcessInfo processInfo,
-    required bool reportReady,
-    String? pidFile,
-  }) : _logger = logger,
-       _terminal = terminal,
-       _signals = signals,
-       _processInfo = processInfo,
-       _reportReady = reportReady,
-       _pidFile = pidFile;
+    required this._logger,
+    required this._terminal,
+    required this._signals,
+    required this._processInfo,
+    required this._reportReady,
+    this._pidFile,
+  });
 
   final Logger _logger;
   final Terminal _terminal;
