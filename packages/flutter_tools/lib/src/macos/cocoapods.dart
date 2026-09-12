@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:ffi' show Abi;
+
 import 'package:file/file.dart';
 import 'package:process/process.dart';
 import 'package:unified_analytics/unified_analytics.dart';
@@ -97,22 +98,18 @@ const cocoaPodsRecommendedVersion = Version.withText(1, 16, 2, '1.16.2');
 ///     installing iOS/macOS dependencies.
 class CocoaPods {
   CocoaPods({
+    required this._analytics,
     required FileSystem fileSystem,
-    required ProcessManager processManager,
-    required XcodeProjectInterpreter xcodeProjectInterpreter,
     required Logger logger,
     required Platform platform,
-    required Analytics analytics,
+    required ProcessManager processManager,
+    required this._xcodeProjectInterpreter,
+    this._cache,
     Abi? currentAbi,
-    Cache? cache,
-    String? flutterRoot,
+    this._flutterRoot,
   }) : _fileSystem = fileSystem,
-       _processManager = processManager,
-       _xcodeProjectInterpreter = xcodeProjectInterpreter,
        _logger = logger,
-       _analytics = analytics,
-       _cache = cache,
-       _flutterRoot = flutterRoot,
+       _processManager = processManager,
        _processUtils = ProcessUtils(processManager: processManager, logger: logger),
        _operatingSystemUtils = OperatingSystemUtils(
          fileSystem: fileSystem,

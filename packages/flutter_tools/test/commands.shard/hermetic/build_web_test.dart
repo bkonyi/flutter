@@ -119,8 +119,7 @@ void main() {
       expect(
         () => runner.run(<String>['build', 'web', '--no-pub']),
         throwsToolExit(
-          message:
-              '"build web" is not currently supported. To enable, run "flutter config --enable-web".',
+          message: '"build web" is not currently supported. To enable, run "flutter config --enable-web".',
         ),
       );
     },
@@ -175,23 +174,20 @@ void main() {
       FileSystem: () => fileSystem,
       FeatureFlags: () => TestFeatureFlags(isWebEnabled: true),
       ProcessManager: () => processManager,
-      BuildSystem: () => TestBuildSystem.all(BuildResult(success: true), (
-        Target target,
-        Environment environment,
-      ) {
-        expect(environment.defines, <String, String>{
-          'TargetFile': 'lib/main.dart',
-          'HasWebPlugins': 'true',
-          'ServiceWorkerStrategy': 'offline-first',
-          'BuildMode': 'release',
-          'DartDefines':
-              'Zm9vPWE=,RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
-          'DartObfuscation': 'false',
-          'TrackWidgetCreation': 'false',
-          'TreeShakeIcons': 'true',
-          'UseLocalCanvasKit': 'true',
-        });
-      }),
+      BuildSystem: () =>
+          TestBuildSystem.all(BuildResult(success: true), (Target target, Environment environment) {
+            expect(environment.defines, <String, String>{
+              'TargetFile': 'lib/main.dart',
+              'HasWebPlugins': 'true',
+              'ServiceWorkerStrategy': 'offline-first',
+              'BuildMode': 'release',
+              'DartDefines': 'Zm9vPWE=,RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
+              'DartObfuscation': 'false',
+              'TrackWidgetCreation': 'false',
+              'TreeShakeIcons': 'true',
+              'UseLocalCanvasKit': 'true',
+            });
+          }),
     },
   );
 
@@ -550,23 +546,20 @@ void main() {
       FileSystem: () => fileSystem,
       FeatureFlags: () => TestFeatureFlags(isWebEnabled: true),
       ProcessManager: () => processManager,
-      BuildSystem: () => TestBuildSystem.all(BuildResult(success: true), (
-        Target target,
-        Environment environment,
-      ) {
-        expect(environment.defines, <String, String>{
-          'TargetFile': 'lib/a.dart',
-          'HasWebPlugins': 'true',
-          'ServiceWorkerStrategy': 'offline-first',
-          'BuildMode': 'release',
-          'DartDefines':
-              'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
-          'DartObfuscation': 'false',
-          'TrackWidgetCreation': 'false',
-          'TreeShakeIcons': 'true',
-          'UseLocalCanvasKit': 'true',
-        });
-      }),
+      BuildSystem: () =>
+          TestBuildSystem.all(BuildResult(success: true), (Target target, Environment environment) {
+            expect(environment.defines, <String, String>{
+              'TargetFile': 'lib/a.dart',
+              'HasWebPlugins': 'true',
+              'ServiceWorkerStrategy': 'offline-first',
+              'BuildMode': 'release',
+              'DartDefines': 'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
+              'DartObfuscation': 'false',
+              'TrackWidgetCreation': 'false',
+              'TreeShakeIcons': 'true',
+              'UseLocalCanvasKit': 'true',
+            });
+          }),
     },
   );
 
@@ -613,23 +606,20 @@ void main() {
       FileSystem: () => fileSystem,
       FeatureFlags: () => TestFeatureFlags(isWebEnabled: true),
       ProcessManager: () => processManager,
-      BuildSystem: () => TestBuildSystem.all(BuildResult(success: true), (
-        Target target,
-        Environment environment,
-      ) {
-        expect(environment.defines, <String, String>{
-          'TargetFile': 'lib/a.dart',
-          'HasWebPlugins': 'true',
-          'ServiceWorkerStrategy': 'offline-first',
-          'BuildMode': 'release',
-          'DartDefines':
-              'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
-          'DartObfuscation': 'false',
-          'TrackWidgetCreation': 'false',
-          'TreeShakeIcons': 'true',
-          'UseLocalCanvasKit': 'true',
-        });
-      }),
+      BuildSystem: () =>
+          TestBuildSystem.all(BuildResult(success: true), (Target target, Environment environment) {
+            expect(environment.defines, <String, String>{
+              'TargetFile': 'lib/a.dart',
+              'HasWebPlugins': 'true',
+              'ServiceWorkerStrategy': 'offline-first',
+              'BuildMode': 'release',
+              'DartDefines': 'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
+              'DartObfuscation': 'false',
+              'TrackWidgetCreation': 'false',
+              'TreeShakeIcons': 'true',
+              'UseLocalCanvasKit': 'true',
+            });
+          }),
     },
   );
 
@@ -731,23 +721,20 @@ void main() {
       FileSystem: () => fileSystem,
       FeatureFlags: () => TestFeatureFlags(isWebEnabled: true),
       ProcessManager: () => processManager,
-      BuildSystem: () => TestBuildSystem.all(BuildResult(success: true), (
-        Target target,
-        Environment environment,
-      ) {
-        expect(environment.defines, <String, String>{
-          'TargetFile': 'lib/main.dart',
-          'HasWebPlugins': 'true',
-          'ServiceWorkerStrategy': 'offline-first',
-          'BuildMode': 'release',
-          'DartDefines':
-              'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
-          'DartObfuscation': 'false',
-          'TrackWidgetCreation': 'false',
-          'TreeShakeIcons': 'true',
-          'UseLocalCanvasKit': 'true',
-        });
-      }),
+      BuildSystem: () =>
+          TestBuildSystem.all(BuildResult(success: true), (Target target, Environment environment) {
+            expect(environment.defines, <String, String>{
+              'TargetFile': 'lib/main.dart',
+              'HasWebPlugins': 'true',
+              'ServiceWorkerStrategy': 'offline-first',
+              'BuildMode': 'release',
+              'DartDefines': 'RkxVVFRFUl9WRVJTSU9OPTAuMC4w,RkxVVFRFUl9DSEFOTkVMPW1hc3Rlcg==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049MTExMTE=,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YWJjZGU=,RkxVVFRFUl9EQVJUX1ZFUlNJT049MTI=',
+              'DartObfuscation': 'false',
+              'TrackWidgetCreation': 'false',
+              'TreeShakeIcons': 'true',
+              'UseLocalCanvasKit': 'true',
+            });
+          }),
     },
   );
 

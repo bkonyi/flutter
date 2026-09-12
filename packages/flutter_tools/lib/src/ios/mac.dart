@@ -74,12 +74,11 @@ For more information, please visit:
 
 class IMobileDevice {
   IMobileDevice({
-    required Artifacts artifacts,
+    required this._artifacts,
     required Cache cache,
     required ProcessManager processManager,
     required Logger logger,
-  }) : _artifacts = artifacts,
-       _dyLdLibEntry = cache.dyLdLibEntry,
+  }) : _dyLdLibEntry = cache.dyLdLibEntry,
        _processUtils = ProcessUtils(logger: logger, processManager: processManager);
 
   /// Create an [IMobileDevice] for testing.

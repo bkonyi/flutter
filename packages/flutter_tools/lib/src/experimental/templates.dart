@@ -24,18 +24,13 @@ const Duration _kRpcTimeout = Duration(seconds: 5);
 base class ExtensionTemplateManager extends TemplateService {
   /// Creates an [ExtensionTemplateManager].
   ExtensionTemplateManager({
-    required ExtensionManager extensionManager,
-    required FeatureFlags featureFlags,
-    required FileSystem fileSystem,
-    required Logger logger,
-    Cache? cache,
-    String? flutterRoot,
-  }) : _extensionManager = extensionManager,
-       _featureFlags = featureFlags,
-       _fileSystem = fileSystem,
-       _logger = logger,
-       _cache = cache,
-       _flutterRoot = flutterRoot;
+    required this._extensionManager,
+    required this._featureFlags,
+    required this._fileSystem,
+    required this._logger,
+    this._cache,
+    this._flutterRoot,
+  });
 
   final ExtensionManager _extensionManager;
   final FeatureFlags _featureFlags;
