@@ -225,44 +225,35 @@ abstract class Pub {
 
 class _DefaultPub implements Pub {
   _DefaultPub({
-    required BotDetector botDetector,
-    required FileSystem fileSystem,
+    required this._botDetector,
+    required this._fileSystem,
     required Logger logger,
     required Platform platform,
     required ProcessManager processManager,
-    Cache? cache,
-    String? flutterRoot,
-  }) : _fileSystem = fileSystem,
-       _logger = logger,
+    this._cache,
+    this._flutterRoot,
+  }) : _logger = logger,
        _platform = platform,
-       _botDetector = botDetector,
-       _cache = cache,
-       _flutterRoot = flutterRoot,
-       _processUtils = ProcessUtils(logger: logger, processManager: processManager),
        _processManager = processManager,
+       _processUtils = ProcessUtils(logger: logger, processManager: processManager),
        _stdio = null {
     _git = Git(currentPlatform: platform, runProcessWith: _processUtils);
   }
 
   @visibleForTesting
   _DefaultPub.test({
-    required BotDetector botDetector,
-    required FileSystem fileSystem,
+    required this._botDetector,
+    required this._fileSystem,
     required Logger logger,
     required Platform platform,
     required ProcessManager processManager,
-    required Stdio stdio,
-    Cache? cache,
-    String? flutterRoot,
-  }) : _fileSystem = fileSystem,
-       _logger = logger,
+    required this._stdio,
+    this._cache,
+    this._flutterRoot,
+  }) : _logger = logger,
        _platform = platform,
-       _botDetector = botDetector,
-       _cache = cache,
-       _flutterRoot = flutterRoot,
-       _processUtils = ProcessUtils(logger: logger, processManager: processManager),
        _processManager = processManager,
-       _stdio = stdio {
+       _processUtils = ProcessUtils(logger: logger, processManager: processManager) {
     _git = Git(currentPlatform: platform, runProcessWith: _processUtils);
   }
 

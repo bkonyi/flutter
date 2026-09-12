@@ -83,29 +83,23 @@ class HotRunner extends ResidentRunner {
     super.fileSystem,
     super.flutterVersion,
     this.hostIsIde = false,
-    HotRunnerConfig? hotRunnerConfig,
+    this._hotRunnerConfig,
     super.logger,
     super.machine,
-    String? nativeAssetsYamlFile,
+    this._nativeAssetsYamlFile,
     super.osUtils,
     super.outputPreferences,
     super.platform,
     super.processManager,
-    ProjectFileInvalidator? projectFileInvalidator,
+    this._projectFileInvalidator,
     super.projectRootPath,
-    ReassembleHelper reassembleHelper = _defaultReassembleHelper,
-    ReloadSourcesHelper reloadSourcesHelper = defaultReloadSourcesHelper,
+    this._reassembleHelper = _defaultReassembleHelper,
+    this._reloadSourcesHelper = defaultReloadSourcesHelper,
     super.stayResident,
-    StopwatchFactory stopwatchFactory = const StopwatchFactory(),
+    this._stopwatchFactory = const StopwatchFactory(),
     super.terminal,
     super.xcode,
-  }) : _hotRunnerConfig = hotRunnerConfig,
-       _nativeAssetsYamlFile = nativeAssetsYamlFile,
-       _projectFileInvalidator = projectFileInvalidator,
-       _reassembleHelper = reassembleHelper,
-       _reloadSourcesHelper = reloadSourcesHelper,
-       _stopwatchFactory = stopwatchFactory,
-       super(hotMode: true);
+  }) : super(hotMode: true);
 
   final StopwatchFactory _stopwatchFactory;
   final ReloadSourcesHelper _reloadSourcesHelper;
@@ -1173,18 +1167,17 @@ class HotRunner extends ResidentRunner {
   }
 }
 
-typedef ReloadSourcesHelper =
-    Future<OperationResult> Function(
-      HotRunner hotRunner,
-      List<FlutterDevice?> flutterDevices,
-      bool? pause,
-      Map<String, dynamic> firstReloadDetails,
-      String? targetPlatform,
-      String? sdkName,
-      bool? emulator,
-      String? reason,
-      Analytics analytics,
-    );
+typedef ReloadSourcesHelper = Future<OperationResult> Function(
+  HotRunner hotRunner,
+  List<FlutterDevice?> flutterDevices,
+  bool? pause,
+  Map<String, dynamic> firstReloadDetails,
+  String? targetPlatform,
+  String? sdkName,
+  bool? emulator,
+  String? reason,
+  Analytics analytics,
+);
 
 @visibleForTesting
 Future<OperationResult> defaultReloadSourcesHelper(
@@ -1209,27 +1202,25 @@ Future<OperationResult> defaultReloadSourcesHelper(
       pause: pause,
     );
     allReportsFutures.add(
-      Future.wait(reportFutures).then<DeviceReloadReport?>((
-        List<vm_service.ReloadReport> reports,
-      ) async {
-        // TODO(aam): Investigate why we are validating only first reload report,
-        // which seems to be current behavior
-        if (reports.isEmpty) {
-          return null;
-        }
-        final vm_service.ReloadReport firstReport = reports.first;
-        // Don't print errors because they will be printed further down when
-        // `validateReloadReport` is called again.
-        await device.updateReloadStatus(
-          HotRunner.validateReloadReport(firstReport, printErrors: false),
-        );
-        return DeviceReloadReport(device, reports);
-      }),
+      Future.wait(reportFutures)
+          .then<DeviceReloadReport?>((List<vm_service.ReloadReport> reports) async {
+            // TODO(aam): Investigate why we are validating only first reload report,
+            // which seems to be current behavior
+            if (reports.isEmpty) {
+              return null;
+            }
+            final vm_service.ReloadReport firstReport = reports.first;
+            // Don't print errors because they will be printed further down when
+            // `validateReloadReport` is called again.
+            await device.updateReloadStatus(
+              HotRunner.validateReloadReport(firstReport, printErrors: false),
+            );
+            return DeviceReloadReport(device, reports);
+          }),
     );
   }
-  final Iterable<DeviceReloadReport> reports = (await Future.wait(
-    allReportsFutures,
-  )).whereType<DeviceReloadReport>();
+  final Iterable<DeviceReloadReport> reports = (await Future.wait(allReportsFutures))
+      .whereType<DeviceReloadReport>();
   final vm_service.ReloadReport? reloadReport = reports.isEmpty ? null : reports.first.reports[0];
   if (reloadReport == null ||
       !HotRunner.validateReloadReport(reloadReport, logger: hotRunner.logger)) {
@@ -1300,13 +1291,12 @@ class ReassembleResult {
   final bool shouldReportReloadTime;
 }
 
-typedef ReassembleHelper =
-    Future<ReassembleResult> Function(
-      List<FlutterDevice?> flutterDevices,
-      Map<FlutterDevice?, List<FlutterView>> viewCache,
-      void Function(String message)? onSlow,
-      String reloadMessage,
-    );
+typedef ReassembleHelper = Future<ReassembleResult> Function(
+  List<FlutterDevice?> flutterDevices,
+  Map<FlutterDevice?, List<FlutterView>> viewCache,
+  void Function(String message)? onSlow,
+  String reloadMessage,
+);
 
 Future<ReassembleResult> _defaultReassembleHelper(
   List<FlutterDevice?> flutterDevices,
@@ -1452,12 +1442,10 @@ class InvalidationResult {
 /// application to determine when they are dirty.
 class ProjectFileInvalidator {
   ProjectFileInvalidator({
-    required FileSystem fileSystem,
-    required Platform platform,
-    required Logger logger,
-  }) : _fileSystem = fileSystem,
-       _platform = platform,
-       _logger = logger;
+    required this._fileSystem,
+    required this._platform,
+    required this._logger,
+  });
 
   final FileSystem _fileSystem;
   final Platform _platform;

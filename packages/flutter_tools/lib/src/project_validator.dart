@@ -34,14 +34,13 @@ abstract class MachineProjectValidator extends ProjectValidator {
 /// Specific info from different platforms should be written in their own ProjectValidator.
 class VariableDumpMachineProjectValidator extends MachineProjectValidator {
   VariableDumpMachineProjectValidator({
-    required this.logger,
     required this.fileSystem,
-    required this.platform,
     required this.git,
-    Cache? cache,
-    String? flutterRoot,
-  }) : _cache = cache,
-       _flutterRoot = flutterRoot;
+    required this.logger,
+    required this.platform,
+    this._cache,
+    this._flutterRoot,
+  });
 
   final Logger logger;
   final FileSystem fileSystem;

@@ -359,9 +359,8 @@ void main() {
           toolContext: DelegatingToolContext(),
           verboseHelp: false,
         );
-        await createTestCommandRunner(
-          command,
-        ).run(<String>['update-packages', '--cherry-pick=vector_math:2.0.9']);
+        await createTestCommandRunner(command)
+            .run(<String>['update-packages', '--cherry-pick=vector_math:2.0.9']);
         expect(
           pub.pubspecs[flutterSdk.absolute.path]!.first.dependencies,
           (Pubspec.parse(kFlutterWorkspacePubspecYaml)
@@ -387,9 +386,8 @@ void main() {
           toolContext: DelegatingToolContext(),
           verboseHelp: false,
         );
-        await createTestCommandRunner(
-          command,
-        ).run(<String>['update-packages', '--cherry-pick=vector_math:^2.0.9']);
+        await createTestCommandRunner(command)
+            .run(<String>['update-packages', '--cherry-pick=vector_math:^2.0.9']);
         expect(
           pub.pubspecs[flutterSdk.absolute.path]!.first.dependencies,
           (Pubspec.parse(kFlutterWorkspacePubspecYaml)
@@ -415,9 +413,8 @@ void main() {
           toolContext: DelegatingToolContext(),
           verboseHelp: false,
         );
-        await createTestCommandRunner(
-          command,
-        ).run(<String>['update-packages', '--cherry-pick=vector_math:^2.0.9,meta:1.0.5']);
+        await createTestCommandRunner(command)
+            .run(<String>['update-packages', '--cherry-pick=vector_math:^2.0.9,meta:1.0.5']);
         expect(
           pub.pubspecs[flutterSdk.absolute.path]!.first.dependencies,
           (Pubspec.parse(kFlutterWorkspacePubspecYaml)
@@ -560,9 +557,8 @@ dependencies:
           toolContext: DelegatingToolContext(),
           verboseHelp: false,
         );
-        await createTestCommandRunner(
-          command,
-        ).run(<String>['update-packages', '--force-upgrade', '--update-hashes']);
+        await createTestCommandRunner(command)
+            .run(<String>['update-packages', '--force-upgrade', '--update-hashes']);
 
         final File updatedFlutterToolsPubspec = flutterTools.childFile('pubspec.yaml');
         final parsedToolsPubspec = Pubspec.parse(updatedFlutterToolsPubspec.readAsStringSync());

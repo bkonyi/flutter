@@ -22,9 +22,7 @@ const kReservedKotlinKeywords = <String>['when', 'in', 'is'];
 
 /// Provides the path where templates used by flutter_tools are stored.
 class TemplatePathProvider {
-  const TemplatePathProvider({Cache? cache, String? flutterRoot})
-    : _cache = cache,
-      _flutterRoot = flutterRoot;
+  const TemplatePathProvider({this._cache, this._flutterRoot});
 
   final Cache? _cache;
   final String? _flutterRoot;
@@ -113,12 +111,10 @@ class Template {
     List<Directory> templateSources,
     this.imageSourceDirectories, {
     required FileSystem fileSystem,
-    required Logger logger,
-    required TemplateRenderer templateRenderer,
+    required this._logger,
+    required this._templateRenderer,
     required Set<Uri>? templateManifest,
   }) : _fileSystem = fileSystem,
-       _logger = logger,
-       _templateRenderer = templateRenderer,
        _templateManifest = templateManifest ?? <Uri>{} {
     for (final sourceDirectory in templateSources) {
       if (!sourceDirectory.existsSync()) {
