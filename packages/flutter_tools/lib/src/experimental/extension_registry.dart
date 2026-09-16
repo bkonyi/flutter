@@ -184,6 +184,9 @@ class GlobalExtensionRegistry {
     if (_platform.environment['DART_BINARY'] case final String envDart when envDart.isNotEmpty) {
       return envDart;
     }
+    if (_platform.executable.isNotEmpty && _fs.file(_platform.executable).existsSync()) {
+      return _platform.executable;
+    }
     return 'dart';
   }
 
@@ -401,14 +404,20 @@ class GlobalExtensionRegistry {
       if (resolvedEntrypointUri == null) {
         final File binEntrypoint = sourceDir.childDirectory('bin').childFile('$extName.dart');
         if (binEntrypoint.existsSync()) {
-          resolvedEntrypointUri = binEntrypoint.uri;
+          resolvedEntrypointUri = binEntrypoint.absolute.uri;
         } else {
-          final File libEntrypoint = sourceDir.childDirectory('lib').childFile('$extName.dart');
-          if (libEntrypoint.existsSync()) {
-            resolvedEntrypointUri = libEntrypoint.uri;
-          } else {
-            resolvedEntrypointUri = Uri.parse('package:$extName/$extName.dart');
-          }
+          resolvedEntrypointUri = Uri.parse('package:$extName/$extName.dart');
+        }
+      } else if (!resolvedEntrypointUri.hasScheme || resolvedEntrypointUri.scheme == 'file') {
+        final File entrypointFile = _fs.file(resolvedEntrypointUri.path);
+        final String libPath = sourceDir.absolute.childDirectory('lib').path;
+        if (_fs.path.isWithin(libPath, entrypointFile.absolute.path)) {
+          final String relativeToLib = _fs.path
+              .relative(entrypointFile.absolute.path, from: libPath)
+              .replaceAll(r'\', '/');
+          resolvedEntrypointUri = Uri.parse('package:$extName/$relativeToLib');
+        } else {
+          resolvedEntrypointUri = entrypointFile.absolute.uri;
         }
       }
     } else if (sourceType == 'git') {
@@ -482,10 +491,17 @@ void main(List<String> args, [SendPort? sendPort]) {
     return;
   }
   if (sendPort != null) {
-    try {
-      (extension_entrypoint.main as dynamic)(args, sendPort);
-    } on NoSuchMethodError {
-      (extension_entrypoint.main as dynamic)(sendPort);
+    final Function entrypointFn = extension_entrypoint.main;
+    if (entrypointFn is void Function(List<String>, SendPort)) {
+      entrypointFn(args, sendPort);
+    } else if (entrypointFn is void Function(SendPort)) {
+      entrypointFn(sendPort);
+    } else {
+      try {
+        Function.apply(entrypointFn, <Object?>[args, sendPort]);
+      } on Object {
+        Function.apply(entrypointFn, <Object?>[sendPort]);
+      }
     }
   }
 }
