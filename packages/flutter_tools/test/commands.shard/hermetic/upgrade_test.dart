@@ -13,6 +13,9 @@ import 'package:flutter_tools/src/base/time.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/upgrade.dart';
 import 'package:flutter_tools/src/version.dart';
+import 'package:flutter_tools/src/experimental/extension_registry.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
 import '../../src/context.dart';
 import '../../src/fake_process_manager.dart';
@@ -411,6 +414,83 @@ void main() {
         frameworkVersion: startingTag,
         engineRevision: 'engine',
       ),
+      Logger: () => logger,
+      ProcessManager: () => processManager,
+    },
+  );
+  testUsingContext(
+    'triggers snapshot regeneration for stale extensions',
+    () async {
+      const startingTag = '3.0.0-1.2.pre';
+
+      final registry = GlobalExtensionRegistry(
+        fileSystem: fileSystem,
+        logger: logger,
+        platform: FakePlatform(version: '3.6.0'),
+        processManager: processManager,
+      );
+
+      final installDir = fileSystem.directory('/ext_dir')..createSync();
+
+      registry.register(
+        const GlobalExtensionEntry(
+          capabilities: ToolExtensionCapabilities(services: <String>[]),
+          dartSdkVersion: '3.5.0', // Stale
+          enabled: true,
+          entrypointPath: 'dummy.dart',
+          installDir: '/ext_dir',
+          name: 'foo',
+          source: 'path',
+          version: '1.0.0',
+        ),
+      );
+
+      final localCommand = UpgradeCommand(
+        verboseHelp: false,
+        commandRunner: UpgradeCommandRunner(extensionRegistry: registry)
+          ..clock = SystemClock.fixed(DateTime.utc(2026)),
+      );
+      final localRunner = createTestCommandRunner(localCommand);
+
+      processManager.addCommands(<FakeCommand>[
+        // commands from the re-entrant `flutter upgrade --continue` call
+        const FakeCommand(
+          command: <String>['git', 'tag', '--points-at', 'HEAD'],
+          stdout: startingTag,
+        ),
+        const FakeCommand(
+          command: <String>['bin/flutter', '--no-color', '--no-version-check', 'precache'],
+        ),
+        const FakeCommand(command: <String>['bin/flutter', '--no-version-check', 'doctor']),
+        // Our snapshot regeneration should be called now!
+        const FakeCommand(
+          command: <String>[
+            'dart',
+            'compile',
+            'jit-snapshot',
+            '-o',
+            '/ext_dir/bin/generated_entrypoint.jit',
+            'dummy.dart',
+            '--train',
+          ],
+        ),
+      ]);
+
+      await localRunner.run(<String>[
+        'upgrade',
+        '--continue',
+        '--continue-started-at',
+        '2026-01-01T00:00:00.000Z',
+        '--no-version-check',
+      ]);
+
+      expect(processManager, hasNoRemainingExpectations);
+      expect(registry.getEntry('foo')!.dartSdkVersion, '3.6.0');
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      FlutterVersion: () =>
+          FakeFlutterVersion(frameworkVersion: startingTag, engineRevision: 'engine'),
       Logger: () => logger,
       ProcessManager: () => processManager,
     },

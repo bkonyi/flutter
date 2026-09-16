@@ -270,20 +270,39 @@ class ExtensionManager {
 
         // Spawns global extensions from AppJIT snapshots (snapshotPath) if present and valid,
         // falling back to entrypoint source.
-        final String? snapshotPath = entry.snapshotPath;
+        var currentEntry = entry;
+        final GlobalExtensionRegistry? globalRegistry = _globalRegistry;
+        if (globalRegistry != null && globalRegistry.isSnapshotStale(currentEntry)) {
+          _logger.printTrace(
+            'Snapshot for global extension "$extensionName" is stale or missing. Attempting regeneration...',
+          );
+          final bool regenerated = await globalRegistry.regenerateSnapshot(extensionName);
+          if (regenerated) {
+            final GlobalExtensionEntry? updatedEntry = globalRegistry.getEntry(extensionName);
+            if (updatedEntry != null) {
+              currentEntry = updatedEntry;
+            }
+          } else {
+            _logger.printWarning(
+              'Failed to regenerate AppJIT snapshot for extension "$extensionName"; falling back to source entrypoint.',
+            );
+          }
+        }
+
+        final String? snapshotPath = currentEntry.snapshotPath;
         final bool isSnapshotValid =
+            (globalRegistry == null || !globalRegistry.isSnapshotStale(currentEntry)) &&
             snapshotPath != null &&
             _fs.file(snapshotPath).existsSync() &&
-            _fs.file(snapshotPath).lengthSync() > 0 &&
-            (entry.dartSdkVersion.isEmpty || entry.dartSdkVersion == _platform.version);
+            _fs.file(snapshotPath).lengthSync() > 0;
 
         final Uri targetUri = isSnapshotValid
             ? _fs.file(snapshotPath).uri
-            : _fs.file(entry.entrypointPath).uri;
+            : _fs.file(currentEntry.entrypointPath).uri;
 
         try {
           final File packageConfigFile = _fs
-              .directory(entry.installDir)
+              .directory(currentEntry.installDir)
               .childDirectory('.dart_tool')
               .childFile('package_config.json');
           final Uri? packageConfigUri = packageConfigFile.existsSync()

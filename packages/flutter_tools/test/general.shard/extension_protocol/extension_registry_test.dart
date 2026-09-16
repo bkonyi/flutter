@@ -546,7 +546,7 @@ version: 2.1.0
     });
 
     test(
-      'ExtensionManager falls back to source entrypoint when snapshot is invalid or SDK mismatch',
+      'ExtensionManager falls back to source entrypoint when snapshot is stale and regeneration fails',
       () async {
         final fs = MemoryFileSystem.test();
         final logger = BufferLogger.test();
@@ -567,7 +567,20 @@ version: 2.1.0
           fileSystem: fs,
           logger: logger,
           platform: platform,
-          processManager: FakeProcessManager.any(),
+          processManager: FakeProcessManager.list(<FakeCommand>[
+            FakeCommand(
+              command: const <String>[
+                'dart',
+                'compile',
+                'jit-snapshot',
+                '-o',
+                '/registry/global_ext/bin/generated_entrypoint.jit',
+                '/registry/global_ext/bin/generated_entrypoint.dart',
+                '--train',
+              ],
+              exitCode: 1, // Fail regeneration to force fallback
+            ),
+          ]),
           customRegistryDir: registryDir,
         );
 
@@ -746,6 +759,234 @@ extensions:
       expect(spawnedUris, hasLength(1));
       expect(spawnedUris.first, equals(workspaceEntry.uri));
       await manager.dispose();
+    });
+  });
+  group('Stale Snapshot Regeneration', () {
+    late MemoryFileSystem fs;
+    late BufferLogger logger;
+    late FakePlatform platform;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      logger = BufferLogger.test();
+      platform = FakePlatform(
+        environment: <String, String>{'HOME': '/users/alice'},
+        version: '3.0.0', // Fake version
+      );
+    });
+
+    test('isSnapshotStale returns true when conditions are met', () {
+      final registry = GlobalExtensionRegistry(
+        fileSystem: fs,
+        logger: logger,
+        platform: platform,
+        processManager: FakeProcessManager.any(),
+      );
+
+      // Missing snapshot path
+      expect(
+        registry.isSnapshotStale(
+          const GlobalExtensionEntry(
+            capabilities: ToolExtensionCapabilities(services: <String>[]),
+            dartSdkVersion: '3.0.0',
+            enabled: true,
+            entrypointPath: 'dummy.dart',
+            installDir: 'ext_dir',
+            name: 'foo',
+            source: 'path',
+            version: '1.0.0',
+            snapshotPath: null, // Null path
+          ),
+        ),
+        isTrue,
+      );
+
+      // Snapshot file does not exist
+      expect(
+        registry.isSnapshotStale(
+          const GlobalExtensionEntry(
+            capabilities: ToolExtensionCapabilities(services: <String>[]),
+            dartSdkVersion: '3.0.0',
+            enabled: true,
+            entrypointPath: 'dummy.dart',
+            installDir: 'ext_dir',
+            name: 'foo',
+            source: 'path',
+            version: '1.0.0',
+            snapshotPath: 'missing.jit',
+          ),
+        ),
+        isTrue,
+      );
+
+      fs.file('found.jit').createSync();
+      // Dart version mismatch
+      expect(
+        registry.isSnapshotStale(
+          const GlobalExtensionEntry(
+            capabilities: ToolExtensionCapabilities(services: <String>[]),
+            dartSdkVersion: '2.19.0', // Mismatch!
+            enabled: true,
+            entrypointPath: 'dummy.dart',
+            installDir: 'ext_dir',
+            name: 'foo',
+            source: 'path',
+            version: '1.0.0',
+            snapshotPath: 'found.jit',
+          ),
+        ),
+        isTrue,
+      );
+
+      // Up to date
+      expect(
+        registry.isSnapshotStale(
+          const GlobalExtensionEntry(
+            capabilities: ToolExtensionCapabilities(services: <String>[]),
+            dartSdkVersion: '3.0.0', // Matches
+            enabled: true,
+            entrypointPath: 'dummy.dart',
+            installDir: 'ext_dir',
+            name: 'foo',
+            source: 'path',
+            version: '1.0.0',
+            snapshotPath: 'found.jit',
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('regenerateSnapshot updates dartSdkVersion and recompiles snapshot', () async {
+      final processManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(
+          command: const <String>[
+            'test_dart',
+            'compile',
+            'jit-snapshot',
+            '-o',
+            'ext_dir/bin/generated_entrypoint.jit',
+            'dummy.dart',
+            '--train',
+          ],
+          onRun: (_) {
+            fs
+                .directory('ext_dir/bin')
+                .childFile('generated_entrypoint.jit')
+                .createSync(recursive: true);
+          },
+        ),
+      ]);
+
+      final registry = GlobalExtensionRegistry(
+        fileSystem: fs,
+        logger: logger,
+        platform: platform,
+        processManager: processManager,
+      );
+
+      // Register an entry with a stale dartSdkVersion
+      registry.register(
+        const GlobalExtensionEntry(
+          capabilities: ToolExtensionCapabilities(services: <String>[]),
+          dartSdkVersion: '2.19.0',
+          enabled: true,
+          entrypointPath: 'dummy.dart',
+          installDir: 'ext_dir',
+          name: 'foo',
+          source: 'path',
+          version: '1.0.0',
+          // null snapshotPath
+        ),
+      );
+
+      final result = await registry.regenerateSnapshot('foo', dartBinaryPath: 'test_dart');
+      expect(result, isTrue);
+
+      final updatedEntry = registry.getEntry('foo')!;
+      expect(updatedEntry.dartSdkVersion, '3.0.0');
+      expect(updatedEntry.snapshotPath, 'ext_dir/bin/generated_entrypoint.jit');
+    });
+
+    test('regenerateStaleSnapshots processes all stale entries', () async {
+      final processManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(
+          command: const <String>[
+            'test_dart',
+            'compile',
+            'jit-snapshot',
+            '-o',
+            'ext_dir_foo/bin/generated_entrypoint.jit',
+            'dummy.dart',
+            '--train',
+          ],
+        ),
+        FakeCommand(
+          command: const <String>[
+            'test_dart',
+            'compile',
+            'jit-snapshot',
+            '-o',
+            'ext_dir_bar/bin/generated_entrypoint.jit',
+            'dummy.dart',
+            '--train',
+          ],
+        ),
+      ]);
+
+      final registry = GlobalExtensionRegistry(
+        fileSystem: fs,
+        logger: logger,
+        platform: platform,
+        processManager: processManager,
+      );
+
+      registry.register(
+        const GlobalExtensionEntry(
+          capabilities: ToolExtensionCapabilities(services: <String>[]),
+          dartSdkVersion: '2.19.0', // Stale
+          enabled: true,
+          entrypointPath: 'dummy.dart',
+          installDir: 'ext_dir_foo',
+          name: 'foo',
+          source: 'path',
+          version: '1.0.0',
+        ),
+      );
+
+      registry.register(
+        const GlobalExtensionEntry(
+          capabilities: ToolExtensionCapabilities(services: <String>[]),
+          dartSdkVersion: '2.19.0', // Stale
+          enabled: true,
+          entrypointPath: 'dummy.dart',
+          installDir: 'ext_dir_bar',
+          name: 'bar',
+          source: 'path',
+          version: '1.0.0',
+        ),
+      );
+
+      fs.file('found.jit').createSync();
+      registry.register(
+        const GlobalExtensionEntry(
+          capabilities: ToolExtensionCapabilities(services: <String>[]),
+          dartSdkVersion: '3.0.0', // Up to date
+          enabled: true,
+          entrypointPath: 'dummy.dart',
+          installDir: 'ext_dir_baz',
+          name: 'baz',
+          source: 'path',
+          version: '1.0.0',
+          snapshotPath: 'found.jit',
+        ),
+      );
+
+      await registry.regenerateStaleSnapshots(dartBinaryPath: 'test_dart');
+
+      expect(registry.getEntry('foo')!.dartSdkVersion, '3.0.0');
+      expect(registry.getEntry('bar')!.dartSdkVersion, '3.0.0');
+      expect(registry.getEntry('baz')!.dartSdkVersion, '3.0.0'); // Unchanged
     });
   });
 }

@@ -12,6 +12,7 @@ import '../base/time.dart';
 import '../base/utils.dart';
 import '../cache.dart';
 import '../dart/pub.dart';
+import '../experimental/extension_registry.dart';
 import '../globals.dart' as globals;
 import '../persistent_tool_state.dart';
 import '../project.dart';
@@ -23,8 +24,12 @@ import 'channel.dart';
 const _flutterInstallDocs = 'https://flutter.dev/setup';
 
 class UpgradeCommand extends FlutterCommand {
-  UpgradeCommand({required bool verboseHelp, UpgradeCommandRunner? commandRunner})
-    : _commandRunner = commandRunner ?? UpgradeCommandRunner() {
+  UpgradeCommand({
+    required bool verboseHelp,
+    UpgradeCommandRunner? commandRunner,
+    GlobalExtensionRegistry? extensionRegistry,
+  }) : _commandRunner =
+           commandRunner ?? UpgradeCommandRunner(extensionRegistry: extensionRegistry) {
     argParser
       ..addFlag(
         'force',
@@ -136,6 +141,10 @@ final class _SecondHalf implements UpgradePhase {
 
 @visibleForTesting
 class UpgradeCommandRunner {
+  UpgradeCommandRunner({this.extensionRegistry});
+
+  final GlobalExtensionRegistry? extensionRegistry;
+
   String? workingDirectory; // set in runCommand() above
 
   @visibleForTesting
@@ -285,6 +294,7 @@ class UpgradeCommandRunner {
     await updatePackages(flutterVersion);
     await runDoctor();
     // Force the welcome message to re-display following the upgrade.
+    await extensionRegistry?.regenerateStaleSnapshots();
     persistentToolState.setShouldRedisplayWelcomeMessage(true);
     if (globals.flutterVersion.channel == 'master' || globals.flutterVersion.channel == 'main') {
       globals.printStatus(

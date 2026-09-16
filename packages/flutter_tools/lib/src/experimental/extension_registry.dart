@@ -283,6 +283,69 @@ class GlobalExtensionRegistry {
   /// Disables extension [name].
   bool disable(String name) => setEnabled(name, false);
 
+  /// Returns `true` if the snapshot for [entry] is missing or compiled with a different SDK version.
+  bool isSnapshotStale(GlobalExtensionEntry entry) {
+    final String? snapshotPath = entry.snapshotPath;
+    if (snapshotPath == null) {
+      return true;
+    }
+    if (!_fs.file(snapshotPath).existsSync()) {
+      return true;
+    }
+    return entry.dartSdkVersion != _platform.version;
+  }
+
+  /// Recompiles the snapshot for the extension [extensionName] and updates its registry entry.
+  Future<bool> regenerateSnapshot(String extensionName, {String? dartBinaryPath}) async {
+    final GlobalExtensionEntry? entry = getEntry(extensionName);
+    if (entry == null) {
+      return false;
+    }
+    final String entrypointPath = entry.entrypointPath;
+    final String snapshotPath =
+        entry.snapshotPath ??
+        _fs
+            .directory(entry.installDir)
+            .childDirectory('bin')
+            .childFile('generated_entrypoint.jit')
+            .path;
+    final String dart = dartBinaryPath ?? _dartBinary;
+
+    final ProcessResult compileResult = await _processManager.run(<String>[
+      dart,
+      'compile',
+      'jit-snapshot',
+      '-o',
+      snapshotPath,
+      entrypointPath,
+      '--train',
+    ], workingDirectory: entry.installDir);
+
+    if (compileResult.exitCode != 0) {
+      _logger.printWarning(
+        'Failed to regenerate AppJIT snapshot for extension "$extensionName":\n${compileResult.stderr}',
+      );
+      return false;
+    }
+
+    final GlobalExtensionEntry updatedEntry = entry.copyWith(
+      dartSdkVersion: _platform.version,
+      snapshotPath: snapshotPath,
+    );
+    register(updatedEntry);
+    return true;
+  }
+
+  /// Iterates through all registered and enabled extensions and regenerates any with stale snapshots.
+  Future<void> regenerateStaleSnapshots({String? dartBinaryPath}) async {
+    final Map<String, GlobalExtensionEntry> entries = loadEntries();
+    for (final GlobalExtensionEntry entry in entries.values) {
+      if (entry.enabled && isSnapshotStale(entry)) {
+        await regenerateSnapshot(entry.name, dartBinaryPath: dartBinaryPath);
+      }
+    }
+  }
+
   /// Installs an extension from [source] (local path, pub, or git).
   Future<GlobalExtensionEntry> install({
     required String source,
