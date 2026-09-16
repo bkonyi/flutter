@@ -483,4 +483,136 @@ extensions:
       expect(linuxBuildDir.existsSync(), isFalse);
     },
   );
+
+  testWithoutContext('flutter extensions command suite manages global extensions', () async {
+    final Directory dataHome = tempHome.childDirectory('data_home')..createSync(recursive: true);
+    final extEnv = <String, String>{
+      ...baseEnv,
+      'DART_DATA_HOME': dataHome.path,
+      'FLUTTER_TOOL_EXTENSIONS': 'true',
+    };
+
+    // 1. Initial list should be empty
+    final ProcessResult listInitial = await processManager.run(
+      <String>[flutterBin, 'extensions', 'list'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(listInitial.exitCode, 0);
+    expect(listInitial.stdout, contains('No global extensions installed.'));
+
+    // 2. Install prototype extension
+    final String prototypePath = fileSystem.path.join(
+      getFlutterRoot(),
+      'packages',
+      'flutter_tools',
+      'packages',
+      'flutter_tools_extension_linux_prototype',
+    );
+    final ProcessResult installResult = await processManager.run(
+      <String>[flutterBin, 'extensions', 'install', prototypePath],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(
+      installResult.exitCode,
+      0,
+      reason: 'install stdout: ${installResult.stdout}\nstderr: ${installResult.stderr}',
+    );
+    expect(
+      installResult.stdout,
+      contains('Successfully installed extension "flutter_tools_extension_linux_prototype"'),
+    );
+
+    // 3. List should show installed extension
+    final ProcessResult listAfterInstall = await processManager.run(
+      <String>[flutterBin, 'extensions', 'list'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(listAfterInstall.exitCode, 0);
+    expect(listAfterInstall.stdout, contains('flutter_tools_extension_linux_prototype'));
+    expect(listAfterInstall.stdout, contains('[enabled]'));
+
+    // 4. List with --machine should produce valid JSON
+    final ProcessResult listMachine = await processManager.run(
+      <String>[flutterBin, 'extensions', 'list', '--machine'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(listMachine.exitCode, 0);
+    final dynamic decoded = jsonDecode(listMachine.stdout.toString().trim());
+    expect(decoded, isA<List<dynamic>>());
+    final extList = decoded as List<dynamic>;
+    expect(extList, hasLength(1));
+    expect(
+      (extList.first as Map<String, dynamic>)['name'],
+      'flutter_tools_extension_linux_prototype',
+    );
+
+    // 5. Disable extension
+    final ProcessResult disableResult = await processManager.run(
+      <String>[flutterBin, 'extensions', 'disable', 'flutter_tools_extension_linux_prototype'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(disableResult.exitCode, 0);
+    expect(
+      disableResult.stdout,
+      contains('Disabled extension "flutter_tools_extension_linux_prototype"'),
+    );
+
+    // Verify list shows disabled
+    final ProcessResult listAfterDisable = await processManager.run(
+      <String>[flutterBin, 'extensions', 'list'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(listAfterDisable.stdout, contains('[disabled]'));
+
+    // 6. Enable extension
+    final ProcessResult enableResult = await processManager.run(
+      <String>[flutterBin, 'extensions', 'enable', 'flutter_tools_extension_linux_prototype'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(enableResult.exitCode, 0);
+    expect(
+      enableResult.stdout,
+      contains('Enabled extension "flutter_tools_extension_linux_prototype"'),
+    );
+
+    // 7. Upgrade extension
+    final ProcessResult upgradeResult = await processManager.run(
+      <String>[flutterBin, 'extensions', 'upgrade', 'flutter_tools_extension_linux_prototype'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(upgradeResult.exitCode, 0);
+    expect(
+      upgradeResult.stdout,
+      contains('Successfully upgraded extension "flutter_tools_extension_linux_prototype"'),
+    );
+
+    // 8. Uninstall extension
+    final ProcessResult uninstallResult = await processManager.run(
+      <String>[flutterBin, 'extensions', 'uninstall', 'flutter_tools_extension_linux_prototype'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(uninstallResult.exitCode, 0);
+    expect(
+      uninstallResult.stdout,
+      contains('Successfully uninstalled extension "flutter_tools_extension_linux_prototype"'),
+    );
+
+    // List should be empty again
+    final ProcessResult listFinal = await processManager.run(
+      <String>[flutterBin, 'extensions', 'list'],
+      workingDirectory: tempHome.path,
+      environment: extEnv,
+    );
+    expect(listFinal.exitCode, 0);
+    expect(listFinal.stdout, contains('No global extensions installed.'));
+  });
 }

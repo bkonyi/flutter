@@ -29,6 +29,7 @@ import 'src/commands/doctor.dart';
 import 'src/commands/downgrade.dart';
 import 'src/commands/drive.dart';
 import 'src/commands/emulators.dart';
+import 'src/commands/extensions.dart';
 import 'src/commands/generate.dart';
 import 'src/commands/generate_localizations.dart';
 import 'src/commands/ide_config.dart';
@@ -49,6 +50,7 @@ import 'src/experimental/extension_artifact_manager.dart';
 import 'src/experimental/extension_build_manager.dart';
 import 'src/experimental/extension_clean_manager.dart';
 import 'src/experimental/extension_manager.dart';
+import 'src/experimental/extension_registry.dart';
 import 'src/experimental/templates.dart';
 import 'src/features.dart';
 import 'src/globals.dart' as globals;
@@ -108,12 +110,19 @@ Future<void> main(List<String> args) async {
   await runner.run(
     args,
     () {
+      final globalRegistry = GlobalExtensionRegistry(
+        fileSystem: globals.fs,
+        logger: globals.logger,
+        platform: globals.platform,
+        processManager: globals.processManager,
+      );
       final manager = ExtensionManager(
         hostPlatform: globals.os.hostPlatform,
         logger: globals.logger,
         fileSystem: globals.fs,
         platform: globals.platform,
         featureFlags: featureFlags,
+        globalRegistry: globalRegistry,
       );
       final artifactManager = ExtensionArtifactManager(
         extensionManager: manager,
@@ -145,6 +154,7 @@ Future<void> main(List<String> args) async {
         extensionCleanManager: cleanManager,
         extensionManager: manager,
         extensionTemplateManager: templateManager,
+        globalExtensionRegistry: globalRegistry,
       );
     },
     verbose: verbose,
@@ -208,6 +218,7 @@ List<FlutterCommand> generateCommands({
   ExtensionCleanManager? extensionCleanManager,
   ExtensionManager? extensionManager,
   ExtensionTemplateManager? extensionTemplateManager,
+  GlobalExtensionRegistry? globalExtensionRegistry,
 }) => <FlutterCommand>[
   AnalyzeCommand(
     verboseHelp: verboseHelp,
@@ -296,6 +307,17 @@ List<FlutterCommand> generateCommands({
     signals: globals.signals,
   ),
   EmulatorsCommand(),
+  ExtensionsCommand(
+    extensionRegistry:
+        globalExtensionRegistry ??
+        GlobalExtensionRegistry(
+          fileSystem: globals.fs,
+          logger: globals.logger,
+          platform: globals.platform,
+          processManager: globals.processManager,
+        ),
+    logger: globals.logger,
+  ),
   GenerateCommand(),
   GenerateLocalizationsCommand(
     fileSystem: globals.fs,

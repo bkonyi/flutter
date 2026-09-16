@@ -17,6 +17,7 @@ import 'extension_cache.dart';
 import 'extension_device_manager.dart';
 import 'extension_discovery.dart';
 import 'extension_manifest.dart';
+import 'extension_registry.dart';
 
 /// Manages active tool extension isolate connections and exposes capability proxies.
 class ExtensionManager {
@@ -31,6 +32,7 @@ class ExtensionManager {
     List<ExtensionEntryPoint> entryPoints = const <ExtensionEntryPoint>[],
     ExtensionDiscovery? discovery,
     ExtensionManifestFinder? manifestFinder,
+    GlobalExtensionRegistry? globalRegistry,
     ExtensionUriSpawner spawner = ExtensionConnection.spawnUri,
   }) : _logger = logger,
        _fs = fileSystem,
@@ -42,6 +44,7 @@ class ExtensionManager {
        _entryPoints = List<ExtensionEntryPoint>.from(entryPoints),
        _manifestFinder =
            manifestFinder ?? ExtensionManifestFinder(fileSystem: fileSystem, logger: logger),
+       _globalRegistry = globalRegistry,
        _spawner = spawner;
 
   /// The active [HostPlatform].
@@ -57,6 +60,7 @@ class ExtensionManager {
   final ExtensionDiscovery _discovery;
   final List<ExtensionEntryPoint> _entryPoints;
   final ExtensionManifestFinder _manifestFinder;
+  final GlobalExtensionRegistry? _globalRegistry;
   final ExtensionUriSpawner _spawner;
 
   /// The [ExtensionCapabilityCacheManager] managing capability cache on disk.
@@ -64,6 +68,9 @@ class ExtensionManager {
 
   /// The [ExtensionManifestFinder] used to discover extension manifests.
   ExtensionManifestFinder get manifestFinder => _manifestFinder;
+
+  /// The [GlobalExtensionRegistry] used to discover globally installed extensions.
+  GlobalExtensionRegistry? get globalRegistry => _globalRegistry;
 
   /// Active extension connections compatible with [hostPlatform].
   List<ExtensionConnection> get connections => _discovery.connections;
@@ -102,13 +109,19 @@ class ExtensionManager {
     }
 
     final List<File> manifestFiles = _manifestFinder.findManifestFiles(startDir);
-    if (manifestFiles.isNotEmpty) {
-      final Map<String, ({ExtensionDeclaration declaration, File manifestFile})> declarations =
-          _manifestFinder.loadMergedDeclarationsWithFiles(manifestFiles);
+    final Map<String, ({ExtensionDeclaration declaration, File manifestFile})>
+    workspaceDeclarations = manifestFiles.isNotEmpty
+        ? _manifestFinder.loadMergedDeclarationsWithFiles(manifestFiles)
+        : <String, ({ExtensionDeclaration declaration, File manifestFile})>{};
+    final Map<String, GlobalExtensionEntry> globalEntries =
+        _globalRegistry?.loadEntries() ?? <String, GlobalExtensionEntry>{};
+
+    if (workspaceDeclarations.isNotEmpty || globalEntries.isNotEmpty) {
       final loadedCaches = <Directory, Map<String, ExtensionCapabilityCacheEntry>>{};
 
+      // 1. Process workspace declarations.
       for (final MapEntry(key: extensionName, value: (:declaration, :manifestFile))
-          in declarations.entries) {
+          in workspaceDeclarations.entries) {
         if (!declaration.enabled) {
           _logger.printTrace('Extension "$extensionName" is disabled in manifest; skipping.');
           continue;
@@ -209,6 +222,97 @@ class ExtensionManager {
           _failedExtensionNames.add(extensionName);
           _logger.printWarning('Failed to spawn tool extension "$extensionName": $error');
           _logger.printTrace('Extension "$extensionName" spawn error details: $error\n$stackTrace');
+        }
+      }
+
+      // 2. Process global extensions from GlobalExtensionRegistry.
+      for (final MapEntry(key: extensionName, value: entry) in globalEntries.entries) {
+        // Precedence: Workspace manifests override global extensions with the same name.
+        if (workspaceDeclarations.containsKey(extensionName)) {
+          _logger.printTrace(
+            'Global extension "$extensionName" overridden by workspace manifest; skipping.',
+          );
+          continue;
+        }
+        // Skips disabled global extensions.
+        if (!entry.enabled) {
+          _logger.printTrace('Global extension "$extensionName" is disabled; skipping.');
+          continue;
+        }
+        if (_failedExtensionNames.contains(extensionName)) {
+          _logger.printTrace('Global extension "$extensionName" previously failed; skipping.');
+          continue;
+        }
+        if (_spawnedExtensionNames.contains(extensionName)) {
+          continue;
+        }
+
+        // Check platform support.
+        if (!_supportsPlatform(entry.capabilities)) {
+          _logger.printTrace(
+            'Global extension "$extensionName" does not support host platform "$hostPlatformName"; skipping.',
+          );
+          continue;
+        }
+
+        // Check required services.
+        if (requiredServices != null) {
+          final bool providesRequiredService = entry.capabilities.services.any(
+            requiredServices.contains,
+          );
+          if (!providesRequiredService) {
+            _logger.printTrace(
+              'Global extension "$extensionName" does not provide required services $requiredServices; skipping isolate spawn.',
+            );
+            continue;
+          }
+        }
+
+        // Spawns global extensions from AppJIT snapshots (snapshotPath) if present and valid,
+        // falling back to entrypoint source.
+        final String? snapshotPath = entry.snapshotPath;
+        final bool isSnapshotValid =
+            snapshotPath != null &&
+            _fs.file(snapshotPath).existsSync() &&
+            _fs.file(snapshotPath).lengthSync() > 0 &&
+            (entry.dartSdkVersion.isEmpty || entry.dartSdkVersion == _platform.version);
+
+        final Uri targetUri = isSnapshotValid
+            ? _fs.file(snapshotPath).uri
+            : _fs.file(entry.entrypointPath).uri;
+
+        try {
+          final File packageConfigFile = _fs
+              .directory(entry.installDir)
+              .childDirectory('.dart_tool')
+              .childFile('package_config.json');
+          final Uri? packageConfigUri = packageConfigFile.existsSync()
+              ? packageConfigFile.uri
+              : null;
+
+          _logger.printTrace(
+            'Spawning isolate for global extension "$extensionName" from '
+            '${isSnapshotValid ? 'snapshot' : 'source'} at $targetUri...',
+          );
+          final ExtensionConnection connection = await _spawner(
+            targetUri,
+            logger: _logger,
+            packageConfigUri: packageConfigUri,
+          );
+          _spawnedExtensionNames.add(extensionName);
+
+          await _registerOrDisposeConnection(connection, extensionName: extensionName);
+        } on TimeoutException {
+          _failedExtensionNames.add(extensionName);
+          _logger.printWarning(
+            'Handshake with global tool extension "$extensionName" timed out; disabling for this session.',
+          );
+        } on Object catch (error, stackTrace) {
+          _failedExtensionNames.add(extensionName);
+          _logger.printWarning('Failed to spawn global tool extension "$extensionName": $error');
+          _logger.printTrace(
+            'Global extension "$extensionName" spawn error details: $error\n$stackTrace',
+          );
         }
       }
     }
