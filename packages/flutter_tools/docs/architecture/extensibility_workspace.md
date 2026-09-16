@@ -107,6 +107,9 @@ For deeper technical specifications on specific subsystems, refer to:
 - [Templates Slice & flutter create Architecture](templates_slice.md): Details custom project templates, `ParsedFlutterTemplateType` dynamic parsing, `ExtensionTemplateManager` queries, `ExtensionArgParserMixin` dynamic options reconstruction, and host-side rendering delegation.
 - [Device Service Slice & Dynamic Device Discovery Architecture](device_service_slice.md): Details target device DTOs (`TargetDevice`), extension service interface (`DeviceService`), host client proxy (`ExtensionDeviceClient`), device discovery adapter (`ExtensionDeviceDiscovery`), host device wrapper (`ExtensionBackedDevice`), and `FlutterDeviceManager` CLI integration.
 - [Build Target Slice & Dynamic Build Integration Architecture](build_target_slice.md): Details build target DTOs (`ExtensionBuildTarget`, `ExtensionBuildResult`), extension service interface (`BuildService`), host manager (`ExtensionBuildManager`), and dynamic `BuildCommand` subcommands integration.
+- [High-Level Extension System Architecture](../extension_system_architecture.md): Comprehensive system overview incorporating all capability slices, isolate runner, discovery hierarchy, and CLI management.
+- [Artifact & Clean Services Architecture](../artifact_and_clean_services.md): Details `ArtifactService`, `ArtifactDependency`, cryptographic SHA-256 validation, dynamic `flutter precache`, `CleanService`, `CleanEnvironment`, and fault-tolerant `flutter clean` integration.
+- [Global Extension CLI & Registry Architecture](../global_extension_cli_and_registry.md): Details `GlobalExtensionRegistry`, `extension_registry.json` storage schema, the `flutter extensions` CLI command suite, AppJIT snapshot compilation pipeline, and safe mode bypass.
 
 
 ---
