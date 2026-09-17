@@ -112,9 +112,10 @@ void main() {
 
     test('resolves destination directory in .dart_tool/flutter_tools/artifacts', () {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       final artifactManager = ExtensionArtifactManager(
         extensionManager: manager,
@@ -135,9 +136,10 @@ void main() {
 
     test('getArtifactDependencies returns empty when feature flags disabled', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(),
       );
       final artifactManager = ExtensionArtifactManager(
         extensionManager: manager,
@@ -153,9 +155,10 @@ void main() {
 
     test('downloads, verifies SHA-256, and skips re-downloading existing artifacts', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
 
@@ -199,9 +202,10 @@ void main() {
 
     test('throws ToolExit when downloaded file is missing', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[_failingExtensionEntryPoint]);
 
@@ -228,9 +232,10 @@ void main() {
 
     test('throws ToolExit when SHA-256 checksum verification fails', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[_corruptExtensionEntryPoint]);
 
@@ -263,9 +268,10 @@ void main() {
 
     test('precache triggers ensureArtifactsDownloaded', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
 

@@ -31,10 +31,6 @@ void linuxExtensionEntryPoint(SendPort sendPort) {
       LinuxCleanService(),
     ],
     extensionName: 'flutter_tools_extension_linux_prototype',
-    logger: (String message) {
-      // ignore: avoid_print
-      print('[LinuxExtension] $message');
-    },
     supportedPlatforms: const <String>{'linux'},
   );
 }

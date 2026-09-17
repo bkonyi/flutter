@@ -44,16 +44,29 @@ class ToolExtensionEntryPoint {
     void Function(String message)? logger,
     Set<String>? supportedPlatforms,
   }) async {
-    logger?.call('[ToolExtensionIsolate] Initializing isolate channel...');
     final channel = IsolateChannel<Object?>.connectSend(sendPort);
     final peer = json_rpc.Peer.withoutJson(channel);
+
+    void logTrace(String message) {
+      logger?.call(message);
+      if (!peer.isClosed) {
+        try {
+          peer.sendNotification('extension.log', <String, Object?>{
+            'extensionName': extensionName,
+            'message': message,
+          });
+        } on StateError {
+          // Ignore if peer is closing or closed.
+        }
+      }
+    }
+
+    logTrace('[ToolExtensionIsolate] Initializing isolate channel...');
 
     final rpcHandlers = <String, ExtensionRpcHandler>{};
 
     for (final service in services) {
-      logger?.call(
-        '[ToolExtensionIsolate] Initializing service namespace "${service.namespace}"...',
-      );
+      logTrace('[ToolExtensionIsolate] Initializing service namespace "${service.namespace}"...');
       final Map<String, ExtensionRpcHandler> handlers = await service.initialize();
       handlers.forEach((String method, ExtensionRpcHandler handler) {
         final fullMethod = '${service.namespace}.$method';
@@ -61,7 +74,7 @@ class ToolExtensionEntryPoint {
           throw StateError('Duplicate RPC method registered: "$fullMethod"');
         }
         rpcHandlers[fullMethod] = handler;
-        logger?.call('[ToolExtensionIsolate] Registered RPC method handler: "$fullMethod"');
+        logTrace('[ToolExtensionIsolate] Registered RPC method handler: "$fullMethod"');
       });
     }
 
@@ -72,24 +85,24 @@ class ToolExtensionEntryPoint {
     );
 
     peer.registerMethod('extension.getCapabilities', () {
-      logger?.call('[ToolExtensionIsolate] Handling extension.getCapabilities query.');
+      logTrace('[ToolExtensionIsolate] Handling extension.getCapabilities query.');
       return capabilities.toMap();
     });
 
     rpcHandlers.forEach((String fullMethod, ExtensionRpcHandler handler) {
       peer.registerMethod(fullMethod, (json_rpc.Parameters params) async {
-        logger?.call('[ToolExtensionIsolate] Handling RPC request "$fullMethod"...');
+        logTrace('[ToolExtensionIsolate] Handling RPC request "$fullMethod"...');
         final Object? rawValue = params.value;
         final Map<String, Object?> paramMap = rawValue is Map
             ? rawValue.cast<String, Object?>()
             : <String, Object?>{};
         final Object? result = await handler(paramMap);
-        logger?.call('[ToolExtensionIsolate] RPC request "$fullMethod" completed.');
+        logTrace('[ToolExtensionIsolate] RPC request "$fullMethod" completed.');
         return result;
       });
     });
 
-    logger?.call('[ToolExtensionIsolate] Isolate peer listening for RPC requests.');
+    logTrace('[ToolExtensionIsolate] Isolate peer listening for RPC requests.');
     await peer.listen();
   }
 }

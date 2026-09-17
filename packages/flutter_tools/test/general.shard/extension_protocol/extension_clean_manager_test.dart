@@ -54,9 +54,10 @@ void main() {
 
     test('cleanProject returns early when tool extensions are disabled', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(),
       );
       final cleanManager = ExtensionCleanManager(
         extensionManager: manager,
@@ -73,9 +74,10 @@ void main() {
 
     test('cleanProject invokes clean on active extension connections', () async {
       final manager = ExtensionManager(
+        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+        fileSystem: fileSystem,
         hostPlatform: HostPlatform.linux_x64,
         logger: logger,
-        featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
       );
       await manager.initialize(entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint]);
 
@@ -108,9 +110,10 @@ void main() {
       'cleanProject logs warning and does not crash when extension throws during clean',
       () async {
         final manager = ExtensionManager(
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+          fileSystem: fileSystem,
           hostPlatform: HostPlatform.linux_x64,
           logger: logger,
-          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
         );
         await manager.initialize(entryPoints: <ExtensionEntryPoint>[_throwingExtensionEntryPoint]);
 

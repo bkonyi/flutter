@@ -214,6 +214,17 @@ class ExtensionConnection {
     final channel = IsolateChannel<Object?>.connectReceive(receivePort);
     final peer = json_rpc.Peer.withoutJson(channel);
 
+    peer.registerMethod('extension.log', (json_rpc.Parameters params) {
+      final Object? rawValue = params.value;
+      if (rawValue case {'message': final String message}) {
+        final String prefix = switch (rawValue['extensionName']) {
+          final String name when name.isNotEmpty => '[$name] ',
+          _ => '',
+        };
+        logger.printTrace('$prefix$message');
+      }
+    });
+
     unawaited(peer.listen());
 
     logger.printTrace('ExtensionConnection querying $_kGetCapabilitiesMethod...');
