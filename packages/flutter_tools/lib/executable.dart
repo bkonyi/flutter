@@ -65,6 +65,7 @@ import 'src/pre_run_validator.dart';
 import 'src/project_validator.dart';
 import 'src/resident_runner.dart';
 import 'src/runner/flutter_command.dart';
+import 'src/runner/flutter_command_runner.dart';
 import 'src/web/web_runner.dart';
 
 /// Main entry point for commands.
@@ -116,7 +117,9 @@ Future<void> main(List<String> args) async {
         platform: globals.platform,
         processManager: globals.processManager,
       );
+      final bool? cliExtensionsOverride = FlutterGlobalOptions.evaluateToolExtensionsCliFlag(args);
       final manager = ExtensionManager(
+        cliExtensionsOverride: cliExtensionsOverride,
         hostPlatform: globals.os.hostPlatform,
         logger: globals.logger,
         fileSystem: globals.fs,

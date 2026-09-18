@@ -30,7 +30,8 @@ base class ExtensionCleanManager {
 
   /// Cleans extension-managed artifacts and build directories for the given [project].
   Future<void> cleanProject(FlutterProject project, {Directory? buildDirectory}) async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+    if (_extensionManager.isSafeMode ||
+        (!_extensionManager.isExtensionsEnabled && !_featureFlags.isToolExtensionsEnabled)) {
       return;
     }
     await _extensionManager.ensureInitialized(

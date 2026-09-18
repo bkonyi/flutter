@@ -49,7 +49,7 @@ base class ExtensionArtifactManager {
   /// Queries all active extension connections supporting [ArtifactService] and
   /// returns a mapping of extension names to their declared artifact dependencies.
   Future<Map<String, Set<ArtifactDependency>>> getArtifactDependencies() async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+    if (!_extensionManager.isExtensionsEnabled) {
       return const <String, Set<ArtifactDependency>>{};
     }
     await _extensionManager.ensureInitialized(

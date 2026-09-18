@@ -35,7 +35,7 @@ base class ExtensionBuildManager {
 
   /// Retrieve build targets by routing `build.getBuildTargets` to active tool extensions.
   Future<List<ExtensionBuildTarget>> getBuildTargets() async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+    if (!_extensionManager.isExtensionsEnabled) {
       return const <ExtensionBuildTarget>[];
     }
     if (_cachedTargets != null) {

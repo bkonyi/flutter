@@ -27,6 +27,7 @@ class ExtensionManager {
     required Logger logger,
     required FileSystem fileSystem,
     required FeatureFlags featureFlags,
+    bool? cliExtensionsOverride,
     Platform? platform,
     ExtensionCapabilityCacheManager? cacheManager,
     List<ExtensionEntryPoint> entryPoints = const <ExtensionEntryPoint>[],
@@ -37,6 +38,7 @@ class ExtensionManager {
   }) : _logger = logger,
        _fs = fileSystem,
        _featureFlags = featureFlags,
+       _cliExtensionsOverride = cliExtensionsOverride,
        _platform = platform ?? const LocalPlatform(),
        _cacheManager =
            cacheManager ?? ExtensionCapabilityCacheManager(fileSystem: fileSystem, logger: logger),
@@ -55,6 +57,7 @@ class ExtensionManager {
   /// The [FileSystem] used by this manager.
   FileSystem get fileSystem => _fs;
   final FeatureFlags _featureFlags;
+  final bool? _cliExtensionsOverride;
   final Platform _platform;
   final ExtensionCapabilityCacheManager _cacheManager;
   final ExtensionDiscovery _discovery;
@@ -90,12 +93,16 @@ class ExtensionManager {
   bool get isInitialized => _isInitialized;
   bool _isInitialized = false;
 
-  /// Whether safe mode bypass is engaged via the host environment.
-  bool get isSafeMode => isSafeModeActive(_platform.environment);
+  /// Whether safe mode bypass is engaged via the CLI (`--no-extensions`) or host environment (`FLUTTER_NO_EXTENSIONS`).
+  bool get isSafeMode => _cliExtensionsOverride == false || isSafeModeActive(_platform.environment);
+
+  /// Whether tool extensions are enabled for the current invocation.
+  bool get isExtensionsEnabled =>
+      !isSafeMode && (_cliExtensionsOverride ?? _featureFlags.isToolExtensionsEnabled);
 
   /// Ensures entrypoints and discovered extensions are initialized; idempotent per service requirement.
   Future<void> ensureInitialized({Set<String>? requiredServices, Directory? startDir}) async {
-    if (isSafeMode || !_featureFlags.isToolExtensionsEnabled) {
+    if (!isExtensionsEnabled) {
       _isInitialized = true;
       return;
     }

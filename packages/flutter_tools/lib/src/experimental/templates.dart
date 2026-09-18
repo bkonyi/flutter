@@ -46,7 +46,7 @@ base class ExtensionTemplateManager extends TemplateService {
   ///
   /// Results are cached after the first successful call.
   Future<List<ProjectTemplate>> getProjectTemplates() async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+    if (!_extensionManager.isExtensionsEnabled) {
       return const <ProjectTemplate>[];
     }
     if (_cachedTemplates != null) {

@@ -161,6 +161,102 @@ void main() {
     });
 
     test(
+      'ensureInitialized bypasses discovery when cliExtensionsOverride is false (--no-extensions)',
+      () async {
+        final fs = MemoryFileSystem.test();
+        final logger = BufferLogger.test();
+        final Directory projectDir = fs.directory('/project')..createSync();
+        fs.currentDirectory = projectDir;
+        projectDir.childFile(ExtensionManifestFinder.kManifestFileName).writeAsStringSync('''
+extensions:
+  dynamic_ext:
+    path: packages/dynamic_ext
+''');
+        final Directory extDir = projectDir.childDirectory('packages').childDirectory('dynamic_ext')
+          ..createSync(recursive: true);
+        extDir.childDirectory('bin').childFile('dynamic_ext.dart').createSync(recursive: true);
+
+        var spawnerCalled = false;
+        final manager = ExtensionManager(
+          cliExtensionsOverride: false,
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: fs,
+          featureFlags: TestFeatureFlags(isToolExtensionsEnabled: true),
+          spawner:
+              (
+                Uri entrypoint, {
+                List<String> args = const <String>[],
+                required Logger logger,
+                Uri? packageConfigUri,
+                Duration timeout = ExtensionConnection.defaultHandshakeTimeout,
+              }) async {
+                spawnerCalled = true;
+                throw StateError('Should not spawn when cliExtensionsOverride is false');
+              },
+        );
+
+        expect(manager.isSafeMode, isTrue);
+        expect(manager.isExtensionsEnabled, isFalse);
+        await manager.ensureInitialized(startDir: projectDir);
+        expect(spawnerCalled, isFalse);
+        expect(manager.connections, isEmpty);
+        expect(manager.isInitialized, isTrue);
+      },
+    );
+
+    test(
+      'ensureInitialized enables extensions when cliExtensionsOverride is true (--extensions)',
+      () async {
+        final fs = MemoryFileSystem.test();
+        final logger = BufferLogger.test();
+        final Directory projectDir = fs.directory('/project')..createSync();
+        fs.currentDirectory = projectDir;
+        projectDir.childFile(ExtensionManifestFinder.kManifestFileName).writeAsStringSync('''
+extensions:
+  dynamic_ext:
+    path: packages/dynamic_ext
+''');
+        final Directory extDir = projectDir.childDirectory('packages').childDirectory('dynamic_ext')
+          ..createSync(recursive: true);
+        extDir.childDirectory('bin').childFile('dynamic_ext.dart').createSync(recursive: true);
+
+        var spawnerCalled = false;
+        final manager = ExtensionManager(
+          cliExtensionsOverride: true,
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          fileSystem: fs,
+          featureFlags: TestFeatureFlags(),
+          spawner:
+              (
+                Uri entrypoint, {
+                List<String> args = const <String>[],
+                required Logger logger,
+                Uri? packageConfigUri,
+                Duration timeout = ExtensionConnection.defaultHandshakeTimeout,
+              }) async {
+                spawnerCalled = true;
+                return _createFakeConnection(
+                  capabilities: const ToolExtensionCapabilities(
+                    services: <String>['device'],
+                    supportedPlatforms: <String>{'linux'},
+                  ),
+                  logger: logger,
+                );
+              },
+        );
+
+        expect(manager.isSafeMode, isFalse);
+        expect(manager.isExtensionsEnabled, isTrue);
+        await manager.ensureInitialized(startDir: projectDir);
+        expect(spawnerCalled, isTrue);
+        expect(manager.connections, hasLength(1));
+        await manager.dispose();
+      },
+    );
+
+    test(
       'ExtensionManager initializes cleanly with default empty entryPoints and no manifests',
       () async {
         final logger = BufferLogger.test();
