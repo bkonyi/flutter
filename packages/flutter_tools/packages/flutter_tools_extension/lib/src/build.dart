@@ -18,7 +18,8 @@ class ExtensionBuildContext {
     required this.buildDir,
     required this.resolvedArtifacts,
     required this.plugins,
-  });
+    bool? trackWidgetCreation,
+  }) : trackWidgetCreation = trackWidgetCreation ?? (buildMode == 'debug');
 
   /// The absolute path to the root directory of the Flutter project being built.
   final String projectRoot;
@@ -42,6 +43,9 @@ class ExtensionBuildContext {
 
   /// A list of plugins enabled for the build.
   final List<ExtensionPlugin> plugins;
+
+  /// Whether widget creation locations should be tracked by the Dart kernel compiler.
+  final bool trackWidgetCreation;
 }
 
 /// Abstract target that encapsulates both metadata and build logic.
@@ -171,6 +175,7 @@ abstract base class BuildService extends ToolExtensionService {
           buildDir: buildDir,
           resolvedArtifacts: resolvedArtifacts,
           plugins: plugins,
+          trackWidgetCreation: params['trackWidgetCreation'] as bool?,
         );
         final Map<String, Object?> buildResultMap = await target.build(context);
         return <String, Object?>{'success': true, ...buildResultMap};

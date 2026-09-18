@@ -332,6 +332,7 @@ class ExtensionBackedDevice extends Device {
             'buildDir': _fileSystem.path.join(projectDirectory, '.dart_tool', 'flutter_build'),
             'resolvedArtifacts': resolvedArtifacts,
             'plugins': plugins.map((ExtensionPlugin p) => p.toMap()).toList(),
+            'trackWidgetCreation': debuggingOptions.buildInfo.trackWidgetCreation,
           }, const Duration(minutes: 5));
 
       final buildResultMap = buildResult! as Map<String, Object?>;

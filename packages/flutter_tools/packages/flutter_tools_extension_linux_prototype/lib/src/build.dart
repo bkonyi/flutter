@@ -102,6 +102,7 @@ list(APPEND FLUTTER_TOOL_ENVIRONMENT
   "PROJECT_DIR=$escapedProjectDir"
   "FLUTTER_TARGET=${context.mainPath}"
   "BUILD_MODE=${context.buildMode}"
+  "TRACK_WIDGET_CREATION=${context.trackWidgetCreation}"
 )
 ''');
       await generatedConfigFile.writeAsString(buffer.toString());
