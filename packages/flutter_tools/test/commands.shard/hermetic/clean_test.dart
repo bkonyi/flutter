@@ -17,6 +17,7 @@ import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/clean.dart';
+import 'package:flutter_tools/src/experimental/extension_clean_manager.dart';
 import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -582,8 +583,54 @@ void main() {
           );
         },
       );
+
+      testWithoutContext(
+        '$CleanCommand invokes ExtensionCleanManager before deleting .dart_tool and preserves shared artifact cache',
+        () async {
+          xcodeProjectInterpreter.isInstalled = false;
+          final FlutterProject projectUnderTest = setupProjectUnderTest(
+            fileSystem.currentDirectory,
+            false,
+          );
+          final Directory sharedCacheDir = fileSystem.directory(
+            '/dart_data/flutter_tool_extensions/artifacts/ext/sha256',
+          )..createSync(recursive: true);
+          final File sharedArtifact = sharedCacheDir.childFile('engine.bin')
+            ..writeAsStringSync('artifact');
+
+          final fakeCleanManager = FakeExtensionCleanManager();
+          final CleanCommand command = createCleanCommand(
+            extensionCleanManager: fakeCleanManager,
+            fs: fileSystem,
+            logger: logger,
+            xcode: xcode,
+            xcodeProjectInterpreter: xcodeProjectInterpreter,
+          );
+          final CommandRunner<void> runner = createTestCommandRunner(command);
+          await runner.run(<String>['clean']);
+
+          expect(fakeCleanManager.cleanedProjects, hasLength(1));
+          expect(fakeCleanManager.dartToolExistedDuringClean, isTrue);
+          expect(fakeCleanManager.packageConfigExistedDuringClean, isTrue);
+          expect(projectUnderTest.dartTool, isNot(exists));
+          expect(sharedArtifact, exists);
+        },
+      );
     });
   });
+}
+
+class FakeExtensionCleanManager extends Fake implements ExtensionCleanManager {
+  final cleanedProjects = <FlutterProject>[];
+  bool dartToolExistedDuringClean = false;
+  bool packageConfigExistedDuringClean = false;
+
+  @override
+  Future<void> cleanProject(FlutterProject project, {Directory? buildDirectory}) async {
+    cleanedProjects.add(project);
+    dartToolExistedDuringClean = project.dartTool.existsSync();
+    packageConfigExistedDuringClean = project.packageConfig.existsSync();
+  }
 }
 
 class FakeTerminal extends Fake implements AnsiTerminal {
@@ -700,6 +747,7 @@ class CleanWorkspaceCall {
 }
 
 CleanCommand createCleanCommand({
+  ExtensionCleanManager? extensionCleanManager,
   FileSystem? fs,
   Logger? logger,
   Platform? platform,
@@ -718,6 +766,7 @@ CleanCommand createCleanCommand({
   final ProcessManager resolvedProcessManager = processManager ?? FakeProcessManager.any();
   final Logger resolvedLogger = logger ?? BufferLogger.test();
   return CleanCommand(
+    extensionCleanManager: extensionCleanManager,
     toolContext: FakeToolContext(
       fs: resolvedFs,
       logger: resolvedLogger,

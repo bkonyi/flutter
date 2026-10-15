@@ -12,6 +12,7 @@ import '../base/logger.dart';
 import '../base/terminal.dart';
 import '../build_info.dart';
 import '../context/tool_context.dart';
+import '../experimental/extension_clean_manager.dart';
 import '../ios/xcodeproj.dart';
 import '../macos/xcode.dart';
 import '../project.dart';
@@ -22,6 +23,7 @@ class CleanCommand extends FlutterCommand {
     required ToolContext super.toolContext,
     required this._xcode,
     required this._xcodeProjectInterpreter,
+    this._extensionCleanManager,
     this._verbose = false,
   }) : _toolContext = toolContext {
     requiresPubspecYaml();
@@ -52,6 +54,7 @@ class CleanCommand extends FlutterCommand {
     );
   }
 
+  final ExtensionCleanManager? _extensionCleanManager;
   final ToolContext _toolContext;
   final Xcode _xcode;
   final XcodeProjectInterpreter _xcodeProjectInterpreter;
@@ -103,11 +106,12 @@ class CleanCommand extends FlutterCommand {
       await _cleanXcode(flutterProject.macos);
     }
 
-    final Config config = _toolContext.config;
-    final FileSystem fs = _toolContext.fs;
+    final ToolContext(:Config config, :FileSystem fs) = _toolContext;
     final Directory buildDir = flutterProject.directory.childDirectory(
       getBuildDirectory(config, fs),
     );
+    await _extensionCleanManager?.cleanProject(flutterProject, buildDirectory: buildDir);
+
     await deleteFile(buildDir, flutterProject);
 
     await deleteFile(flutterProject.dartTool, flutterProject);
