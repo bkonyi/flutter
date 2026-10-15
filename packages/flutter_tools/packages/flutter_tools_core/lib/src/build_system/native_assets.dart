@@ -117,7 +117,7 @@ class ExtensionNativeAssetsConfig {
   final List<String>? envScriptArgs;
 
   /// Serializes the configuration to a JSON-serializable map.
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toMap() => <String, Object?>{
     targetOsKey: targetOs,
     targetArchitectureKey: targetArchitecture,
     ccKey: ?cc,
@@ -126,9 +126,6 @@ class ExtensionNativeAssetsConfig {
     envScriptKey: ?envScript,
     envScriptArgsKey: ?envScriptArgs,
   };
-
-  /// Serializes the configuration to a JSON-serializable map.
-  Map<String, Object?> toMap() => toJson();
 
   @override
   String toString() =>

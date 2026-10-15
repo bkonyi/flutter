@@ -264,7 +264,7 @@ void main() {
         ld: '/usr/bin/ld.lld',
       );
 
-      final Map<String, Object?> json = config.toJson();
+      final Map<String, Object?> json = config.toMap();
       expect(json[ExtensionNativeAssetsConfig.targetOsKey], 'linux');
       expect(json[ExtensionNativeAssetsConfig.targetArchitectureKey], 'arm64');
       expect(json[ExtensionNativeAssetsConfig.ccKey], '/usr/bin/clang');
@@ -345,7 +345,7 @@ void main() {
         },
       );
 
-      final Map<String, Object?> json = plugin.toJson();
+      final Map<String, Object?> json = plugin.toMap();
       expect(json[ExtensionPlugin.nameKey], 'url_launcher_linux');
       expect(json[ExtensionPlugin.pathKey], '/pub-cache/url_launcher_linux');
 

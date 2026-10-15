@@ -391,36 +391,28 @@ flutter:
       },
     );
 
-    testUsingContext(
-      'LinuxAssetTarget.setCCompilerConfig falls back to clang on PATH when CMakeCache.txt is missing',
-      overrides: <Type, Generator>{
-        ProcessManager: () => FakeProcessManager.list(<FakeCommand>[
-          const FakeCommand(command: <String>['which', 'clang++'], stdout: '/usr/bin/clang++\n'),
-        ]),
-      },
-      () async {
-        fileSystem.directory('/usr/bin').createSync(recursive: true);
-        fileSystem.file('/usr/bin/clang++').createSync();
-        fileSystem.file('/usr/bin/clang').createSync();
-        fileSystem.file('/usr/bin/llvm-ar').createSync();
-        fileSystem.file('/usr/bin/ld.lld').createSync();
+    testWithoutContext('LinuxAssetTarget.setCCompilerConfig falls back to clang on PATH when CMakeCache.txt is missing', () async {
+      fileSystem.directory('/usr/bin').createSync(recursive: true);
+      fileSystem.file('/usr/bin/clang++').createSync();
+      fileSystem.file('/usr/bin/clang').createSync();
+      fileSystem.file('/usr/bin/llvm-ar').createSync();
+      fileSystem.file('/usr/bin/ld.lld').createSync();
 
-        final Directory missingCmakeDir = fileSystem.directory('/project/build/linux/x64/debug');
-        final target = LinuxAssetTarget(
-          architecture: Architecture.x64,
-          cmakeBuildDirectory: missingCmakeDir,
-          fileSystem: fileSystem,
-          supportedAssetTypes: <SupportedAssetTypes>[SupportedAssetTypes.codeAssets],
-        );
+      final Directory missingCmakeDir = fileSystem.directory('/project/build/linux/x64/debug');
+      final target = LinuxAssetTarget(
+        architecture: Architecture.x64,
+        cmakeBuildDirectory: missingCmakeDir,
+        fileSystem: fileSystem,
+        supportedAssetTypes: <SupportedAssetTypes>[SupportedAssetTypes.codeAssets],
+      );
 
-        await target.setCCompilerConfig();
+      await target.setCCompilerConfig();
 
-        expect(target.cCompilerConfigSync, isNotNull);
-        expect(target.cCompilerConfigSync!.compiler, Uri.file('/usr/bin/clang'));
-        expect(target.cCompilerConfigSync!.archiver, Uri.file('/usr/bin/llvm-ar'));
-        expect(target.cCompilerConfigSync!.linker, Uri.file('/usr/bin/ld.lld'));
-      },
-    );
+      expect(target.cCompilerConfigSync, isNotNull);
+      expect(target.cCompilerConfigSync!.compiler, Uri.file('/usr/bin/clang'));
+      expect(target.cCompilerConfigSync!.archiver, Uri.file('/usr/bin/llvm-ar'));
+      expect(target.cCompilerConfigSync!.linker, Uri.file('/usr/bin/ld.lld'));
+    });
 
     testUsingContext(
       'CopyAssets includes NativeAssetsManifest.json and tolerates custom kTargetPlatform',

@@ -142,14 +142,11 @@ class ExtensionPlugin {
   final Map<String, Object?> configuration;
 
   /// Serializes the plugin to a JSON-serializable map.
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toMap() => <String, Object?>{
     nameKey: name,
     pathKey: path,
     configurationKey: configuration,
   };
-
-  /// Serializes the plugin to a JSON-serializable map.
-  Map<String, Object?> toMap() => toJson();
 
   @override
   String toString() => 'ExtensionPlugin(name: $name, path: $path, configuration: $configuration)';
@@ -338,9 +335,6 @@ class ExtensionBuildTarget {
   final String? pluginPlatformKey;
 
   /// Serializes the build target to a JSON-serializable map.
-  Map<String, Object?> toJson() => toMap();
-
-  /// Serializes the build target to a JSON-serializable map.
   Map<String, Object?> toMap() => <String, Object?>{
     descriptionKey: description,
     nameKey: name,
@@ -350,7 +344,7 @@ class ExtensionBuildTarget {
     inputsKey: inputs.map((ExtensionSource s) => s.toMap()).toList(),
     outputsKey: outputs.map((ExtensionSource s) => s.toMap()).toList(),
     outputDirKey: outputDir,
-    nativeAssetsConfigKey: ?nativeAssetsConfig?.toJson(),
+    nativeAssetsConfigKey: ?nativeAssetsConfig?.toMap(),
     pluginPlatformKeyKey: ?pluginPlatformKey,
   };
 
