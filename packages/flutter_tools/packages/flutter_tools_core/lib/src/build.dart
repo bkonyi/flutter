@@ -275,7 +275,7 @@ class ExtensionBuildTarget {
 /// Representation of a build result returned by a tool extension.
 @immutable
 class ExtensionBuildResult {
-  const ExtensionBuildResult({required this.success, this.errorMessage});
+  const ExtensionBuildResult({required this.success, this.errorMessage, this.executablePath});
 
   /// Deserializes an [ExtensionBuildResult] from a JSON-serializable map.
   factory ExtensionBuildResult.fromJson(Map<String, Object?> json) {
@@ -288,11 +288,18 @@ class ExtensionBuildResult {
         final String value => value,
         _ => null,
       },
+      executablePath: switch (json[executablePathKey]) {
+        final String value => value,
+        _ => null,
+      },
     );
   }
 
   /// Map key for [errorMessage].
   static const String errorMessageKey = 'errorMessage';
+
+  /// Map key for [executablePath].
+  static const String executablePathKey = 'executablePath';
 
   /// Map key for [success].
   static const String successKey = 'success';
@@ -303,25 +310,32 @@ class ExtensionBuildResult {
   /// Optional error message if the build failed.
   final String? errorMessage;
 
+  /// Optional path to the built application executable or bundle.
+  final String? executablePath;
+
   /// Serializes the build result to a JSON-serializable map.
   Map<String, Object?> toMap() => <String, Object?>{
     successKey: success,
     errorMessageKey: ?errorMessage,
+    executablePathKey: ?executablePath,
   };
 
   @override
-  String toString() => 'ExtensionBuildResult(success: $success, errorMessage: $errorMessage)';
+  String toString() =>
+      'ExtensionBuildResult(success: $success, errorMessage: $errorMessage, '
+      'executablePath: $executablePath)';
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other is ExtensionBuildResult &&
             other.success == success &&
-            other.errorMessage == errorMessage);
+            other.errorMessage == errorMessage &&
+            other.executablePath == executablePath);
   }
 
   @override
-  int get hashCode => Object.hash(success, errorMessage);
+  int get hashCode => Object.hash(success, errorMessage, executablePath);
 }
 
 bool _listEquals<T>(List<T> a, List<T> b) {

@@ -142,7 +142,19 @@ list(APPEND FLUTTER_TOOL_ENVIRONMENT
       );
     }
 
-    return const ExtensionBuildResult(success: true);
+    var appName = 'app';
+    final pubspecFile = File('${projectDir.path}/pubspec.yaml');
+    if (pubspecFile.existsSync()) {
+      for (final String line in pubspecFile.readAsLinesSync()) {
+        if (line.startsWith('name:')) {
+          appName = line.substring('name:'.length).trim();
+          break;
+        }
+      }
+    }
+
+    final executableFile = File('${outputDir.path}/bundle/$appName');
+    return ExtensionBuildResult(success: true, executablePath: executableFile.absolute.path);
   }
 }
 

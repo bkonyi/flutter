@@ -3,9 +3,13 @@
 // found in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:args/command_runner.dart';
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/signals.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -17,12 +21,78 @@ import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/project.dart';
-import 'package:flutter_tools_core/flutter_tools_core.dart' show ExtensionFlutterProject;
+import 'package:flutter_tools_core/flutter_tools_core.dart'
+    show ExtensionBuildResult, ExtensionFlutterProject, TargetDevice;
+import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 import 'package:flutter_tools_extension_linux_prototype/flutter_tools_extension_linux_prototype.dart';
 
+import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
+
+final class _FakeTestBuildTarget extends ExtensionTarget {
+  const _FakeTestBuildTarget()
+    : super(description: 'Fake test build target', targetPlatform: 'linux-x64');
+
+  @override
+  String get name => 'fake-test-build';
+
+  @override
+  Future<ExtensionBuildResult> build(ExtensionBuildContext context) async {
+    return const ExtensionBuildResult(success: true, executablePath: '/tmp/fake_bundle/app');
+  }
+}
+
+final class _FakeTestBuildService extends BuildService {
+  @override
+  List<ExtensionTarget> get targets => const <ExtensionTarget>[_FakeTestBuildTarget()];
+}
+
+final class _FakeTestDeviceService extends DeviceService {
+  @override
+  Future<List<TargetDevice>> getDevices() async {
+    return const <TargetDevice>[
+      TargetDevice(
+        category: Category.desktop,
+        id: 'fake_test_device',
+        name: 'Fake Test Extension Device',
+        buildTarget: 'fake-test-build',
+        ephemeral: false,
+        sdkNameAndVersion: 'Fake OS 1.0',
+        targetPlatform: 'linux-x64',
+      ),
+    ];
+  }
+
+  @override
+  Future<bool> isSupportedForProject({
+    required String deviceId,
+    required ExtensionFlutterProject project,
+  }) async => deviceId == 'fake_test_device';
+
+  @override
+  Future<bool> launchApp(
+    String deviceId,
+    String executablePath, {
+    Map<String, Object?>? debuggingOptions,
+  }) async => deviceId == 'fake_test_device' && executablePath == '/tmp/fake_bundle/app';
+
+  @override
+  Future<String?> getVmServiceUri(String deviceId) async =>
+      deviceId == 'fake_test_device' ? 'http://127.0.0.1:8181/abcd/' : null;
+
+  @override
+  Future<bool> stopApp(String deviceId) async => deviceId == 'fake_test_device';
+}
+
+void _fakeLaunchExtensionEntryPoint(SendPort sendPort) {
+  ToolExtensionEntryPoint.run(
+    sendPort,
+    <ToolExtensionService>[_FakeTestBuildService(), _FakeTestDeviceService()],
+    supportedPlatforms: const <String>{'linux'},
+  );
+}
 
 void main() {
   setUpAll(() {
@@ -40,7 +110,12 @@ void main() {
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final discovery = ExtensionDevices(extensionManager: manager, logger: testLogger);
+        final discovery = ExtensionDevices(
+          artifacts: Artifacts.test(),
+          extensionManager: manager,
+          fileSystem: MemoryFileSystem.test(),
+          logger: testLogger,
+        );
 
         final List<Device> devices = await discovery.devices();
         expect(devices, isEmpty);
@@ -62,7 +137,12 @@ void main() {
         );
         final testDeviceManager = TestDeviceManager(
           discoverers: <DeviceDiscovery>[
-            ExtensionDevices(extensionManager: manager, logger: testLogger),
+            ExtensionDevices(
+              artifacts: Artifacts.test(),
+              extensionManager: manager,
+              fileSystem: MemoryFileSystem.test(),
+              logger: testLogger,
+            ),
           ],
         );
         final devicesCommand = DevicesCommand(
@@ -144,7 +224,12 @@ flutter:
           entryPoints: <ExtensionEntryPoint>[linuxExtensionEntryPoint],
           featureFlags: featureFlags,
         );
-        final discovery = ExtensionDevices(extensionManager: manager, logger: testLogger);
+        final discovery = ExtensionDevices(
+          artifacts: Artifacts.test(),
+          extensionManager: manager,
+          fileSystem: localFs,
+          logger: testLogger,
+        );
 
         final List<Device> devices = await discovery.devices();
         expect(devices, hasLength(1));
@@ -180,7 +265,12 @@ flutter:
         );
         final testDeviceManager = TestDeviceManager(
           discoverers: <DeviceDiscovery>[
-            ExtensionDevices(extensionManager: manager, logger: testLogger),
+            ExtensionDevices(
+              artifacts: Artifacts.test(),
+              extensionManager: manager,
+              fileSystem: MemoryFileSystem.test(),
+              logger: testLogger,
+            ),
           ],
         );
         final devicesCommand = DevicesCommand(
@@ -198,6 +288,44 @@ flutter:
       overrides: <Type, Generator>{
         FeatureFlags: () => TestFeatureFlags(isToolExtensionsEnabled: true),
         DeviceManager: () => TestDeviceManager(),
+      },
+    );
+
+    testWithoutContext(
+      'ExtensionBackedDevice startApp and stopApp delegate build and launch via RPC',
+      () async {
+        final logger = BufferLogger.test();
+        final fileSystem = MemoryFileSystem.test();
+        fileSystem.currentDirectory.childFile('pubspec.yaml').writeAsStringSync('name: test_app\n');
+        final featureFlags = TestFeatureFlags(isToolExtensionsEnabled: true);
+        final manager = ExtensionManager(
+          hostPlatform: HostPlatform.linux_x64,
+          logger: logger,
+          entryPoints: <ExtensionEntryPoint>[_fakeLaunchExtensionEntryPoint],
+          featureFlags: featureFlags,
+        );
+        final discovery = ExtensionDevices(
+          artifacts: Artifacts.test(fileSystem: fileSystem),
+          extensionManager: manager,
+          fileSystem: fileSystem,
+          logger: logger,
+        );
+
+        final List<Device> devices = await discovery.devices();
+        expect(devices, hasLength(1));
+        final Device device = devices.first;
+
+        final LaunchResult launchResult = await device.startApp(
+          null,
+          mainPath: 'lib/main.dart',
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
+        );
+        expect(launchResult.started, isTrue);
+        expect(launchResult.vmServiceUri, Uri.parse('http://127.0.0.1:8181/abcd/'));
+
+        expect(await device.stopApp(null), isTrue);
+
+        await manager.dispose();
       },
     );
   });
