@@ -6,14 +6,17 @@ import 'dart:async';
 
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 
-import '../base/context.dart';
+import '../base/file_system.dart';
 import '../base/logger.dart';
 import '../base/os.dart';
+import '../base/platform.dart';
 import '../features.dart';
 import 'config.dart';
 import 'diagnostics.dart';
 import 'extension_device_manager.dart';
 import 'extension_discovery.dart';
+import 'extension_kernel_compiler.dart';
+import 'project_extension_finder.dart';
 
 /// Manages active tool extension isolate connections and exposes capability proxies.
 class ExtensionManager {
@@ -23,54 +26,144 @@ class ExtensionManager {
     required Logger logger,
     this._entryPoints = const <ExtensionEntryPoint>[],
     ExtensionDiscovery? discovery,
-    FeatureFlags? featureFlags,
+    this._featureFlags,
+    FileSystem? fileSystem,
+    ProjectExtensionFinder? extensionFinder,
+    ExtensionKernelCompiler? kernelCompiler,
+    ExtensionKernelCompileFn? kernelCompileFn,
+    ExtensionUriSpawner? uriSpawner,
+    this._platform,
+    bool isSafeMode = false,
   }) : _logger = logger,
        _discovery = discovery ?? ExtensionDiscovery(logger: logger),
-       _featureFlags = featureFlags ?? context.get<FeatureFlags>()!;
+       _extensionFinder =
+           extensionFinder ??
+           (fileSystem != null
+               ? ProjectExtensionFinder(fileSystem: fileSystem, logger: logger)
+               : null),
+       _kernelCompileFn = kernelCompileFn ?? kernelCompiler?.compile,
+       _uriSpawner = uriSpawner ?? ExtensionConnection.spawnUri,
+       _explicitSafeMode = isSafeMode;
 
   /// The active [HostPlatform].
   final HostPlatform hostPlatform;
+
+  /// Whether tool extension loading is bypassed via safe mode (`--no-extensions` or `FLUTTER_NO_EXTENSIONS=1`).
+  bool get isSafeMode =>
+      _explicitSafeMode || (_platform != null && isSafeModeActive(_platform.environment));
+
   final Logger _logger;
   final ExtensionDiscovery _discovery;
   final List<ExtensionEntryPoint> _entryPoints;
-  final FeatureFlags _featureFlags;
+  final FeatureFlags? _featureFlags;
+  final ProjectExtensionFinder? _extensionFinder;
+  final ExtensionKernelCompileFn? _kernelCompileFn;
+  final ExtensionUriSpawner _uriSpawner;
+  final Platform? _platform;
+  final bool _explicitSafeMode;
+
+  bool get _isToolExtensionsEnabled => _featureFlags?.isToolExtensionsEnabled ?? false;
+
   bool get isInitialized => _isInitialized;
   var _isInitialized = false;
   var _entryPointsSpawned = false;
-  Future<void>? _initFuture;
+  Future<void>? _pendingInit;
+
+  final _discoveredByPackageName = <String, DiscoveredProjectExtension>{};
+  final _spawnedExtensionNames = <String>{};
+  final _registeredClientConnections = <ExtensionConnection>{};
+
   final _diagnosticsExtensions = <DiagnosticsExtension>[];
   final _configurationExtensions = <ConfigurationExtension>[];
   final _deviceExtensions = <DeviceService>[];
 
-  /// Ensures entrypoints are initialized; idempotent once connections are active.
-  ///
-  /// If a previous initialization completed with zero active connections (for
-  /// example, before `pub.get()` generated `.dart_tool/package_config.json`),
-  /// subsequent calls re-run initialization so newly resolved project extensions
-  /// are discovered.
-  Future<void> ensureInitialized() {
-    if (_isInitialized &&
-        (_discovery.connections.isEmpty ||
-            (_diagnosticsExtensions.isEmpty &&
-                _configurationExtensions.isEmpty &&
-                _deviceExtensions.isEmpty))) {
-      _isInitialized = false;
-      _initFuture = null;
+  /// Project extensions discovered via `extension/flutter_tools/config.yaml` and
+  /// `.dart_tool/package_config.json` that support [hostPlatform].
+  List<DiscoveredProjectExtension> get discoveredExtensions =>
+      List<DiscoveredProjectExtension>.unmodifiable(_discoveredByPackageName.values);
+
+  /// Discovers project extensions starting from [startDir] using static
+  /// `extension/flutter_tools/config.yaml` metadata without spawning isolates.
+  Future<List<DiscoveredProjectExtension>> discoverExtensions({Directory? startDir}) async {
+    if (isSafeMode || !_isToolExtensionsEnabled) {
+      return const <DiscoveredProjectExtension>[];
     }
-    return _initFuture ??= _doInitialize();
+    final ProjectExtensionFinder? finder = _extensionFinder;
+    if (finder == null) {
+      return discoveredExtensions;
+    }
+    final List<DiscoveredProjectExtension> found = await finder.findProjectExtensions(
+      startDirectory: startDir,
+    );
+    for (final ext in found) {
+      if (ext.config.supportsHostPlatform(hostPlatformName) ||
+          ext.config.supportsHostPlatform(hostPlatform.cliName)) {
+        _discoveredByPackageName[ext.name] = ext;
+      } else {
+        _logger.printTrace(
+          'Extension "${ext.name}" does not support host platform "$hostPlatformName" '
+          '(supported platforms: ${ext.config.supportedPlatforms}); skipping.',
+        );
+      }
+    }
+    return discoveredExtensions;
   }
 
-  Future<void> _doInitialize() async {
-    if (!_featureFlags.isToolExtensionsEnabled) {
+  /// Ensures entrypoints and discovered project extensions matching
+  /// [requiredServices] are compiled and initialized.
+  ///
+  /// When [requiredServices] is non-null, only discovered project extensions
+  /// whose static `extension/flutter_tools/config.yaml` declares at least one
+  /// service in [requiredServices] are compiled and spawned.
+  Future<void> ensureInitialized({Set<String>? requiredServices, Directory? startDir}) {
+    final Future<void> previous = _pendingInit ?? Future<void>.value();
+    final Future<void> next = previous.then(
+      (_) => _doInitialize(requiredServices: requiredServices, startDir: startDir),
+    );
+    _pendingInit = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
+  }
+
+  Future<void> _doInitialize({Set<String>? requiredServices, Directory? startDir}) async {
+    if (isSafeMode || !_isToolExtensionsEnabled) {
       _isInitialized = true;
       return;
     }
+
     if (_entryPoints.isNotEmpty && !_entryPointsSpawned) {
       _entryPointsSpawned = true;
       await initialize(entryPoints: _entryPoints);
-    } else {
-      await initialize();
     }
+
+    await discoverExtensions(startDir: startDir);
+
+    final toSpawn = <DiscoveredProjectExtension>[
+      for (final DiscoveredProjectExtension ext in _discoveredByPackageName.values)
+        if (!_spawnedExtensionNames.contains(ext.name) &&
+            (requiredServices == null || ext.config.services.any(requiredServices.contains)))
+          ext,
+    ];
+
+    for (final ext in toSpawn) {
+      try {
+        final Uri runnableUri = _kernelCompileFn != null
+            ? await _kernelCompileFn(ext)
+            : ext.entrypointUri;
+        final ExtensionConnection connection = await _uriSpawner(
+          runnableUri,
+          logger: _logger,
+          packageConfigUri: ext.packageConfigUri,
+          extensionName: ext.name,
+        );
+        _spawnedExtensionNames.add(ext.name);
+        await _registerOrDisposeConnection(connection);
+      } on Object catch (error) {
+        _logger.printWarning('Failed to initialize tool extension "${ext.name}": $error');
+      }
+    }
+
+    await _populateServiceClients();
+    _isInitialized = true;
   }
 
   /// Active extension connections compatible with [hostPlatform].
@@ -96,24 +189,34 @@ class ExtensionManager {
         entryPoint,
         logger: _logger,
       );
-      if (connection.capabilities.supportsHostPlatform(hostPlatformName) ||
-          connection.capabilities.supportsHostPlatform(hostPlatform.cliName)) {
-        _logger.printTrace(
-          'Extension connection supported on host platform "$hostPlatformName"; registering.',
-        );
-        _discovery.registerConnection(connection);
-      } else {
-        _logger.printTrace(
-          'Extension connection does not support host platform "$hostPlatformName" '
-          '(supported platforms: ${connection.capabilities.supportedPlatforms}); disposing connection.',
-        );
-        await connection.dispose();
-      }
+      await _registerOrDisposeConnection(connection);
     }
-    _diagnosticsExtensions.clear();
-    _configurationExtensions.clear();
-    _deviceExtensions.clear();
+    await _populateServiceClients();
+    _isInitialized = true;
+  }
+
+  Future<void> _registerOrDisposeConnection(ExtensionConnection connection) async {
+    if (connection.capabilities.supportsHostPlatform(hostPlatformName) ||
+        connection.capabilities.supportsHostPlatform(hostPlatform.cliName)) {
+      _logger.printTrace(
+        'Extension connection supported on host platform "$hostPlatformName"; registering.',
+      );
+      _discovery.registerConnection(connection);
+    } else {
+      _logger.printTrace(
+        'Extension connection does not support host platform "$hostPlatformName" '
+        '(supported platforms: ${connection.capabilities.supportedPlatforms}); disposing connection.',
+      );
+      await connection.dispose();
+    }
+  }
+
+  Future<void> _populateServiceClients() async {
     for (final ExtensionConnection connection in _discovery.connections) {
+      if (_registeredClientConnections.contains(connection)) {
+        continue;
+      }
+      _registeredClientConnections.add(connection);
       if (connection.capabilities.services.contains(DiagnosticsExtension.serviceNamespace)) {
         final client = DiagnosticsExtensionClient(connection, logger: _logger);
         await client.fetchTitle();
@@ -129,7 +232,6 @@ class ExtensionManager {
         _deviceExtensions.add(client);
       }
     }
-    _isInitialized = true;
   }
 
   /// Active [DiagnosticsExtension] proxies for extensions supporting `'diagnostics'`.
@@ -165,9 +267,12 @@ class ExtensionManager {
     _diagnosticsExtensions.clear();
     _configurationExtensions.clear();
     _deviceExtensions.clear();
-    _isInitialized = false;
+    _discoveredByPackageName.clear();
+    _spawnedExtensionNames.clear();
+    _registeredClientConnections.clear();
     _entryPointsSpawned = false;
-    _initFuture = null;
+    _isInitialized = false;
+    _pendingInit = null;
     await _discovery.dispose();
   }
 }

@@ -106,7 +106,9 @@ class ExtensionArtifactManager {
     }
 
     try {
-      await _extensionManager.ensureInitialized();
+      await _extensionManager.ensureInitialized(
+        requiredServices: const <String>{ArtifactService.serviceNamespace},
+      );
     } on Object catch (e) {
       _logger.printTrace('Failed to initialize extension manager for artifacts: $e');
       return;

@@ -7,6 +7,7 @@ import 'dart:isolate';
 
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 import 'package:json_rpc_2/json_rpc_2.dart' as json_rpc;
+import 'package:meta/meta.dart';
 import 'package:stream_channel/isolate_channel.dart';
 
 import '../base/logger.dart';
@@ -14,19 +15,47 @@ import '../base/logger.dart';
 /// Typedef for an extension isolate entrypoint function.
 typedef ExtensionEntryPoint = void Function(SendPort sendPort);
 
+/// Typedef for spawning an extension connection from a URI and package config.
+typedef ExtensionUriSpawner = Future<ExtensionConnection> Function(
+  Uri entrypointUri, {
+  required Logger logger,
+  required Uri packageConfigUri,
+  String? extensionName,
+  Duration timeout,
+});
+
 /// Represents an active host-side connection to a running tool extension isolate.
 class ExtensionConnection {
   ExtensionConnection._({
-    required this.capabilities,
-    required this.extensionName,
     required Isolate this._isolate,
+    required json_rpc.Peer this._peer,
+    required this.capabilities,
     required this._logger,
-    required this._peer,
-  });
+    required this.extensionName,
+  }) : _customRequestHandler = null,
+       _customDisposeHandler = null;
+
+  /// Creates a custom [ExtensionConnection] for testing without spawning a real isolate.
+  @visibleForTesting
+  ExtensionConnection.custom({
+    required this.capabilities,
+    required this._logger,
+    String? extensionName,
+    required Future<Object?> Function(String method, {Object? params, Duration? timeout})
+    requestHandler,
+    Future<void> Function()? disposeHandler,
+  }) : _isolate = null,
+       _peer = null,
+       extensionName = extensionName ?? capabilities.extensionName ?? 'unknown_extension',
+       _customRequestHandler = requestHandler,
+       _customDisposeHandler = disposeHandler;
 
   Isolate? _isolate;
-  final json_rpc.Peer _peer;
+  final json_rpc.Peer? _peer;
   final Logger _logger;
+  final Future<Object?> Function(String method, {Object? params, Duration? timeout})?
+  _customRequestHandler;
+  final Future<void> Function()? _customDisposeHandler;
 
   /// The capabilities and supported service namespaces of the extension.
   final ToolExtensionCapabilities capabilities;
@@ -35,6 +64,9 @@ class ExtensionConnection {
   final String extensionName;
 
   bool _isDisposed = false;
+
+  /// Whether this connection has been disposed.
+  bool get isDisposed => _isDisposed;
 
   /// Sends an RPC request to the extension isolate.
   Future<Object?> sendRequest(
@@ -45,9 +77,12 @@ class ExtensionConnection {
     if (_isDisposed) {
       throw StateError('ExtensionConnection has been disposed.');
     }
+    if (_customRequestHandler case final handler?) {
+      return handler(method, params: params, timeout: timeout);
+    }
     _logger.printTrace('ExtensionConnection sending RPC request "$method"...');
     try {
-      final Future<Object?> request = _peer.sendRequest(method, params);
+      final Future<Object?> request = _peer!.sendRequest(method, params);
       final Object? result = await (timeout != null ? request.timeout(timeout) : request);
       _logger.printTrace('ExtensionConnection received response for RPC request "$method".');
       return result;
@@ -61,10 +96,59 @@ class ExtensionConnection {
   static Future<ExtensionConnection> spawn(
     ExtensionEntryPoint entryPoint, {
     required Logger logger,
+    String? extensionName,
     String? packageName,
     Duration timeout = const Duration(seconds: 5),
-  }) async {
+  }) {
     logger.printTrace('ExtensionConnection spawning extension isolate...');
+    return _spawnAndHandshake(
+      logger: logger,
+      extensionName: extensionName ?? packageName,
+      timeout: timeout,
+      isolateLauncher: (SendPort sendPort, SendPort onError, SendPort onExit) {
+        return Isolate.spawn(entryPoint, sendPort, onError: onError, onExit: onExit);
+      },
+    );
+  }
+
+  /// Spawns an extension isolate dynamically from [entrypointUri] (a compiled
+  /// `.dill` Kernel URI or `.dart` script URI) using [packageConfigUri] and
+  /// completes the capability handshake.
+  static Future<ExtensionConnection> spawnUri(
+    Uri entrypointUri, {
+    required Logger logger,
+    required Uri packageConfigUri,
+    String? extensionName,
+    List<String> args = const <String>[],
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    logger.printTrace(
+      'ExtensionConnection spawning extension isolate from URI "$entrypointUri"...',
+    );
+    return _spawnAndHandshake(
+      logger: logger,
+      extensionName: extensionName,
+      timeout: timeout,
+      isolateLauncher: (SendPort sendPort, SendPort onError, SendPort onExit) {
+        return Isolate.spawnUri(
+          entrypointUri,
+          args,
+          sendPort,
+          packageConfig: packageConfigUri,
+          onError: onError,
+          onExit: onExit,
+        );
+      },
+    );
+  }
+
+  static Future<ExtensionConnection> _spawnAndHandshake({
+    required Logger logger,
+    required Duration timeout,
+    required Future<Isolate> Function(SendPort sendPort, SendPort onError, SendPort onExit)
+    isolateLauncher,
+    String? extensionName,
+  }) async {
     final receivePort = ReceivePort();
     final errorPort = RawReceivePort();
     final exitPort = RawReceivePort();
@@ -91,12 +175,7 @@ class ExtensionConnection {
     Isolate? isolate;
 
     try {
-      isolate = await Isolate.spawn(
-        entryPoint,
-        receivePort.sendPort,
-        onError: errorPort.sendPort,
-        onExit: exitPort.sendPort,
-      );
+      isolate = await isolateLauncher(receivePort.sendPort, errorPort.sendPort, exitPort.sendPort);
       logger.printTrace('ExtensionConnection isolate spawned; connecting IsolateChannel...');
       final channel = IsolateChannel<Object?>.connectReceive(receivePort);
       final peer = json_rpc.Peer.withoutJson(channel);
@@ -120,7 +199,7 @@ class ExtensionConnection {
 
       return ExtensionConnection._(
         capabilities: capabilities,
-        extensionName: capabilities.extensionName ?? packageName ?? 'unknown_extension',
+        extensionName: capabilities.extensionName ?? extensionName ?? 'unknown_extension',
         isolate: isolate,
         logger: logger,
         peer: peer,
@@ -148,8 +227,12 @@ class ExtensionConnection {
     }
     _isDisposed = true;
     _logger.printTrace('ExtensionConnection disposing isolate connection.');
+    if (_customDisposeHandler case final handler?) {
+      await handler();
+      return;
+    }
     try {
-      await _peer.close();
+      await _peer?.close();
     } on Object catch (error) {
       _logger.printTrace('Error closing extension connection peer: $error');
     } finally {
@@ -164,7 +247,7 @@ class ExtensionDiscovery {
   /// Creates an [ExtensionDiscovery] instance with required [_logger].
   ExtensionDiscovery({required this._logger});
 
-  final List<ExtensionConnection> _connections = <ExtensionConnection>[];
+  final _connections = <ExtensionConnection>[];
   final Logger _logger;
 
   /// Active extension connections.
