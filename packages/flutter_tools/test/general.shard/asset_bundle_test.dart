@@ -341,6 +341,7 @@ flutter:
         );
         await bundle.build(
           packageConfigPath: '.dart_tool/package_config.json',
+          flutterProject: FlutterProject.fromDirectoryTest(testFileSystem.currentDirectory),
           targetPlatform: TargetPlatform.tester,
         );
         expect(bundle.needsBuild(), false);
@@ -377,6 +378,7 @@ flutter:
         );
         await bundle.build(
           packageConfigPath: '.dart_tool/package_config.json',
+          flutterProject: FlutterProject.fromDirectoryTest(testFileSystem.currentDirectory),
           targetPlatform: TargetPlatform.tester,
         );
         expect(bundle.needsBuild(), false);
@@ -417,6 +419,7 @@ flutter:
       );
       await bundle.build(
         packageConfigPath: '.dart_tool/package_config.json',
+        flutterProject: FlutterProject.fromDirectoryTest(testFileSystem.currentDirectory),
         targetPlatform: TargetPlatform.tester,
       );
       expect(bundle.entries.containsKey('assets/foo/bar.txt'), isTrue);
@@ -424,6 +427,7 @@ flutter:
       assetFile.deleteSync();
       await bundle.build(
         packageConfigPath: '.dart_tool/package_config.json',
+        flutterProject: FlutterProject.fromDirectoryTest(testFileSystem.currentDirectory),
         targetPlatform: TargetPlatform.tester,
       );
       expect(bundle.entries.containsKey('assets/foo/bar.txt'), isFalse);
@@ -454,6 +458,7 @@ flutter:
       );
       await bundle.build(
         packageConfigPath: '.dart_tool/package_config.json',
+        flutterProject: FlutterProject.fromDirectoryTest(testFileSystem.currentDirectory),
         targetPlatform: TargetPlatform.tester,
       );
       expect(bundle.needsBuild(), isFalse);
