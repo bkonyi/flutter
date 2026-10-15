@@ -4,95 +4,97 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 import 'package:flutter_tools_extension_linux_prototype/src/clean.dart';
 import 'package:json_rpc_2/json_rpc_2.dart' as json_rpc;
 import 'package:path/path.dart' as p;
-import 'package:stream_channel/stream_channel.dart';
 import 'package:test/test.dart';
 
 final class _TestCleanService extends CleanService {
-  CleanEnvironment? lastCleanedEnvironment;
+  _TestCleanService(this.onClean);
+
+  final void Function(CleanEnvironment environment) onClean;
 
   @override
   Future<void> clean(CleanEnvironment environment) async {
-    lastCleanedEnvironment = environment;
+    onClean(environment);
   }
 }
 
 void main() {
-  group('CleanService & CleanServiceClient', () {
-    late StreamController<Object?> clientToServer;
-    late StreamController<Object?> serverToClient;
-    late json_rpc.Peer clientPeer;
-    late json_rpc.Peer serverPeer;
+  group('CleanService', () {
+    late BufferLogger logger;
 
     setUp(() {
-      clientToServer = StreamController<Object?>();
-      serverToClient = StreamController<Object?>();
-
-      final clientChannel = StreamChannel<Object?>(serverToClient.stream, clientToServer.sink);
-      final serverChannel = StreamChannel<Object?>(clientToServer.stream, serverToClient.sink);
-
-      clientPeer = json_rpc.Peer.withoutJson(clientChannel);
-      serverPeer = json_rpc.Peer.withoutJson(serverChannel);
-    });
-
-    tearDown(() async {
-      await clientPeer.close();
-      await serverPeer.close();
+      logger = BufferLogger.test();
     });
 
     test('registers clean capability and handles clean RPC', () async {
-      final service = _TestCleanService();
-      final extension = FlutterToolsExtension(
-        extensionName: 'test_clean_ext',
-        services: <ToolExtensionService>[service],
-      );
-      await extension.register(serverPeer);
+      final verifyPort = ReceivePort();
+      addTearDown(verifyPort.close);
+      final SendPort verifySendPort = verifyPort.sendPort;
 
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(
+          sendPort,
+          <ToolExtensionService>[
+            _TestCleanService((CleanEnvironment env) {
+              verifySendPort.send(env.toMap());
+            }),
+          ],
+          extensionName: 'test_clean_ext',
+          supportedPlatforms: const <String>{'linux'},
+        );
+      }
 
-      final Object? rawCaps = await clientPeer.sendRequest('extension.getCapabilities');
-      final capabilities = FlutterToolExtensionCapabilities.fromJson(
-        (rawCaps! as Map<Object?, Object?>).cast<String, Object?>(),
-      );
-      expect(capabilities.services, contains(CleanService.serviceNamespace));
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
 
-      final client = CleanServiceClient(
-        (String method, [Map<String, Object?>? params]) => clientPeer.sendRequest(method, params),
-      );
+      expect(conn.capabilities.services, contains(CleanService.serviceNamespace));
 
       final env = CleanEnvironment(
         buildDir: Uri.directory('/tmp/project/build'),
         projectRoot: Uri.directory('/tmp/project'),
       );
-      await client.clean(env);
+      await conn.sendRequest(
+        CleanService.cleanMethod,
+        params: <String, Object?>{CleanService.environmentParam: env.toMap()},
+      );
 
-      expect(service.lastCleanedEnvironment, equals(env));
+      final Object? rawReceived = await verifyPort.first;
+      final receivedEnv = CleanEnvironment.fromJson(
+        (rawReceived! as Map<Object?, Object?>).cast<String, Object?>(),
+      );
+      expect(receivedEnv, equals(env));
     });
 
     test('throws RpcException on missing or invalid environment parameter', () async {
-      final extension = FlutterToolsExtension(
-        services: <ToolExtensionService>[_TestCleanService()],
-      );
-      await extension.register(serverPeer);
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(sendPort, <ToolExtensionService>[
+          _TestCleanService((CleanEnvironment _) {}),
+        ]);
+      }
 
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
 
       await expectLater(
-        clientPeer.sendRequest(CleanService.cleanMethod, const <String, Object?>{}),
+        conn.sendRequest(CleanService.cleanMethod, params: const <String, Object?>{}),
         throwsA(isA<json_rpc.RpcException>()),
       );
 
       await expectLater(
-        clientPeer.sendRequest(CleanService.cleanMethod, const <String, Object?>{
-          CleanService.environmentParam: <String, Object?>{'projectRoot': 'relative/path'},
-        }),
+        conn.sendRequest(
+          CleanService.cleanMethod,
+          params: const <String, Object?>{
+            CleanService.environmentParam: <String, Object?>{'projectRoot': 'relative/path'},
+          },
+        ),
         throwsA(isA<json_rpc.RpcException>()),
       );
     });
@@ -109,20 +111,23 @@ void main() {
         ..createSync(recursive: true);
       File(p.join(linuxEphemeralDir.path, 'generated_config.cmake')).writeAsStringSync('cmake');
 
-      final extension = FlutterToolsExtension(
-        extensionName: 'flutter_tools_extension_linux_prototype',
-        services: <ToolExtensionService>[LinuxCleanService()],
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(
+          sendPort,
+          <ToolExtensionService>[LinuxCleanService()],
+          extensionName: 'flutter_tools_extension_linux_prototype',
+          supportedPlatforms: const <String>{'linux'},
+        );
+      }
+
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
+
+      final env = CleanEnvironment(buildDir: buildDir.uri, projectRoot: tempDir.uri);
+      await conn.sendRequest(
+        CleanService.cleanMethod,
+        params: <String, Object?>{CleanService.environmentParam: env.toMap()},
       );
-      await extension.register(serverPeer);
-
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
-
-      final client = CleanServiceClient(
-        (String method, [Map<String, Object?>? params]) => clientPeer.sendRequest(method, params),
-      );
-
-      await client.clean(CleanEnvironment(buildDir: buildDir.uri, projectRoot: tempDir.uri));
 
       expect(linuxBuildDir.existsSync(), isFalse);
       expect(linuxEphemeralDir.existsSync(), isFalse);

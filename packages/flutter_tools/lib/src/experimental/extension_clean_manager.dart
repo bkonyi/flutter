@@ -60,7 +60,7 @@ class ExtensionCleanManager {
       try {
         await ext.sendRequest(
           CleanService.cleanMethod,
-          params: <String, Object?>{CleanService.environmentParam: environment.toJson()},
+          params: <String, Object?>{CleanService.environmentParam: environment.toMap()},
           timeout: null,
         );
       } on Object catch (e) {

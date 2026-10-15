@@ -76,21 +76,3 @@ class ToolExtensionCapabilities {
     'supportedPlatforms': supportedPlatforms.toList(),
   };
 }
-
-/// Capabilities wrapper used when registering a tool extension on a JSON-RPC peer.
-class FlutterToolExtensionCapabilities extends ToolExtensionCapabilities {
-  const FlutterToolExtensionCapabilities({
-    required super.services,
-    super.extensionName,
-    super.supportedPlatforms,
-  });
-
-  factory FlutterToolExtensionCapabilities.fromJson(Map<String, Object?> json) {
-    final base = ToolExtensionCapabilities.fromJson(json);
-    return FlutterToolExtensionCapabilities(
-      services: base.services,
-      extensionName: base.extensionName,
-      supportedPlatforms: base.supportedPlatforms,
-    );
-  }
-}

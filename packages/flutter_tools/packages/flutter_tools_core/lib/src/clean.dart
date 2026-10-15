@@ -40,13 +40,10 @@ class CleanEnvironment {
   final Uri projectRoot;
 
   /// Serializes the clean environment to a JSON-serializable map.
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toMap() => <String, Object?>{
     projectRootKey: projectRoot.toString(),
     buildDirKey: buildDir.toString(),
   };
-
-  /// Serializes the clean environment to a JSON-serializable map.
-  Map<String, Object?> toMap() => toJson();
 
   @override
   bool operator ==(Object other) {

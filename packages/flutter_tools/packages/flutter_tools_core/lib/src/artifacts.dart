@@ -148,16 +148,13 @@ class ArtifactDependency {
   final String? targetPlatform;
 
   /// Serializes the artifact dependency to a JSON-serializable map.
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toMap() => <String, Object?>{
     nameKey: name,
     urlKey: url.toString(),
     sha256Key: sha256,
     hostPlatformKey: ?hostPlatform?.cliName,
     targetPlatformKey: ?targetPlatform,
   };
-
-  /// Serializes the artifact dependency to a JSON-serializable map.
-  Map<String, Object?> toMap() => toJson();
 
   @override
   bool operator ==(Object other) {

@@ -53,17 +53,3 @@ abstract base class CleanService extends ToolExtensionService {
     throw RpcException.invalidParams('Missing or invalid "$environmentParam" parameter.');
   }
 }
-
-/// Client for interacting with a [CleanService] over JSON-RPC.
-class CleanServiceClient {
-  CleanServiceClient(this._sendRequest);
-
-  final Future<Object?> Function(String method, [Map<String, Object?>? params]) _sendRequest;
-
-  /// Requests the extension to clean artifacts for [environment].
-  Future<void> clean(CleanEnvironment environment) async {
-    await _sendRequest(CleanService.cleanMethod, <String, Object?>{
-      CleanService.environmentParam: environment.toJson(),
-    });
-  }
-}

@@ -67,7 +67,7 @@ void main() {
           sendPort,
           <ToolExtensionService>[
             _FakeCleanService((CleanEnvironment env) async {
-              verifySendPort.send(env.toJson());
+              verifySendPort.send(env.toMap());
             }),
           ],
           extensionName: 'clean_ext',

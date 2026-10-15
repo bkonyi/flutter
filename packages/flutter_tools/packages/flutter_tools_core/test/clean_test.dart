@@ -13,12 +13,11 @@ void main() {
         projectRoot: Uri.directory('/path/to/project'),
       );
 
-      final Map<String, Object?> json = env.toJson();
+      final Map<String, Object?> json = env.toMap();
       expect(json, <String, Object?>{
         'projectRoot': 'file:///path/to/project/',
         'buildDir': 'file:///path/to/project/build/',
       });
-      expect(env.toMap(), equals(json));
 
       final deserialized = CleanEnvironment.fromJson(json);
       expect(deserialized, equals(env));
