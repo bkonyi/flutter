@@ -333,12 +333,19 @@ class ExtensionBuildSubCommand extends BuildSubCommand {
       buildMode: buildInfo.mode,
       target: target,
     );
+    final List<ExtensionPlugin> plugins = await resolveExtensionTargetPlugins(
+      fileSystem: fs,
+      logger: logger,
+      projectDir: projectDir,
+      target: target,
+    );
 
     final ExtensionBuildResult result = await _buildManager.build(
       buildDir: buildDir.uri,
       buildMode: buildInfo.mode,
       mainPath: targetFile,
       outputDir: outputDir.uri,
+      plugins: plugins,
       projectRoot: projectDir.uri,
       resolvedArtifacts: resolvedArtifacts,
       targetName: target.name,

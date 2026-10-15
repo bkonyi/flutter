@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/extension.dart';
+import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/experimental/extension_build_manager.dart';
 import 'package:flutter_tools/src/experimental/extension_manager.dart';
 import 'package:flutter_tools_core/flutter_tools_core.dart' hide BuildMode;
@@ -37,6 +38,7 @@ final class FakeExtensionBuildManager extends ExtensionBuildManager {
   BuildMode? invokedBuildMode;
   String? invokedMainPath;
   Uri? invokedOutputDir;
+  List<ExtensionPlugin>? invokedPlugins;
   Uri? invokedProjectRoot;
   Map<String, String>? invokedResolvedArtifacts;
   String? invokedTargetName;
@@ -50,11 +52,13 @@ final class FakeExtensionBuildManager extends ExtensionBuildManager {
     required Uri projectRoot,
     required Map<String, String> resolvedArtifacts,
     required String targetName,
+    List<ExtensionPlugin> plugins = const <ExtensionPlugin>[],
   }) async {
     invokedBuildDir = buildDir;
     invokedBuildMode = buildMode;
     invokedMainPath = mainPath;
     invokedOutputDir = outputDir;
+    invokedPlugins = plugins;
     invokedProjectRoot = projectRoot;
     invokedResolvedArtifacts = resolvedArtifacts;
     invokedTargetName = targetName;
@@ -402,5 +406,6 @@ void main() {
 
     expect(BuiltInTargets.copyAssets, equals(const CopyAssets().name));
     expect(BuiltInTargets.kernelSnapshot, equals(const KernelSnapshot().name));
+    expect(BuiltInTargets.installCodeAssets, equals(const InstallCodeAssets().name));
   });
 }

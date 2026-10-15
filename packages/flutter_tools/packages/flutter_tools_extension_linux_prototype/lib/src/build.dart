@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
+import 'package:meta/meta.dart';
 
 /// Platform-specific [ExtensionArtifact] constants contributed by the Linux extension.
 abstract final class LinuxArtifacts {
@@ -19,6 +20,7 @@ abstract final class LinuxArtifacts {
 }
 
 const String _kLinuxX64Platform = 'linux-x64';
+const String _kLinuxPlatformKey = 'linux';
 const String _kFlutterAssets = 'flutter_assets';
 const String _kLibFlutterLinuxGtk = 'libflutter_linux_gtk.so';
 const String _kIcuData = 'icudtl.dat';
@@ -34,6 +36,7 @@ class CustomLinuxBuildTarget extends ExtensionTarget {
         targetPlatform: _kLinuxX64Platform,
         outputDir:
             '${BuiltInPlaceholders.projectDir}/build/linux_extension/x64/${BuiltInPlaceholders.buildMode}',
+        pluginPlatformKey: _kLinuxPlatformKey,
       );
 
   @override
@@ -107,6 +110,8 @@ list(APPEND FLUTTER_TOOL_ENVIRONMENT
 )
 ''');
 
+    await writeLinuxPluginFiles(projectDir, ephemeralDir, context.plugins);
+
     if (!outputDir.existsSync()) {
       outputDir.createSync(recursive: true);
     }
@@ -153,6 +158,7 @@ class CustomLinuxAssembleOnlyDebug extends ExtensionTarget {
         description: 'A custom Linux assemble-only debug target.',
         targetPlatform: _kLinuxX64Platform,
         isTopLevel: false,
+        pluginPlatformKey: _kLinuxPlatformKey,
       );
 
   @override
@@ -162,6 +168,7 @@ class CustomLinuxAssembleOnlyDebug extends ExtensionTarget {
   List<String> get dependencies => const <String>[
     BuiltInTargets.copyAssets,
     BuiltInTargets.kernelSnapshot,
+    BuiltInTargets.installCodeAssets,
   ];
 
   @override
@@ -333,4 +340,116 @@ String? _unpackArtifacts({
   }
   _copyFile(srcIcu, File('${ephemeralDir.path}/$_kIcuData'));
   return null;
+}
+
+@visibleForTesting
+Future<void> writeLinuxPluginFiles(
+  Directory projectDir,
+  Directory ephemeralDir,
+  List<ExtensionPlugin> plugins,
+) async {
+  final symlinksDir = Directory('${ephemeralDir.path}/.plugin_symlinks');
+  if (symlinksDir.existsSync()) {
+    symlinksDir.deleteSync(recursive: true);
+  }
+  symlinksDir.createSync(recursive: true);
+
+  final nativePlugins = <ExtensionPlugin>[];
+  final ffiPlugins = <ExtensionPlugin>[];
+
+  for (final plugin in plugins) {
+    Link('${symlinksDir.path}/${plugin.name}').createSync(plugin.path);
+    final Object? pluginClass = plugin.configuration['pluginClass'];
+    final Object? ffiPlugin = plugin.configuration['ffiPlugin'];
+    if (pluginClass is String && pluginClass.isNotEmpty && pluginClass != 'none') {
+      nativePlugins.add(plugin);
+    } else if (ffiPlugin == true) {
+      ffiPlugins.add(plugin);
+    }
+  }
+
+  final String pluginEntries = <String>[
+    for (final ExtensionPlugin plugin in nativePlugins) '  ${plugin.name}',
+  ].join('\n');
+  final String ffiPluginEntries = <String>[
+    for (final ExtensionPlugin plugin in ffiPlugins) '  ${plugin.name}',
+  ].join('\n');
+
+  final cmakeFile = File('${projectDir.path}/linux/flutter/generated_plugins.cmake');
+  await cmakeFile.parent.create(recursive: true);
+  await cmakeFile.writeAsString('''
+#
+# Generated file, do not edit.
+#
+
+list(APPEND FLUTTER_PLUGIN_LIST
+$pluginEntries
+)
+
+list(APPEND FLUTTER_FFI_PLUGIN_LIST
+$ffiPluginEntries
+)
+
+set(PLUGIN_BUNDLED_LIBRARIES)
+
+foreach(plugin \${FLUTTER_PLUGIN_LIST})
+  add_subdirectory(flutter/ephemeral/.plugin_symlinks/\${plugin}/linux plugins/\${plugin})
+  target_link_libraries(\${BINARY_NAME} PRIVATE \${plugin}_plugin)
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES \$<TARGET_FILE:\${plugin}_plugin>)
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES \${\${plugin}_bundled_libraries})
+endforeach(plugin)
+
+foreach(ffi_plugin \${FLUTTER_FFI_PLUGIN_LIST})
+  add_subdirectory(flutter/ephemeral/.plugin_symlinks/\${ffi_plugin}/linux plugins/\${ffi_plugin})
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES \${\${ffi_plugin}_bundled_libraries})
+endforeach(ffi_plugin)
+''');
+
+  final registrantHeader = File('${projectDir.path}/linux/flutter/generated_plugin_registrant.h');
+  await registrantHeader.writeAsString('''
+//
+//  Generated file. Do not edit.
+//
+
+// clang-format off
+
+#ifndef GENERATED_PLUGIN_REGISTRANT_
+#define GENERATED_PLUGIN_REGISTRANT_
+
+#include <flutter_linux/flutter_linux.h>
+
+// Registers Flutter plugins.
+void fl_register_plugins(FlPluginRegistry* registry);
+
+#endif  // GENERATED_PLUGIN_REGISTRANT_
+''');
+
+  final String includes = <String>[
+    for (final ExtensionPlugin plugin in nativePlugins)
+      '#include <${plugin.name}/${plugin.name}_plugin.h>',
+  ].join('\n');
+  final String registrations = <String>[
+    for (final ExtensionPlugin plugin in nativePlugins)
+      '''
+  g_autoptr(FlPluginRegistrar) ${plugin.name}_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "${plugin.configuration['pluginClass']}");
+  ${plugin.name}_plugin_register_with_registrar(${plugin.name}_registrar);''',
+  ].join('\n');
+
+  final registrantCc = File('${projectDir.path}/linux/flutter/generated_plugin_registrant.cc');
+  await registrantCc.writeAsString('''
+//
+//  Generated file. Do not edit.
+//
+
+// clang-format off
+
+#include "generated_plugin_registrant.h"
+
+$includes
+
+void fl_register_plugins(FlPluginRegistry* registry) {
+$registrations
+}
+''');
 }

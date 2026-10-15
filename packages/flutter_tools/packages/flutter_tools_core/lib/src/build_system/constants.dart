@@ -81,14 +81,14 @@ abstract final class BuiltInHostArtifacts {
 }
 
 /// Names of built-in `flutter assemble` targets that extensions can depend on.
-///
-// TODO(bkonyi): Propagate extension targetPlatform to built-in dependency targets
-// (copy_assets defaults to TargetPlatform.android when kTargetPlatform is unset, and
-// kernel_snapshot_program requires -dTargetPlatform).
 abstract final class BuiltInTargets {
   /// Compiles the application to `{BUILD_DIR}/app.dill`.
   static const String kernelSnapshot = 'kernel_snapshot_program';
 
   /// Copies the application's assets to `{BUILD_DIR}/flutter_assets`.
   static const String copyAssets = 'copy_assets';
+
+  /// Runs Dart build/link hooks and stages native code assets alongside
+  /// `{BUILD_DIR}/native_assets.json` (`NativeAssetsManifest.json`).
+  static const String installCodeAssets = 'install_code_assets';
 }
