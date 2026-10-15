@@ -20,8 +20,9 @@ class ToolExtensionEntryPoint {
   static Future<void> run(
     SendPort sendPort,
     List<ToolExtensionService> services, {
-    Set<String>? supportedPlatforms,
+    String? extensionName,
     void Function(String message)? logger,
+    Set<String>? supportedPlatforms,
   }) async {
     logger?.call('[ToolExtensionIsolate] Initializing isolate channel...');
     final channel = IsolateChannel<Object?>.connectSend(sendPort);
@@ -45,6 +46,7 @@ class ToolExtensionEntryPoint {
     }
 
     final capabilities = ToolExtensionCapabilities(
+      extensionName: extensionName,
       supportedPlatforms: supportedPlatforms ?? const <String>{'linux', 'macos', 'windows'},
       services: services.map((ToolExtensionService s) => s.namespace).toList(),
     );
@@ -76,5 +78,51 @@ class ToolExtensionEntryPoint {
 
     logger?.call('[ToolExtensionIsolate] Isolate peer listening for RPC requests.');
     await peer.listen();
+  }
+}
+
+/// Helper class for registering [ToolExtensionService] instances onto an existing JSON-RPC [json_rpc.Peer].
+class FlutterToolsExtension {
+  FlutterToolsExtension({
+    required this.services,
+    this.extensionName,
+    this.supportedPlatforms = const <String>{'linux', 'macos', 'windows'},
+  });
+
+  final List<ToolExtensionService> services;
+  final String? extensionName;
+  final Set<String> supportedPlatforms;
+
+  /// Initializes all [services] and registers their RPC methods onto [peer].
+  Future<void> register(json_rpc.Peer peer) async {
+    final rpcHandlers = <String, ExtensionRpcHandler>{};
+    for (final ToolExtensionService service in services) {
+      final Map<String, ExtensionRpcHandler> handlers = await service.initialize();
+      handlers.forEach((String method, ExtensionRpcHandler handler) {
+        final fullMethod = '${service.namespace}.$method';
+        if (rpcHandlers.containsKey(fullMethod)) {
+          throw StateError('Duplicate RPC method registered: "$fullMethod"');
+        }
+        rpcHandlers[fullMethod] = handler;
+      });
+    }
+
+    final capabilities = ToolExtensionCapabilities(
+      extensionName: extensionName,
+      supportedPlatforms: supportedPlatforms,
+      services: services.map((ToolExtensionService s) => s.namespace).toList(),
+    );
+
+    peer.registerMethod('extension.getCapabilities', capabilities.toMap);
+
+    rpcHandlers.forEach((String fullMethod, ExtensionRpcHandler handler) {
+      peer.registerMethod(fullMethod, (json_rpc.Parameters params) async {
+        final Object? rawValue = params.value;
+        final Map<String, Object?> paramMap = rawValue is Map
+            ? rawValue.cast<String, Object?>()
+            : <String, Object?>{};
+        return handler(paramMap);
+      });
+    });
   }
 }

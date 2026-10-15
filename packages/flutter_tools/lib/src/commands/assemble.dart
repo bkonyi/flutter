@@ -26,6 +26,7 @@ import '../build_system/targets/windows.dart';
 import '../cache.dart';
 import '../context/tool_context.dart';
 import '../convert.dart';
+import '../experimental/extension_artifact_manager.dart';
 import '../experimental/extension_build_manager.dart';
 import '../features.dart';
 import '../project.dart';
@@ -103,6 +104,7 @@ class AssembleCommand extends FlutterCommand {
     required this._buildSystem,
     required this._featureFlags,
     required ToolContext super.toolContext,
+    this._extensionArtifactManager,
     this._extensionBuildManager,
     super.verboseHelp = false,
   }) : _toolContext = toolContext {
@@ -183,6 +185,7 @@ class AssembleCommand extends FlutterCommand {
   );
 
   final BuildSystem _buildSystem;
+  final ExtensionArtifactManager? _extensionArtifactManager;
   final ExtensionBuildManager? _extensionBuildManager;
   final FeatureFlags _featureFlags;
   final ToolContext _toolContext;
@@ -378,6 +381,17 @@ class AssembleCommand extends FlutterCommand {
   Future<FlutterCommandResult> runCommand() async {
     final ToolContext(:FileSystem fs, :Logger logger) = _toolContext;
     final List<Target> targets = await createTargets();
+    final String? targetPlatformStr = _environment.defines[kTargetPlatform];
+    final extensionTargetPlatforms = <String>{
+      ?targetPlatformStr,
+      for (final Target t in targets)
+        if (t case ExtensionAssembleTarget(:final ExtensionBuildTarget buildTarget)
+            when buildTarget.targetPlatform.isNotEmpty)
+          buildTarget.targetPlatform,
+    };
+    await _extensionArtifactManager?.ensureArtifactsDownloaded(
+      targetPlatforms: extensionTargetPlatforms.isNotEmpty ? extensionTargetPlatforms : null,
+    );
     final nonDeferredTargets = <Target>[];
     final List<Target> deferredTargets = <AndroidAotDeferredComponentsBundle>[];
     for (final target in targets) {
