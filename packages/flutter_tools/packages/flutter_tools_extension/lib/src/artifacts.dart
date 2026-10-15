@@ -65,31 +65,8 @@ abstract base class ArtifactService extends ToolExtensionService {
         hostPlatform: hostPlatform,
         targetPlatform: targetPlatform,
       );
-      return deps.map((ArtifactDependency d) => d.toJson()).toList();
+      return deps.map((ArtifactDependency d) => d.toMap()).toList();
     }
     throw RpcException.invalidParams('Missing "$hostPlatformParam" parameter.');
-  }
-}
-
-/// Client for interacting with an [ArtifactService] over JSON-RPC.
-class ArtifactServiceClient {
-  ArtifactServiceClient(this._sendRequest);
-
-  final Future<Object?> Function(String method, [Map<String, Object?>? params]) _sendRequest;
-
-  /// Queries the extension for required artifacts for the given [hostPlatform]
-  /// and optional [targetPlatform].
-  Future<List<ArtifactDependency>> downloadArtifacts({
-    required HostPlatform hostPlatform,
-    String? targetPlatform,
-  }) async {
-    final Object? response = await _sendRequest(
-      ArtifactService.downloadArtifactsMethod,
-      <String, Object?>{
-        ArtifactService.hostPlatformParam: hostPlatform.cliName,
-        ArtifactService.targetPlatformParam: ?targetPlatform,
-      },
-    );
-    return ArtifactDependency.listFromJson(response);
   }
 }

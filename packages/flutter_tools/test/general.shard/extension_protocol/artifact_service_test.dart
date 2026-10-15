@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:isolate';
 
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/experimental/extension_discovery.dart';
 import 'package:flutter_tools_core/flutter_tools_core.dart';
 import 'package:flutter_tools_extension/flutter_tools_extension.dart';
 import 'package:flutter_tools_extension_linux_prototype/src/artifact.dart';
 import 'package:json_rpc_2/json_rpc_2.dart' as json_rpc;
-import 'package:stream_channel/stream_channel.dart';
 import 'package:test/test.dart';
 
 final class _TestArtifactService extends ArtifactService {
@@ -30,53 +32,37 @@ final class _TestArtifactService extends ArtifactService {
 }
 
 void main() {
-  group('ArtifactService & ArtifactServiceClient', () {
-    late StreamController<Object?> clientToServer;
-    late StreamController<Object?> serverToClient;
-    late json_rpc.Peer clientPeer;
-    late json_rpc.Peer serverPeer;
+  group('ArtifactService', () {
+    late BufferLogger logger;
 
     setUp(() {
-      clientToServer = StreamController<Object?>();
-      serverToClient = StreamController<Object?>();
-
-      final clientChannel = StreamChannel<Object?>(serverToClient.stream, clientToServer.sink);
-      final serverChannel = StreamChannel<Object?>(clientToServer.stream, serverToClient.sink);
-
-      clientPeer = json_rpc.Peer.withoutJson(clientChannel);
-      serverPeer = json_rpc.Peer.withoutJson(serverChannel);
-    });
-
-    tearDown(() async {
-      await clientPeer.close();
-      await serverPeer.close();
+      logger = BufferLogger.test();
     });
 
     test('registers artifact capability and handles downloadArtifacts RPC', () async {
-      final extension = FlutterToolsExtension(
-        extensionName: 'test_artifact_ext',
-        services: <ToolExtensionService>[_TestArtifactService()],
-      );
-      await extension.register(serverPeer);
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(
+          sendPort,
+          <ToolExtensionService>[_TestArtifactService()],
+          extensionName: 'test_artifact_ext',
+          supportedPlatforms: const <String>{'linux'},
+        );
+      }
 
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
 
-      final Object? rawCaps = await clientPeer.sendRequest('extension.getCapabilities');
-      final capabilities = FlutterToolExtensionCapabilities.fromJson(
-        (rawCaps! as Map<Object?, Object?>).cast<String, Object?>(),
-      );
-      expect(capabilities.services, contains(ArtifactService.serviceNamespace));
-      expect(capabilities.extensionName, 'test_artifact_ext');
+      expect(conn.capabilities.services, contains(ArtifactService.serviceNamespace));
+      expect(conn.extensionName, 'test_artifact_ext');
 
-      final client = ArtifactServiceClient(
-        (String method, [Map<String, Object?>? params]) => clientPeer.sendRequest(method, params),
+      final Object? response = await conn.sendRequest(
+        ArtifactService.downloadArtifactsMethod,
+        params: <String, Object?>{
+          ArtifactService.hostPlatformParam: HostPlatform.linux_x64.cliName,
+          ArtifactService.targetPlatformParam: 'linux-x64',
+        },
       );
-
-      final List<ArtifactDependency> deps = await client.downloadArtifacts(
-        hostPlatform: HostPlatform.linux_x64,
-        targetPlatform: 'linux-x64',
-      );
+      final List<ArtifactDependency> deps = ArtifactDependency.listFromJson(response);
 
       expect(deps, hasLength(1));
       expect(deps.first.name, 'test-artifact-linux-x64');
@@ -87,61 +73,74 @@ void main() {
     });
 
     test('throws RpcException on missing or invalid hostPlatform', () async {
-      final extension = FlutterToolsExtension(
-        services: <ToolExtensionService>[_TestArtifactService()],
-      );
-      await extension.register(serverPeer);
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(sendPort, <ToolExtensionService>[_TestArtifactService()]);
+      }
 
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
 
       await expectLater(
-        clientPeer.sendRequest(ArtifactService.downloadArtifactsMethod, const <String, Object?>{}),
+        conn.sendRequest(
+          ArtifactService.downloadArtifactsMethod,
+          params: const <String, Object?>{},
+        ),
         throwsA(isA<json_rpc.RpcException>()),
       );
 
       await expectLater(
-        clientPeer.sendRequest(ArtifactService.downloadArtifactsMethod, const <String, Object?>{
-          ArtifactService.hostPlatformParam: 'invalid-host',
-        }),
+        conn.sendRequest(
+          ArtifactService.downloadArtifactsMethod,
+          params: const <String, Object?>{ArtifactService.hostPlatformParam: 'invalid-host'},
+        ),
         throwsA(isA<json_rpc.RpcException>()),
       );
 
       await expectLater(
-        clientPeer.sendRequest(ArtifactService.downloadArtifactsMethod, const <String, Object?>{
-          ArtifactService.hostPlatformParam: 'linux-x64',
-          ArtifactService.targetPlatformParam: 123,
-        }),
+        conn.sendRequest(
+          ArtifactService.downloadArtifactsMethod,
+          params: const <String, Object?>{
+            ArtifactService.hostPlatformParam: 'linux-x64',
+            ArtifactService.targetPlatformParam: 123,
+          },
+        ),
         throwsA(isA<json_rpc.RpcException>()),
       );
     });
 
     test('LinuxArtifactService returns expected default Linux artifact over RPC', () async {
-      final extension = FlutterToolsExtension(
-        extensionName: 'flutter_tools_extension_linux_prototype',
-        services: <ToolExtensionService>[LinuxArtifactService()],
-      );
-      await extension.register(serverPeer);
+      void entryPoint(SendPort sendPort) {
+        ToolExtensionEntryPoint.run(
+          sendPort,
+          <ToolExtensionService>[LinuxArtifactService()],
+          extensionName: 'flutter_tools_extension_linux_prototype',
+          supportedPlatforms: const <String>{'linux'},
+        );
+      }
 
-      unawaited(serverPeer.listen());
-      unawaited(clientPeer.listen());
+      final ExtensionConnection conn = await ExtensionConnection.spawn(entryPoint, logger: logger);
+      addTearDown(conn.dispose);
 
-      final client = ArtifactServiceClient(
-        (String method, [Map<String, Object?>? params]) => clientPeer.sendRequest(method, params),
+      final Object? linuxResponse = await conn.sendRequest(
+        ArtifactService.downloadArtifactsMethod,
+        params: <String, Object?>{
+          ArtifactService.hostPlatformParam: HostPlatform.linux_x64.cliName,
+          ArtifactService.targetPlatformParam: 'linux-x64',
+        },
       );
-
-      final List<ArtifactDependency> linuxDeps = await client.downloadArtifacts(
-        hostPlatform: HostPlatform.linux_x64,
-        targetPlatform: 'linux-x64',
-      );
+      final List<ArtifactDependency> linuxDeps = ArtifactDependency.listFromJson(linuxResponse);
       expect(linuxDeps, hasLength(1));
       expect(linuxDeps.first.name, 'linux-x64-custom-artifact');
       expect(linuxDeps.first.hostPlatform, HostPlatform.linux_x64);
       expect(linuxDeps.first.targetPlatform, 'linux-x64');
 
-      final List<ArtifactDependency> macosDeps = await client.downloadArtifacts(
-        hostPlatform: HostPlatform.darwin_x64,
+      final Object? macosResponse = await conn.sendRequest(
+        ArtifactService.downloadArtifactsMethod,
+        params: <String, Object?>{
+          ArtifactService.hostPlatformParam: HostPlatform.darwin_x64.cliName,
+        },
       );
+      final List<ArtifactDependency> macosDeps = ArtifactDependency.listFromJson(macosResponse);
       expect(macosDeps, isEmpty);
     });
   });

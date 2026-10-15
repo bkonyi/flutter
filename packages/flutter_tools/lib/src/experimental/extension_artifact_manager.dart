@@ -128,7 +128,11 @@ class ExtensionArtifactManager {
       try {
         final Object? result = await ext.sendRequest(
           ArtifactService.downloadArtifactsMethod,
-          params: <String, Object?>{ArtifactService.hostPlatformParam: currentHostPlatform.cliName},
+          params: <String, Object?>{
+            ArtifactService.hostPlatformParam: currentHostPlatform.cliName,
+            if (targetPlatforms?.length == 1)
+              ArtifactService.targetPlatformParam: targetPlatforms!.single,
+          },
           timeout: null,
         );
         dependencies = ArtifactDependency.listFromJson(result);

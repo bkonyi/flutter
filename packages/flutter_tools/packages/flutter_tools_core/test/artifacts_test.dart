@@ -31,7 +31,7 @@ void main() {
         targetPlatform: 'linux-x64',
       );
 
-      final Map<String, Object?> json = dep.toJson();
+      final Map<String, Object?> json = dep.toMap();
       expect(json, <String, Object?>{
         'name': 'custom-engine-bin',
         'url': 'https://example.com/artifacts/engine.zip',
@@ -39,7 +39,6 @@ void main() {
         'hostPlatform': 'linux-x64',
         'targetPlatform': 'linux-x64',
       });
-      expect(dep.toMap(), equals(json));
 
       final deserialized = ArtifactDependency.fromJson(json);
       expect(deserialized, equals(dep));
@@ -60,7 +59,7 @@ void main() {
         url: Uri.parse('https://example.com/data.bin'),
       );
 
-      final Map<String, Object?> json = dep.toJson();
+      final Map<String, Object?> json = dep.toMap();
       expect(json.containsKey('hostPlatform'), isFalse);
       expect(json.containsKey('targetPlatform'), isFalse);
 
