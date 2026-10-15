@@ -97,6 +97,7 @@ base class ExtensionBuildManager {
     required Uri projectRoot,
     required Map<String, String> resolvedArtifacts,
     required String targetName,
+    List<ExtensionPlugin> plugins = const <ExtensionPlugin>[],
   }) async {
     if (!projectRoot.hasAbsolutePath) {
       throw ArgumentError.value(projectRoot, 'projectRoot', 'Must be an absolute path.');
@@ -144,6 +145,7 @@ base class ExtensionBuildManager {
           BuildService.buildModeParam: buildMode.cliName,
           BuildService.mainPathParam: mainPath,
           BuildService.outputDirParam: outputDir.toString(),
+          BuildService.pluginsParam: plugins.map((ExtensionPlugin p) => p.toMap()).toList(),
           BuildService.projectRootParam: projectRoot.toString(),
           BuildService.resolvedArtifactsParam: resolvedArtifacts,
           BuildService.targetNameParam: targetName,

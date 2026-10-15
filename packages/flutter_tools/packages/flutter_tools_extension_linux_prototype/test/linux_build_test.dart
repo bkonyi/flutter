@@ -16,12 +16,13 @@ void main() {
       final List<ExtensionTarget> targets = service.targets;
 
       expect(
-        targets.map((ExtensionTarget t) => (t.name, t.isTopLevel)),
-        equals(<(String, bool)>[
-          (LinuxBuildService.customLinuxBuildTargetName, true),
-          ('custom-linux-assemble-only-debug', false),
+        targets.map((ExtensionTarget t) => (t.name, t.isTopLevel, t.pluginPlatformKey)),
+        equals(<(String, bool, String?)>[
+          (LinuxBuildService.customLinuxBuildTargetName, true, 'linux'),
+          ('custom-linux-assemble-only-debug', false, 'linux'),
         ]),
       );
+      expect(targets.last.dependencies, contains(BuiltInTargets.installCodeAssets));
     });
 
     test('initialize registers getBuildTargets and build RPC handlers', () async {
@@ -128,6 +129,47 @@ void main() {
 
       expect(result.success, isFalse);
       expect(result.errorMessage, contains('Missing linuxDesktopPath artifact.'));
+    });
+
+    test('writeLinuxPluginFiles writes Linux plugin CMake, registrant, and symlinks', () async {
+      final Directory tempDir = Directory.systemTemp.createTempSync('linux_plugin_files_test.');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final ephemeralDir = Directory('${tempDir.path}/linux/flutter/ephemeral')
+        ..createSync(recursive: true);
+      final pluginDir = Directory('${tempDir.path}/my_linux_plugin')..createSync(recursive: true);
+      final ffiPluginDir = Directory('${tempDir.path}/my_ffi_plugin')..createSync(recursive: true);
+
+      await writeLinuxPluginFiles(tempDir, ephemeralDir, <ExtensionPlugin>[
+        ExtensionPlugin(
+          name: 'my_linux_plugin',
+          path: pluginDir.path,
+          configuration: const <String, Object?>{'pluginClass': 'MyLinuxPlugin'},
+        ),
+        ExtensionPlugin(
+          name: 'my_ffi_plugin',
+          path: ffiPluginDir.path,
+          configuration: const <String, Object?>{'ffiPlugin': true},
+        ),
+      ]);
+
+      final cmakeFile = File('${tempDir.path}/linux/flutter/generated_plugins.cmake');
+      expect(cmakeFile.existsSync(), isTrue);
+      final String cmakeContent = cmakeFile.readAsStringSync();
+      expect(cmakeContent, contains('my_linux_plugin'));
+      expect(cmakeContent, contains('my_ffi_plugin'));
+
+      final registrantCc = File('${tempDir.path}/linux/flutter/generated_plugin_registrant.cc');
+      expect(registrantCc.existsSync(), isTrue);
+      final String registrantContent = registrantCc.readAsStringSync();
+      expect(registrantContent, contains('#include <my_linux_plugin/my_linux_plugin_plugin.h>'));
+      expect(registrantContent, contains('"MyLinuxPlugin"'));
+
+      expect(
+        Link('${tempDir.path}/linux/flutter/ephemeral/.plugin_symlinks/my_linux_plugin')
+            .existsSync(),
+        isTrue,
+      );
     });
 
     group('build RPC parameter validation', () {

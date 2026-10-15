@@ -302,7 +302,10 @@ void main() {
         expect(targets[0].dependencies, isEmpty);
 
         expect(targets[1].isTopLevel, isFalse);
-        expect(targets[1].dependencies, equals(<String>['copy_assets', 'kernel_snapshot_program']));
+        expect(
+          targets[1].dependencies,
+          equals(<String>['copy_assets', 'kernel_snapshot_program', 'install_code_assets']),
+        );
 
         await manager.dispose();
       },
@@ -564,7 +567,7 @@ void main() {
       expect(builtTarget!.name, equals('custom-linux-assemble-only-debug'));
       expect(
         builtTarget!.dependencies.map((Target t) => t.name),
-        equals(<String>['copy_assets', 'kernel_snapshot_program']),
+        equals(<String>['copy_assets', 'kernel_snapshot_program', 'install_code_assets']),
       );
 
       await manager.dispose();

@@ -5,9 +5,11 @@
 import 'package:meta/meta.dart';
 
 import 'build_system/constants.dart';
+import 'build_system/native_assets.dart';
 import 'build_system/source.dart';
 
 export 'build_system/constants.dart';
+export 'build_system/native_assets.dart';
 export 'build_system/source.dart';
 
 final _upperRegex = RegExp(r'[A-Z]');
@@ -82,6 +84,86 @@ enum BuildMode {
   String toString() => cliName;
 }
 
+/// Representation of a Flutter plugin resolved for an extension target platform.
+@immutable
+class ExtensionPlugin {
+  const ExtensionPlugin({
+    required this.name,
+    required this.path,
+    this.configuration = const <String, Object?>{},
+  });
+
+  /// Deserializes an [ExtensionPlugin] from a JSON-serializable map.
+  factory ExtensionPlugin.fromJson(Map<String, Object?> json) {
+    return ExtensionPlugin(
+      name: switch (json[nameKey]) {
+        final String value => value,
+        _ => '',
+      },
+      path: switch (json[pathKey]) {
+        final String value => value,
+        _ => '',
+      },
+      configuration: switch (json[configurationKey]) {
+        final Map<String, Object?> value => value,
+        _ => const <String, Object?>{},
+      },
+    );
+  }
+
+  /// Map key for [configuration].
+  static const String configurationKey = 'configuration';
+
+  /// Map key for [name].
+  static const String nameKey = 'name';
+
+  /// Map key for [path].
+  static const String pathKey = 'path';
+
+  /// Deserializes a list of [ExtensionPlugin] objects from RPC parameter data.
+  static List<ExtensionPlugin> listFromJson(Object? rpcResult) {
+    if (rpcResult case final List<Object?> list) {
+      return <ExtensionPlugin>[
+        for (final Object? item in list)
+          if (item case final Map<String, Object?> map) ExtensionPlugin.fromJson(map),
+      ];
+    }
+    return const <ExtensionPlugin>[];
+  }
+
+  /// The package name of the plugin.
+  final String name;
+
+  /// The absolute path to the plugin root directory on disk.
+  final String path;
+
+  /// The raw platform-specific configuration map from `pubspec.yaml` under
+  /// `flutter.plugin.platforms.<platformKey>`.
+  final Map<String, Object?> configuration;
+
+  /// Serializes the plugin to a JSON-serializable map.
+  Map<String, Object?> toMap() => <String, Object?>{
+    nameKey: name,
+    pathKey: path,
+    configurationKey: configuration,
+  };
+
+  @override
+  String toString() => 'ExtensionPlugin(name: $name, path: $path, configuration: $configuration)';
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other is ExtensionPlugin &&
+            other.name == name &&
+            other.path == path &&
+            _mapEquals(other.configuration, configuration));
+  }
+
+  @override
+  int get hashCode => Object.hash(name, path, _mapHash(configuration));
+}
+
 /// Representation of a custom build target provided by a tool extension.
 @immutable
 class ExtensionBuildTarget {
@@ -92,8 +174,10 @@ class ExtensionBuildTarget {
     this.dependencies = const <String>[],
     this.inputs = const <ExtensionSource>[],
     this.isTopLevel = true,
+    this.nativeAssetsConfig,
     this.outputDir = BuiltInPlaceholders.buildDir,
     this.outputs = const <ExtensionSource>[],
+    this.pluginPlatformKey,
   });
 
   /// Deserializes an [ExtensionBuildTarget] from a JSON-serializable map.
@@ -137,6 +221,11 @@ class ExtensionBuildTarget {
         final bool value => value,
         _ => true,
       },
+      nativeAssetsConfig: switch (json[nativeAssetsConfigKey]) {
+        final Map<String, Object?> map => ExtensionNativeAssetsConfig.fromJson(map),
+        null => null,
+        final Object? invalid => throw ArgumentError('Invalid "$nativeAssetsConfigKey": $invalid'),
+      },
       outputDir: switch (json[outputDirKey]) {
         final String value => value,
         _ => BuiltInPlaceholders.buildDir,
@@ -151,6 +240,11 @@ class ExtensionBuildTarget {
         ],
         null => const <ExtensionSource>[],
         final Object? invalid => throw ArgumentError('Invalid "$outputsKey": $invalid'),
+      },
+      pluginPlatformKey: switch (json[pluginPlatformKeyKey]) {
+        final String value => value,
+        null => null,
+        final Object? invalid => throw ArgumentError('Invalid "$pluginPlatformKeyKey": $invalid'),
       },
     );
   }
@@ -170,11 +264,17 @@ class ExtensionBuildTarget {
   /// Map key for [name].
   static const String nameKey = 'name';
 
+  /// Map key for [nativeAssetsConfig].
+  static const String nativeAssetsConfigKey = 'nativeAssetsConfig';
+
   /// Map key for [outputDir].
   static const String outputDirKey = 'outputDir';
 
   /// Map key for [outputs].
   static const String outputsKey = 'outputs';
+
+  /// Map key for [pluginPlatformKey].
+  static const String pluginPlatformKeyKey = 'pluginPlatformKey';
 
   /// Map key for [targetPlatform].
   static const String targetPlatformKey = 'targetPlatform';
@@ -226,6 +326,14 @@ class ExtensionBuildTarget {
   /// When invoked via `flutter assemble -o <dir>`, the `-o` directory is used instead.
   final String outputDir;
 
+  /// Optional Dart hooks (`native_assets`) target OS, architecture, and compiler
+  /// configuration for custom targets.
+  final ExtensionNativeAssetsConfig? nativeAssetsConfig;
+
+  /// Optional platform key under `flutter.plugin.platforms.<key>` in `pubspec.yaml`
+  /// used to resolve plugins for this target (e.g. `'linux'`, `'custom_platform'`).
+  final String? pluginPlatformKey;
+
   /// Serializes the build target to a JSON-serializable map.
   Map<String, Object?> toMap() => <String, Object?>{
     descriptionKey: description,
@@ -236,6 +344,8 @@ class ExtensionBuildTarget {
     inputsKey: inputs.map((ExtensionSource s) => s.toMap()).toList(),
     outputsKey: outputs.map((ExtensionSource s) => s.toMap()).toList(),
     outputDirKey: outputDir,
+    nativeAssetsConfigKey: ?nativeAssetsConfig?.toMap(),
+    pluginPlatformKeyKey: ?pluginPlatformKey,
   };
 
   @override
@@ -243,7 +353,8 @@ class ExtensionBuildTarget {
       'ExtensionBuildTarget(name: $name, targetPlatform: $targetPlatform, '
       'description: $description, isTopLevel: $isTopLevel, '
       'dependencies: $dependencies, inputs: $inputs, outputs: $outputs, '
-      'outputDir: $outputDir)';
+      'outputDir: $outputDir, nativeAssetsConfig: $nativeAssetsConfig, '
+      'pluginPlatformKey: $pluginPlatformKey)';
 
   @override
   bool operator ==(Object other) {
@@ -254,6 +365,8 @@ class ExtensionBuildTarget {
             other.targetPlatform == targetPlatform &&
             other.isTopLevel == isTopLevel &&
             other.outputDir == outputDir &&
+            other.nativeAssetsConfig == nativeAssetsConfig &&
+            other.pluginPlatformKey == pluginPlatformKey &&
             _listEquals(other.dependencies, dependencies) &&
             _listEquals(other.inputs, inputs) &&
             _listEquals(other.outputs, outputs));
@@ -266,6 +379,8 @@ class ExtensionBuildTarget {
     targetPlatform,
     isTopLevel,
     outputDir,
+    nativeAssetsConfig,
+    pluginPlatformKey,
     Object.hashAll(dependencies),
     Object.hashAll(inputs),
     Object.hashAll(outputs),
@@ -351,4 +466,25 @@ bool _listEquals<T>(List<T> a, List<T> b) {
     }
   }
   return true;
+}
+
+bool _mapEquals<K, V>(Map<K, V> a, Map<K, V> b) {
+  if (identical(a, b)) {
+    return true;
+  }
+  if (a.length != b.length) {
+    return false;
+  }
+  for (final MapEntry(:K key, :V value) in a.entries) {
+    if (!b.containsKey(key) || b[key] != value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+int _mapHash<K, V>(Map<K, V> map) {
+  return Object.hashAllUnordered(<int>[
+    for (final MapEntry(:K key, :V value) in map.entries) Object.hash(key, value),
+  ]);
 }

@@ -22,6 +22,7 @@ import '../build_system/targets/extension.dart';
 import '../build_system/targets/ios.dart';
 import '../build_system/targets/linux.dart';
 import '../build_system/targets/macos.dart';
+import '../build_system/targets/native_assets.dart';
 import '../build_system/targets/windows.dart';
 import '../cache.dart';
 import '../context/tool_context.dart';
@@ -36,6 +37,7 @@ var _kDefaultTargets = <Target>[
   // Shared targets
   const CopyAssets(),
   const KernelSnapshot(),
+  const InstallCodeAssets(),
   const AotSnapshotProfile(TargetPlatform.android_arm),
   const AotSnapshotRelease(TargetPlatform.android_arm),
   const AotAssemblyProfile(),
@@ -217,7 +219,12 @@ class AssembleCommand extends FlutterCommand {
       return super.requiredArtifacts;
     }
 
-    final targetPlatform = TargetPlatform.fromName(platform);
+    final TargetPlatform targetPlatform;
+    try {
+      targetPlatform = TargetPlatform.fromName(platform);
+    } on Exception {
+      return super.requiredArtifacts;
+    }
     final DevelopmentArtifact? artifact = artifactFromTargetPlatform(targetPlatform, _featureFlags);
     if (artifact != null) {
       return <DevelopmentArtifact>{artifact};
@@ -265,6 +272,11 @@ class AssembleCommand extends FlutterCommand {
     ];
     if (results.isEmpty) {
       throwToolExit('No target named "$name" defined.');
+    }
+    for (final result in results) {
+      if (result is ExtensionAssembleTarget) {
+        applyExtensionTargetDefines(_environment.defines, result.buildTarget);
+      }
     }
     return results;
   }

@@ -20,6 +20,7 @@ class ExtensionBuildContext {
     required this.outputDir,
     required this.projectRoot,
     required this.resolvedArtifacts,
+    this.plugins = const <ExtensionPlugin>[],
   });
 
   /// The directory used for temporary build artifacts.
@@ -41,6 +42,9 @@ class ExtensionBuildContext {
   ///
   /// Keys correspond to [ExtensionArtifact.name] or [ExtensionHostArtifact.name] values.
   final Map<String, String> resolvedArtifacts;
+
+  /// The list of Flutter plugins resolved for this target's platform.
+  final List<ExtensionPlugin> plugins;
 }
 
 /// Abstract target that encapsulates both metadata and build logic.
@@ -52,7 +56,9 @@ abstract class ExtensionTarget {
     required this.description,
     required this.targetPlatform,
     this.isTopLevel = true,
+    this.nativeAssetsConfig,
     this.outputDir = BuiltInPlaceholders.buildDir,
+    this.pluginPlatformKey,
   });
 
   /// The user-readable name of the target.
@@ -75,6 +81,10 @@ abstract class ExtensionTarget {
   /// and are not directly exposed to the user.
   final bool isTopLevel;
 
+  /// Optional Dart hooks (`native_assets`) target OS, architecture, and compiler
+  /// configuration for custom targets.
+  final ExtensionNativeAssetsConfig? nativeAssetsConfig;
+
   /// The directory pattern used by `flutter build` to determine this target's
   /// output directory (`{OUTPUT_DIR}`), for example
   /// `'${BuiltInPlaceholders.projectDir}/build/custom/${BuiltInPlaceholders.targetPlatform}/${BuiltInPlaceholders.buildMode}'`.
@@ -83,6 +93,10 @@ abstract class ExtensionTarget {
   /// [BuiltInPlaceholders.buildMode], and [BuiltInPlaceholders.targetPlatform].
   /// When invoked via `flutter assemble -o <dir>`, the `-o` directory is used instead.
   final String outputDir;
+
+  /// Optional platform key under `flutter.plugin.platforms.<key>` in `pubspec.yaml`
+  /// used to resolve plugins for this target (e.g. `'linux'`, `'custom_platform'`).
+  final String? pluginPlatformKey;
 
   /// The names of other targets that this target depends on.
   List<String> get dependencies => const <String>[];
@@ -130,6 +144,9 @@ abstract base class BuildService extends ToolExtensionService {
   /// RPC parameter key for the project root path.
   static const String projectRootParam = 'projectRoot';
 
+  /// RPC parameter key for the list of resolved plugins.
+  static const String pluginsParam = 'plugins';
+
   /// RPC parameter key for the map of resolved engine artifacts.
   static const String resolvedArtifactsParam = 'resolvedArtifacts';
 
@@ -166,8 +183,10 @@ abstract base class BuildService extends ToolExtensionService {
             dependencies: target.dependencies,
             inputs: target.inputs,
             isTopLevel: target.isTopLevel,
+            nativeAssetsConfig: target.nativeAssetsConfig,
             outputDir: target.outputDir,
             outputs: target.outputs,
+            pluginPlatformKey: target.pluginPlatformKey,
           ).toMap(),
         )
         .toList();
@@ -226,11 +245,13 @@ abstract base class BuildService extends ToolExtensionService {
       ).toMap();
     }
 
+    final List<ExtensionPlugin> plugins = ExtensionPlugin.listFromJson(params[pluginsParam]);
     final context = ExtensionBuildContext(
       buildDir: buildDirUri,
       buildMode: mode,
       mainPath: mainPath,
       outputDir: outputDirUri,
+      plugins: plugins,
       projectRoot: projectRootUri,
       resolvedArtifacts: resolvedArtifacts,
     );
