@@ -12,10 +12,29 @@ import 'service.dart';
 
 /// Entrypoint runner for a Flutter Tool Extension running in an Isolate.
 ///
-/// Extension packages invoke [ToolExtensionEntryPoint.run] in their isolate
-/// entrypoint function, passing the initial Isolate send port and list of supported
-/// extension services.
+/// Extension packages invoke [ToolExtensionEntryPoint.run] or
+/// [ToolExtensionEntryPoint.runMain] in their isolate entrypoint function,
+/// passing the initial Isolate send port and list of supported extension services.
 class ToolExtensionEntryPoint {
+  /// Convenience wrapper for an extension script's `main(List<String> args, Object? message)`
+  /// entrypoint when spawned via [Isolate.spawnUri].
+  static Future<void> runMain(
+    List<String> args,
+    Object? message,
+    List<ToolExtensionService> services, {
+    Set<String>? supportedPlatforms,
+    void Function(String message)? logger,
+  }) async {
+    if (message is! SendPort) {
+      throw ArgumentError.value(
+        message,
+        'message',
+        'Expected a SendPort as the initial isolate message.',
+      );
+    }
+    await run(message, services, supportedPlatforms: supportedPlatforms, logger: logger);
+  }
+
   /// Entrypoint function to serve [services] over the Isolate [sendPort].
   static Future<void> run(
     SendPort sendPort,

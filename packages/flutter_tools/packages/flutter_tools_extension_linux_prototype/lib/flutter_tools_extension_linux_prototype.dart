@@ -17,8 +17,14 @@ import 'src/template.dart';
 
 /// Isolate entrypoint for the prototype Linux Flutter Tool Extension.
 void linuxExtensionEntryPoint(SendPort sendPort) {
-  ToolExtensionEntryPoint.run(
-    sendPort,
+  runLinuxExtensionMain(const <String>[], sendPort);
+}
+
+/// URI isolate entrypoint for the prototype Linux Flutter Tool Extension.
+void runLinuxExtensionMain(List<String> args, Object? message) {
+  ToolExtensionEntryPoint.runMain(
+    args,
+    message,
     <ToolExtensionService>[
       LinuxExtensionDiagnostics(),
       LinuxConfigurationExtension(),
@@ -27,9 +33,9 @@ void linuxExtensionEntryPoint(SendPort sendPort) {
       LinuxBuildService(),
     ],
     supportedPlatforms: const <String>{'linux'},
-    logger: (String message) {
+    logger: (String logMessage) {
       // ignore: avoid_print
-      print('[LinuxExtension] $message');
+      print('[LinuxExtension] $logMessage');
     },
   );
 }

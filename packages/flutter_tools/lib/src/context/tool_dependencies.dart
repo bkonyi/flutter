@@ -38,7 +38,9 @@ import '../doctor.dart';
 import '../emulator.dart';
 import '../experimental/extension_build_manager.dart';
 import '../experimental/extension_discovery.dart';
+import '../experimental/extension_kernel_compiler.dart';
 import '../experimental/extension_manager.dart';
+import '../experimental/project_extension_finder.dart';
 import '../features.dart';
 import '../flutter_cache.dart';
 import '../flutter_device_manager.dart';
@@ -171,6 +173,7 @@ class ToolDependencies {
     EmulatorManager? emulatorManager,
     List<ExtensionEntryPoint> extensionEntryPoints = const <ExtensionEntryPoint>[],
     FeatureFlags? featureFlags,
+    bool? isToolExtensionsEnabledOverride,
     FlutterVersion? flutterVersion,
     FileSystem? fs,
     Git? git,
@@ -483,6 +486,7 @@ class ToolDependencies {
             projectManifest: projectManifest,
           ),
           platform: finalPlatform,
+          isToolExtensionsEnabledOverride: isToolExtensionsEnabledOverride,
         );
 
     final IOSWorkflow finalIOSWorkflow =
@@ -609,11 +613,24 @@ class ToolDependencies {
         windowsWorkflow ??
         WindowsWorkflow(featureFlags: finalFeatureFlags, platform: finalPlatform);
 
+    final projectExtensionFinder = ProjectExtensionFinder(fileSystem: finalFS, logger: finalLogger);
+    final extensionKernelCompiler = ExtensionKernelCompiler(
+      artifacts: finalArtifacts,
+      fileSystem: finalFS,
+      logger: finalLogger,
+      platform: finalPlatform,
+      processManager: finalProcessManager,
+    );
     final extensionManager = ExtensionManager(
       entryPoints: extensionEntryPoints,
+      extensionFinder: projectExtensionFinder,
       featureFlags: finalFeatureFlags,
+      fileSystem: finalFS,
       hostPlatform: finalOS.hostPlatform,
+      isSafeMode: isToolExtensionsEnabledOverride == false,
+      kernelCompiler: extensionKernelCompiler,
       logger: finalLogger,
+      platform: finalPlatform,
     );
 
     final extensionBuildManager = ExtensionBuildManager(
