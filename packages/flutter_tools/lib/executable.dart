@@ -251,6 +251,7 @@ List<FlutterCommand> generateCommands({
   ),
   AssembleCommand(
     buildSystem: toolDependencies.buildSystem,
+    extensionArtifactManager: toolDependencies.extensionArtifactManager,
     extensionBuildManager: toolDependencies.extensionBuildManager,
     featureFlags: toolDependencies.featureFlags,
     toolContext: toolDependencies.toolContext,
@@ -272,6 +273,7 @@ List<FlutterCommand> generateCommands({
     androidContext: toolDependencies.androidContext,
     appleContext: toolDependencies.appleContext,
     buildSystem: toolDependencies.buildSystem,
+    extensionArtifactManager: toolDependencies.extensionArtifactManager,
     extensionBuildManager: toolDependencies.extensionBuildManager,
     featureFlags: toolDependencies.featureFlags,
     templateRenderer: const MustacheTemplateRenderer(),
@@ -352,6 +354,7 @@ List<FlutterCommand> generateCommands({
     logger: toolDependencies.toolContext.logger,
     platform: toolDependencies.toolContext.platform,
     featureFlags: featureFlags,
+    extensionArtifactManager: toolDependencies.extensionArtifactManager,
   ),
   RunCommand(
     appleContext: toolDependencies.appleContext,
@@ -361,6 +364,7 @@ List<FlutterCommand> generateCommands({
     androidContext: toolDependencies.androidContext,
     androidWorkflow: android_workflow.androidWorkflow,
     deviceManager: toolDependencies.deviceManager,
+    extensionArtifactManager: toolDependencies.extensionArtifactManager,
     verboseHelp: verboseHelp,
   ),
   ScreenshotCommand(toolContext: toolDependencies.toolContext),
