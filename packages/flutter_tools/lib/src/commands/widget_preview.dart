@@ -316,6 +316,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     dtdLauncher: DtdLauncher(logger: logger, artifacts: artifacts, processManager: processManager),
     fs: fs,
     logger: logger,
+    lspPreviewsProvider: () => _lastGeneratedPreviews,
     onHotReloadPreviewer: onHotReloadRequest,
     onHotRestartPreviewerRequest: onHotRestartRequest,
     onSyncPreviews: syncPreviews,

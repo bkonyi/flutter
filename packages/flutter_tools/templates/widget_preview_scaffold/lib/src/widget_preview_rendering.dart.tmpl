@@ -181,10 +181,16 @@ class NoPreviewsDetectedWidget extends StatelessWidget {
 
 /// A wrapper that serves as the root entry for a single preview in the widget inspector.
 class PreviewWidget extends StatelessWidget {
-  const PreviewWidget({super.key, required this.preview, required this.child});
+  const PreviewWidget({
+    super.key,
+    required this.preview,
+    required this.child,
+    this.onDiagnostic,
+  });
 
   final WidgetPreview preview;
   final Widget child;
+  final ValueChanged<PreviewDiagnostic>? onDiagnostic;
 
   @override
   StatelessElement createElement() => PreviewWidgetElement(this);
@@ -213,9 +219,53 @@ class PreviewWidget extends StatelessWidget {
 }
 
 /// A custom [StatelessElement] with the sole purpose of simplifying identifying
-/// selections of @Preview annotations in the widget inspector.
+/// selections of @Preview annotations in the widget inspector and scoping
+/// per-preview build diagnostics.
 class PreviewWidgetElement extends StatelessElement {
-  PreviewWidgetElement(super.widget);
+  PreviewWidgetElement(PreviewWidget super.widget);
+
+  /// The [PreviewWidgetElement] currently executing [mount], [update], or
+  /// [performRebuild] on the call stack, if any.
+  static PreviewWidgetElement? activeBuildingElement;
+
+  PreviewWidget get previewWidget => widget as PreviewWidget;
+
+  void reportDiagnostic(PreviewDiagnostic diagnostic) {
+    previewWidget.onDiagnostic?.call(diagnostic);
+  }
+
+  @override
+  void mount(Element? parent, Object? newSlot) {
+    final PreviewWidgetElement? previous = activeBuildingElement;
+    activeBuildingElement = this;
+    try {
+      super.mount(parent, newSlot);
+    } finally {
+      activeBuildingElement = previous;
+    }
+  }
+
+  @override
+  void update(PreviewWidget newWidget) {
+    final PreviewWidgetElement? previous = activeBuildingElement;
+    activeBuildingElement = this;
+    try {
+      super.update(newWidget);
+    } finally {
+      activeBuildingElement = previous;
+    }
+  }
+
+  @override
+  void performRebuild() {
+    final PreviewWidgetElement? previous = activeBuildingElement;
+    activeBuildingElement = this;
+    try {
+      super.performRebuild();
+    } finally {
+      activeBuildingElement = previous;
+    }
+  }
 }
 
 class WidgetPreviewGroupWidget extends StatefulWidget {
@@ -399,8 +449,56 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
   final key = GlobalKey();
 
   ({Object error, StackTrace stackTrace})? _layoutError;
+  bool _previewBuilderThrew = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.registerDiagnosticPruner(
+      widget.preview,
+      _pruneStaleSubtreeDiagnostics,
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.controller.unregisterDiagnosticPruner(
+      widget.preview,
+      _pruneStaleSubtreeDiagnostics,
+    );
+    super.dispose();
+  }
+
+  void _recordDiagnostic(PreviewDiagnostic diagnostic) {
+    widget.controller.recordDiagnostic(widget.preview, diagnostic);
+  }
+
+  void _pruneStaleSubtreeDiagnostics() {
+    if (!mounted) {
+      return;
+    }
+    final RenderObject? rootRenderObject = key.currentContext
+        ?.findRenderObject();
+    if (!_previewBuilderThrew &&
+        (rootRenderObject == null ||
+            !_hasDescendantRenderErrorBox(rootRenderObject))) {
+      widget.controller.clearPhaseDiagnostics(widget.preview, .build);
+    }
+    if (rootRenderObject != null &&
+        !_hasOverflowingRenderFlex(rootRenderObject)) {
+      widget.controller.clearRenderFlexOverflowDiagnostics(widget.preview);
+    }
+  }
 
   void _handleLayoutError(Object error, StackTrace stackTrace) {
+    final PreviewDiagnosticKind kind =
+        error is UnconstrainedWidgetPreviewException ||
+            _isUnconstrainedError(error)
+        ? .unconstrained
+        : .exception;
+    _recordDiagnostic(
+      PreviewDiagnostic(kind: kind, phase: .layout, summary: error.toString()),
+    );
     if (_layoutError != null) {
       return;
     }
@@ -414,8 +512,22 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
     });
   }
 
+  void _handleLayoutSuccess() {
+    widget.controller.clearPhaseDiagnostics(widget.preview, .layout);
+  }
+
+  void _handlePaintStart() {
+    widget.controller.clearPhaseDiagnostics(
+      widget.preview,
+      .paint,
+      preserveOverflow: true,
+    );
+  }
+
   void _clearLayoutError() {
     _layoutError = null;
+    _previewBuilderThrew = false;
+    widget.controller.clearDiagnosticsFor(widget.preview);
   }
 
   /// Returns the last size of the previewed widget.
@@ -431,6 +543,17 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
   @override
   void didUpdateWidget(WidgetPreviewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller) ||
+        oldWidget.preview != widget.preview) {
+      oldWidget.controller.unregisterDiagnosticPruner(
+        oldWidget.preview,
+        _pruneStaleSubtreeDiagnostics,
+      );
+      widget.controller.registerDiagnosticPruner(
+        widget.preview,
+        _pruneStaleSubtreeDiagnostics,
+      );
+    }
     if (oldWidget.preview != widget.preview) {
       _clearLayoutError();
     }
@@ -490,6 +613,17 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
       preview = ValueListenableBuilder<bool>(
         valueListenable: softRestartListenable,
         builder: (context, performRestart, _) {
+          if (performRestart) {
+            _previewBuilderThrew = false;
+            widget.controller.clearDiagnosticsFor(widget.preview);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              // Trigger a rebuild on the next frame to re-insert previewWidget.
+              softRestartListenable.value = false;
+            }, debugLabel: 'Soft Restart');
+            return SizedBox.fromSize(size: lastChildSize);
+          }
+          _previewBuilderThrew = false;
+          widget.controller.clearPhaseDiagnostics(widget.preview, .build);
           try {
             final previewWidget = Container(
               key: key,
@@ -498,23 +632,25 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
                 child: EnableWidgetInspectorScope(
                   child: PreviewWidget(
                     preview: widget.preview,
+                    onDiagnostic: _recordDiagnostic,
                     child: widget.preview.previewBuilder(),
                   ),
                 ),
               ),
             );
-            if (performRestart) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                // Trigger a rebuild on the next frame to re-insert previewWidget.
-                softRestartListenable.value = false;
-              }, debugLabel: 'Soft Restart');
-              return SizedBox.fromSize(size: lastChildSize);
-            }
             return previewWidget;
           } on Object catch (error, stackTrace) {
             // Catch any unhandled exceptions and display an error widget instead of taking
             // down the entire preview environment.
+            _previewBuilderThrew = true;
             errorThrownDuringTreeConstruction = true;
+            _recordDiagnostic(
+              PreviewDiagnostic(
+                kind: .exception,
+                phase: .build,
+                summary: error.toString(),
+              ),
+            );
             return WidgetPreviewErrorWidget(
               controller: widget.controller,
               error: error,
@@ -559,6 +695,9 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
           child: _WidgetPreviewWrapper(
             previewerConstraints: maxSizeConstraints,
             onLayoutError: _handleLayoutError,
+            onLayoutSuccess: _handleLayoutSuccess,
+            onPaintDiagnostic: _recordDiagnostic,
+            onPaintStart: _handlePaintStart,
             child: preview,
           ),
         ),
@@ -1040,6 +1179,9 @@ class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
     required this.previewerConstraints,
     super.child,
     this.onLayoutError,
+    this.onLayoutSuccess,
+    this.onPaintDiagnostic,
+    this.onPaintStart,
   });
 
   /// The size of the previewer render surface.
@@ -1048,10 +1190,22 @@ class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
   /// Callback invoked when an exception is thrown during child layout.
   final void Function(Object error, StackTrace stackTrace)? onLayoutError;
 
+  /// Callback invoked when child layout completes cleanly.
+  final VoidCallback? onLayoutSuccess;
+
+  /// Callback invoked when an overflow or exception is reported during paint.
+  final ValueChanged<PreviewDiagnostic>? onPaintDiagnostic;
+
+  /// Callback invoked before painting the child subtree.
+  final VoidCallback? onPaintStart;
+
   @override
   RenderObject createRenderObject(BuildContext context) {
     return _WidgetPreviewWrapperBox(
       onLayoutError: onLayoutError,
+      onLayoutSuccess: onLayoutSuccess,
+      onPaintDiagnostic: onPaintDiagnostic,
+      onPaintStart: onPaintStart,
       previewerConstraints: previewerConstraints,
       child: null,
     );
@@ -1064,6 +1218,9 @@ class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
   ) {
     renderObject
       ..onLayoutError = onLayoutError
+      ..onLayoutSuccess = onLayoutSuccess
+      ..onPaintDiagnostic = onPaintDiagnostic
+      ..onPaintStart = onPaintStart
       ..setPreviewerConstraints(previewerConstraints);
   }
 }
@@ -1074,6 +1231,9 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
     required RenderBox? child,
     required this._previewerConstraints,
     this.onLayoutError,
+    this.onLayoutSuccess,
+    this.onPaintDiagnostic,
+    this.onPaintStart,
   }) : super(child);
 
   /// Whether a [_WidgetPreviewWrapperBox] is actively executing [performLayout].
@@ -1081,6 +1241,9 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
   /// Used by [_WidgetPreviewScaffoldState._handleFlutterError] to scope layout
   /// error interception to preview subtrees.
   static bool isPerformingPreviewLayout = false;
+
+  /// The [_WidgetPreviewWrapperBox] actively executing [paint], if any.
+  static _WidgetPreviewWrapperBox? activePaintingBox;
 
   /// The first error and stack trace reported to [FlutterError.onError] during
   /// the active [performLayout] pass.
@@ -1091,6 +1254,9 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
   static (Object, StackTrace)? reportedPreviewLayoutError;
 
   void Function(Object error, StackTrace stackTrace)? onLayoutError;
+  VoidCallback? onLayoutSuccess;
+  ValueChanged<PreviewDiagnostic>? onPaintDiagnostic;
+  VoidCallback? onPaintStart;
 
   BoxConstraints _constraintOverride = const BoxConstraints();
   BoxConstraints _previewerConstraints;
@@ -1155,6 +1321,7 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
         onLayoutError?.call(error, stackTrace);
       } else {
         size = constraints.constrain(child.size);
+        onLayoutSuccess?.call();
       }
     } catch (error, stackTrace) {
       _hasLayoutError = true;
@@ -1184,8 +1351,33 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    if (_hasValidChild) {
+    if (!_hasValidChild) {
+      return;
+    }
+    onPaintStart?.call();
+    final _WidgetPreviewWrapperBox? previousPaintingBox = activePaintingBox;
+    activePaintingBox = this;
+    try {
       super.paint(context, offset);
+    } on Object catch (error, stackTrace) {
+      activePaintingBox = previousPaintingBox;
+      onPaintDiagnostic?.call(
+        PreviewDiagnostic(
+          kind: .exception,
+          phase: .paint,
+          summary: error.toString(),
+        ),
+      );
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'widget_preview_scaffold',
+          context: ErrorDescription('during paint() of a widget preview'),
+        ),
+      );
+    } finally {
+      activePaintingBox = previousPaintingBox;
     }
   }
 
@@ -1340,7 +1532,62 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
         details.exception,
         stackTrace,
       );
+      (_originalOnError ?? FlutterError.presentError)(details);
+      return;
     }
+
+    final String message = details.exceptionAsString();
+    final String summary = details.summary.toDescription();
+    final String resolvedSummary = summary.isNotEmpty ? summary : message;
+    final List<PreviewDiagnostic> overflows = PreviewDiagnostic.parseOverflows(
+      message,
+      summary: resolvedSummary,
+    );
+    if (_WidgetPreviewWrapperBox.activePaintingBox
+        case final _WidgetPreviewWrapperBox paintingBox) {
+      if (overflows.isNotEmpty) {
+        for (final PreviewDiagnostic overflow in overflows) {
+          paintingBox.onPaintDiagnostic?.call(overflow);
+        }
+      } else {
+        paintingBox.onPaintDiagnostic?.call(
+          PreviewDiagnostic(
+            kind: .exception,
+            phase: .paint,
+            summary: resolvedSummary,
+          ),
+        );
+      }
+      (_originalOnError ?? FlutterError.presentError)(details);
+      return;
+    }
+
+    if (overflows.isNotEmpty) {
+      if (_findEnclosingPreviewElement(details)
+          case final PreviewWidgetElement element) {
+        for (final PreviewDiagnostic overflow in overflows) {
+          element.reportDiagnostic(overflow);
+        }
+      }
+      (_originalOnError ?? FlutterError.presentError)(details);
+      return;
+    }
+
+    final PreviewWidgetElement? buildingElement =
+        PreviewWidgetElement.activeBuildingElement ??
+        (_isBuildPhaseError(details)
+            ? _findEnclosingPreviewElement(details)
+            : null);
+    if (buildingElement != null && buildingElement.mounted) {
+      buildingElement.reportDiagnostic(
+        PreviewDiagnostic(
+          kind: .exception,
+          phase: .build,
+          summary: resolvedSummary,
+        ),
+      );
+    }
+
     (_originalOnError ?? FlutterError.presentError)(details);
   }
 
@@ -1524,4 +1771,72 @@ class WidgetPreviews extends StatelessWidget {
       },
     );
   }
+}
+
+const _kOverflowingRenderFlexSuffix = ' OVERFLOWING';
+const _kBuildingContextPrefix = 'building ';
+
+bool _hasDescendantRenderErrorBox(RenderObject root) {
+  if (root is RenderErrorBox) {
+    return true;
+  }
+  var found = false;
+  root.visitChildren((RenderObject child) {
+    if (!found && _hasDescendantRenderErrorBox(child)) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+bool _hasOverflowingRenderFlex(RenderObject root) {
+  if (root is RenderFlex &&
+      root.toStringShort().endsWith(_kOverflowingRenderFlexSuffix)) {
+    return true;
+  }
+  var found = false;
+  root.visitChildren((RenderObject child) {
+    if (!found && _hasOverflowingRenderFlex(child)) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+bool _isBuildPhaseError(FlutterErrorDetails details) {
+  final String? contextDescription = details.context?.toDescription();
+  return contextDescription != null &&
+      contextDescription.startsWith(_kBuildingContextPrefix);
+}
+
+PreviewWidgetElement? _findEnclosingPreviewElement(
+  FlutterErrorDetails details,
+) {
+  final InformationCollector? collector = details.informationCollector;
+  if (collector == null) {
+    return null;
+  }
+  for (final DiagnosticsNode node in collector()) {
+    if (node is DiagnosticsDebugCreator && node.value is DebugCreator) {
+      final Element creatorElement = (node.value! as DebugCreator).element;
+      if (!creatorElement.mounted) {
+        continue;
+      }
+      if (creatorElement is PreviewWidgetElement) {
+        return creatorElement;
+      }
+      PreviewWidgetElement? ancestor;
+      creatorElement.visitAncestorElements((Element element) {
+        if (element is PreviewWidgetElement) {
+          ancestor = element;
+          return false;
+        }
+        return true;
+      });
+      if (ancestor != null && ancestor!.mounted) {
+        return ancestor;
+      }
+    }
+  }
+  return null;
 }

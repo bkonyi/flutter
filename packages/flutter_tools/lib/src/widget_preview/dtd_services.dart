@@ -4,6 +4,9 @@
 
 import 'dart:async';
 
+import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:collection/collection.dart';
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -42,6 +45,7 @@ class WidgetPreviewDtdServices {
     required this.project,
     required this.shutdownHooks,
     @visibleForTesting this._dtd,
+    this.lspPreviewsProvider,
     this.onHotReloadPreviewer,
     this.onSyncPreviews,
     this.projectRootPath,
@@ -127,6 +131,8 @@ class WidgetPreviewDtdServices {
   static const kGetWebPreviewUrl = 'getWebPreviewUrl';
   static const kGetServiceInfo = 'getServiceInfo';
   static const kSyncPreviews = 'syncPreviews';
+  static const kListPreviews = 'listPreviews';
+  static const kGetPreviews = 'getPreviews';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
 
@@ -147,12 +153,17 @@ class WidgetPreviewDtdServices {
     (kGetWebPreviewUrl, _getWebPreviewUrl),
     (kGetServiceInfo, _getServiceInfo),
     (kSyncPreviews, _syncPreviews),
+    (kListPreviews, _listPreviews),
   ];
 
   // END KEEP SYNCED
 
+  static const kFileUri = 'fileUri';
+  static const kSync = 'sync';
   static const kTimeoutMs = 'timeoutMs';
   static const kDefaultSyncTimeoutMs = 30_000;
+  static const _kDefaultPreviewGroup = 'Default';
+  static const _kInvalidPreviewsGroup = 'Invalid Previews';
 
   @visibleForTesting
   late final preferences = PersistentPreferences(fs: fs);
@@ -172,6 +183,10 @@ class WidgetPreviewDtdServices {
 
   /// Invoked when the [kSyncPreviews] service method is invoked.
   final Future<SyncPreviewsResponse> Function({required Duration timeout})? onSyncPreviews;
+
+  /// Provides the most recently discovered LSP workspace previews for fallback
+  /// when the scaffold is disconnected or failed compilation.
+  final FutureOr<FlutterWidgetPreviews?> Function()? lspPreviewsProvider;
 
   /// Returns the URI of the running web preview application, if available.
   final Uri? Function()? webPreviewUriProvider;
@@ -482,6 +497,156 @@ class WidgetPreviewDtdServices {
     );
     return response.toJson();
   }
+
+  Future<Map<String, Object?>> _listPreviews(Parameters params) async {
+    final String? fileUri = params.value == null || params[kFileUri].valueOr(null) == null
+        ? null
+        : params[kFileUri].asString;
+    final bool sync =
+        params.value == null || params[kSync].valueOr(null) == null || params[kSync].asBool;
+    final int timeoutMs = params.value == null || params[kTimeoutMs].valueOr(null) == null
+        ? kDefaultSyncTimeoutMs
+        : params[kTimeoutMs].asInt;
+    if (timeoutMs < 0) {
+      throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
+    }
+
+    SyncPreviewsResponse? syncResponse;
+    if (sync) {
+      if (onSyncPreviews
+          case final Future<SyncPreviewsResponse> Function({required Duration timeout})
+              syncCallback) {
+        syncResponse = await syncCallback(timeout: Duration(milliseconds: timeoutMs));
+      } else if (_dtd != null) {
+        await waitForAnalysis();
+      }
+    }
+
+    final bool canQueryScaffold =
+        (syncResponse == null || syncResponse.compileSuccess) && scaffoldConnected && _dtd != null;
+    if (canQueryScaffold) {
+      try {
+        final DTDResponse response = await _dtd!.call(
+          widgetPreviewScaffoldService,
+          kGetPreviews,
+          params: <String, Object?>{if (fileUri != null && fileUri.isNotEmpty) kFileUri: fileUri},
+        );
+        return PreviewListResponse.fromDTDResponse(response).toJson();
+      } on RpcException catch (e) {
+        if (e.code != RpcErrorCodes.kMethodNotFound &&
+            e.code != RpcErrorCodes.kServiceDisappeared) {
+          rethrow;
+        }
+      }
+    }
+
+    FlutterWidgetPreviews? lspPreviews = await lspPreviewsProvider?.call();
+    if (lspPreviews == null && _dtd != null) {
+      if (_allLspServicesRegistered ||
+          _areRequiredLspServicesRegistered(await _dtd!.getRegisteredServices())) {
+        _allLspServicesRegistered = true;
+        lspPreviews = await getFlutterWidgetPreviews();
+      }
+    }
+    if (lspPreviews == null) {
+      return const PreviewListResponse(previews: <PreviewEntry>[]).toJson();
+    }
+    return PreviewListResponse(
+      previews: _buildFallbackPreviewEntries(lspPreviews, fileUri: fileUri),
+    ).toJson();
+  }
+
+  List<PreviewEntry> _buildFallbackPreviewEntries(
+    FlutterWidgetPreviews lspPreviews, {
+    String? fileUri,
+  }) {
+    final List<FlutterWidgetPreviewDetails> sortedPreviews = lspPreviews.previews.toList()
+      ..sort(
+        (FlutterWidgetPreviewDetails a, FlutterWidgetPreviewDetails b) =>
+            a.scriptUri.toString().compareTo(b.scriptUri.toString()),
+      );
+    final entries = <PreviewEntry>[];
+    for (final details in sortedPreviews) {
+      final String? packageName = details.packageName;
+      if (packageName == null) {
+        continue;
+      }
+      final libraryUri = details.libraryUri.toString();
+      final scriptUri = details.scriptUri.toString();
+      if (fileUri != null &&
+          fileUri.isNotEmpty &&
+          !_matchesPreviewFileUri(fileUri: fileUri, libraryUri: libraryUri, scriptUri: scriptUri)) {
+        continue;
+      }
+      final bool hasError = details.hasError || details.dependencyHasErrors;
+      final String? errorMessage = hasError
+          ? (details.dependencyHasErrors
+                ? 'Dependency of $libraryUri has errors!'
+                : '$libraryUri has errors!')
+          : null;
+      final ({
+        String? brightness,
+        String group,
+        double? height,
+        String? name,
+        double? textScaleFactor,
+        double? width,
+      })
+      metadata = hasError
+          ? (
+              brightness: null,
+              group: _kInvalidPreviewsGroup,
+              height: null,
+              name: null,
+              textScaleFactor: null,
+              width: null,
+            )
+          : _extractPreviewAnnotationMetadata(details.previewAnnotation);
+      entries.add(
+        PreviewEntry(
+          brightness: metadata.brightness,
+          column: details.position.character,
+          errorMessage: errorMessage,
+          functionName: details.functionName,
+          group: metadata.group,
+          hasError: hasError,
+          height: metadata.height,
+          id: '$libraryUri::${details.functionName}',
+          libraryUri: libraryUri,
+          line: details.position.line,
+          name: metadata.name,
+          packageName: packageName,
+          scriptUri: scriptUri,
+          textScaleFactor: metadata.textScaleFactor,
+          width: metadata.width,
+        ),
+      );
+    }
+    return entries;
+  }
+
+  bool _matchesPreviewFileUri({
+    required String fileUri,
+    required String libraryUri,
+    required String scriptUri,
+  }) {
+    if (libraryUri == fileUri || scriptUri == fileUri) {
+      return true;
+    }
+    final Uri? parsedScript = Uri.tryParse(scriptUri);
+    if (parsedScript == null || !parsedScript.isScheme('file')) {
+      return false;
+    }
+    final String scriptPath = fs.path.fromUri(parsedScript);
+    final Uri? parsedFilter = Uri.tryParse(fileUri);
+    if (parsedFilter != null && parsedFilter.isScheme('file')) {
+      return fs.path.equals(scriptPath, fs.path.fromUri(parsedFilter));
+    }
+    if (!fileUri.startsWith('package:') && !fileUri.startsWith('dart:')) {
+      return fs.path.equals(scriptPath, fs.path.normalize(fileUri));
+    }
+    return false;
+  }
 }
 
 /// Manages the lifecycle of a Dart Tooling Daemon (DTD) instance.
@@ -540,4 +705,152 @@ extension on DartToolingDaemon {
       }
     }
   }
+}
+
+({
+  String? brightness,
+  String group,
+  double? height,
+  String? name,
+  double? textScaleFactor,
+  double? width,
+})
+_extractPreviewAnnotationMetadata(String annotationSource) {
+  String group = WidgetPreviewDtdServices._kDefaultPreviewGroup;
+  String? name;
+  double? width;
+  double? height;
+  double? textScaleFactor;
+  String? brightness;
+
+  final ParseStringResult parsed = parseString(
+    content: 'final _ = $annotationSource;',
+    throwIfDiagnostics: false,
+  );
+  final CompilationUnitMember? declaration = parsed.unit.declarations.firstOrNull;
+  if (declaration is! TopLevelVariableDeclaration) {
+    return (
+      brightness: brightness,
+      group: group,
+      height: height,
+      name: name,
+      textScaleFactor: textScaleFactor,
+      width: width,
+    );
+  }
+  final Expression? initializer = declaration.variables.variables.firstOrNull?.initializer;
+  final ArgumentList? argumentList = switch (initializer) {
+    InstanceCreationExpression(:final ArgumentList argumentList) => argumentList,
+    MethodInvocation(:final ArgumentList argumentList) => argumentList,
+    _ => null,
+  };
+  if (argumentList == null) {
+    return (
+      brightness: brightness,
+      group: group,
+      height: height,
+      name: name,
+      textScaleFactor: textScaleFactor,
+      width: width,
+    );
+  }
+
+  for (final Argument argument in argumentList.arguments) {
+    if (argument is! NamedArgument) {
+      continue;
+    }
+    final String argName = argument.name.lexeme;
+    final Expression expr = argument.argumentExpression;
+    switch (argName) {
+      case 'group':
+        if (expr is SimpleStringLiteral) {
+          group = expr.value;
+        }
+      case 'name':
+        if (expr is SimpleStringLiteral) {
+          name = expr.value;
+        }
+      case 'textScaleFactor':
+        textScaleFactor = _extractFiniteDouble(expr);
+      case 'brightness':
+        final String? enumName = switch (expr) {
+          PrefixedIdentifier(:final SimpleIdentifier identifier) => identifier.name,
+          PropertyAccess(:final SimpleIdentifier propertyName) => propertyName.name,
+          DotShorthandPropertyAccess(:final SimpleIdentifier propertyName) => propertyName.name,
+          _ => null,
+        };
+        if (enumName == 'light' || enumName == 'dark') {
+          brightness = enumName;
+        }
+      case 'size':
+        final (:double? w, :double? h) = _extractSizeDimensions(expr);
+        width = w;
+        height = h;
+    }
+  }
+
+  return (
+    brightness: brightness,
+    group: group,
+    height: height,
+    name: name,
+    textScaleFactor: textScaleFactor,
+    width: width,
+  );
+}
+
+({double? w, double? h}) _extractSizeDimensions(Expression expr) {
+  final (String? constructorName, NodeList<Argument>? args) = switch (expr) {
+    InstanceCreationExpression(
+      :final ConstructorName constructorName,
+      :final ArgumentList argumentList,
+    ) =>
+      (constructorName.name?.name, argumentList.arguments),
+    MethodInvocation(
+      :final Expression? target,
+      :final SimpleIdentifier methodName,
+      :final ArgumentList argumentList,
+    ) =>
+      (
+        target != null &&
+                (methodName.name == 'fromWidth' ||
+                    methodName.name == 'fromHeight' ||
+                    methodName.name == 'square')
+            ? methodName.name
+            : null,
+        argumentList.arguments,
+      ),
+    _ => (null, null),
+  };
+  if (args == null) {
+    return (w: null, h: null);
+  }
+  return switch (constructorName) {
+    null when args.length >= 2 => (
+      w: _extractFiniteDouble(args[0].argumentExpression),
+      h: _extractFiniteDouble(args[1].argumentExpression),
+    ),
+    'fromWidth' when args.isNotEmpty => (
+      w: _extractFiniteDouble(args[0].argumentExpression),
+      h: null,
+    ),
+    'fromHeight' when args.isNotEmpty => (
+      w: null,
+      h: _extractFiniteDouble(args[0].argumentExpression),
+    ),
+    'square' when args.isNotEmpty => () {
+      final double? dimension = _extractFiniteDouble(args[0].argumentExpression);
+      return (w: dimension, h: dimension);
+    }(),
+    _ => (w: null, h: null),
+  };
+}
+
+double? _extractFiniteDouble(Expression expr) {
+  final double? value = switch (expr) {
+    DoubleLiteral(:final double value) => value,
+    IntegerLiteral(:final int? value) => value?.toDouble(),
+    _ => null,
+  };
+  return value != null && value.isFinite ? value : null;
 }

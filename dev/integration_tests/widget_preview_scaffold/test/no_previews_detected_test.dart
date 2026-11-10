@@ -52,6 +52,8 @@ void main() {
       currentPreviews.add(
         WidgetPreview(
           scriptUri: '',
+          libraryUri: '',
+          functionName: '',
           line: -1,
           column: -1,
           builder: () => const Text('Foo'),

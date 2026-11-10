@@ -49,6 +49,13 @@ class FakeDartToolingDaemon extends Fake implements DartToolingDaemon {
     dtdServices: <String>[],
   );
   RpcException? streamListenError;
+  Future<DTDResponse> Function(
+    String? serviceName,
+    String methodName,
+    Map<String, Object?>? params,
+  )?
+  onCall;
+  FlutterWidgetPreviews? lspPreviewsResponse;
 
   bool hasListener(String streamId) => _eventControllers[streamId]?.hasListener ?? false;
 
@@ -109,15 +116,21 @@ class FakeDartToolingDaemon extends Fake implements DartToolingDaemon {
     String methodName, {
     Map<String, Object?>? params,
   }) async {
+    if (onCall
+        case final Future<DTDResponse> Function(String?, String, Map<String, Object?>?) handler) {
+      return handler(serviceName, methodName, params);
+    }
     if (serviceName == 'Lsp' &&
         (methodName == 'dart/workspace/getFlutterWidgetPreviews' ||
             methodName == 'dart/textDocument/getFlutterWidgetPreviews')) {
       return DTDResponse('1', 'result', <String, Object?>{
-        'result': <String, Object?>{
-          'namespaces': <String, String>{},
-          'previews': <Map<String, Object?>>[],
-          'scriptUris': <String>[],
-        },
+        'result':
+            lspPreviewsResponse?.toJson() ??
+            <String, Object?>{
+              'namespaces': <String, String>{},
+              'previews': <Map<String, Object?>>[],
+              'scriptUris': <String>[],
+            },
       });
     }
     if (serviceName == 'Lsp' && methodName == 'dart/workspace/analysis/complete') {
@@ -277,6 +290,115 @@ void main() {
         ),
       );
     });
+
+    testWithoutContext(
+      'PreviewDiagnostic, PreviewEntry, and PreviewListResponse serialization and equality',
+      () {
+        const overflowDiag = PreviewDiagnostic(
+          kind: .overflow,
+          overflowAxis: 'horizontal',
+          overflowPixels: 48.0,
+          overflowSide: 'right',
+          phase: .paint,
+          summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+          targetType: 'RenderFlex',
+        );
+        final Map<String, Object?> overflowJson = overflowDiag.toJson();
+        expect(
+          overflowJson,
+          equals(<String, Object?>{
+            'phase': 'paint',
+            'kind': 'overflow',
+            'summary': 'A RenderFlex overflowed by 48 pixels on the right.',
+            'overflowPixels': 48.0,
+            'overflowSide': 'right',
+            'overflowAxis': 'horizontal',
+            'targetType': 'RenderFlex',
+          }),
+        );
+        expect(PreviewDiagnostic.fromJson(overflowJson), equals(overflowDiag));
+        expect(PreviewDiagnostic.fromJson(overflowJson).hashCode, equals(overflowDiag.hashCode));
+
+        const compileDiag = PreviewDiagnostic(
+          kind: .compileError,
+          phase: .compile,
+          summary: 'package:my_app/card.dart has errors!',
+        );
+        final Map<String, Object?> compileJson = compileDiag.toJson();
+        expect(
+          compileJson,
+          equals(<String, Object?>{
+            'phase': 'compile',
+            'kind': 'compile_error',
+            'summary': 'package:my_app/card.dart has errors!',
+          }),
+        );
+        expect(PreviewDiagnostic.fromJson(compileJson), equals(compileDiag));
+
+        const entry = PreviewEntry(
+          brightness: 'light',
+          column: 5,
+          functionName: 'cardPreview',
+          group: 'Default',
+          hasError: false,
+          height: 667.0,
+          id: 'package:my_app/card.dart::cardPreview',
+          libraryUri: 'package:my_app/card.dart',
+          line: 12,
+          name: 'Mobile Light',
+          packageName: 'my_app',
+          scriptUri: 'file:///abs/path/lib/card.dart',
+          width: 375.0,
+        );
+        final Map<String, Object?> entryJson = entry.toJson();
+        expect(
+          entryJson,
+          equals(<String, Object?>{
+            'id': 'package:my_app/card.dart::cardPreview',
+            'libraryUri': 'package:my_app/card.dart',
+            'scriptUri': 'file:///abs/path/lib/card.dart',
+            'packageName': 'my_app',
+            'functionName': 'cardPreview',
+            'multiPreviewIndex': null,
+            'line': 12,
+            'column': 5,
+            'group': 'Default',
+            'name': 'Mobile Light',
+            'width': 375.0,
+            'height': 667.0,
+            'textScaleFactor': null,
+            'brightness': 'light',
+            'hasError': false,
+            'errorMessage': null,
+          }),
+        );
+        // Verify JS integer-encoded float fields round-trip cleanly to double.
+        final jsEncodedEntryJson = <String, Object?>{...entryJson, 'width': 375, 'height': 667};
+        expect(PreviewEntry.fromJson(jsEncodedEntryJson), equals(entry));
+
+        const listResponse = PreviewListResponse(previews: <PreviewEntry>[entry]);
+        final Map<String, Object?> listJson = listResponse.toJson();
+        expect(listJson[PreviewListResponse.kType], PreviewListResponse.kTypeName);
+        final deserializedList = PreviewListResponse.fromDTDResponse(
+          DTDResponse('1', PreviewListResponse.kTypeName, listJson),
+        );
+        expect(deserializedList, equals(listResponse));
+        expect(deserializedList.hashCode, equals(listResponse.hashCode));
+
+        expect(
+          () => PreviewListResponse.fromDTDResponse(
+            DTDResponse('1', 'WrongType', <String, Object?>{'type': 'WrongType'}),
+          ),
+          throwsA(
+            isA<RpcException>().having(
+              (RpcException e) => e.code,
+              'code',
+              error_code.INVALID_PARAMS,
+            ),
+          ),
+        );
+      },
+    );
   });
 
   group('WidgetPreviewDtdServices Method Registration & Handlers', () {
@@ -359,6 +481,7 @@ void main() {
           WidgetPreviewDtdServices.kGetWebPreviewUrl,
           WidgetPreviewDtdServices.kGetServiceInfo,
           WidgetPreviewDtdServices.kSyncPreviews,
+          WidgetPreviewDtdServices.kListPreviews,
         }),
       );
     });
@@ -692,6 +815,232 @@ void main() {
         await restoredWait;
         expect(services.scaffoldConnected, isTrue);
         expect(fakeAnalytics.reportPreviewerConnectedCount, 2);
+
+        await fakeDtd.close();
+      },
+    );
+
+    testWithoutContext(
+      'listPreviews syncs when requested, delegates to scaffold getPreviews when connected, '
+      'and falls back to LSP metadata when disconnected or failed compilation',
+      () async {
+        final fakeDtd = FakeDartToolingDaemon();
+        var syncCallCount = 0;
+        var syncCompileSuccess = true;
+        final scaffoldCalls = <Map<String, Object?>?>[];
+        var throwServiceDisappeared = false;
+
+        fakeDtd.registeredServicesResponse = RegisteredServicesResponse.fromDTDResponse(
+          DTDResponse('1', RegisteredServicesResponse.type, <String, Object?>{
+            'type': RegisteredServicesResponse.type,
+            'dtdServices': <String>[],
+            'clientServices': <Map<String, Object?>>[
+              <String, Object?>{
+                'name': WidgetPreviewDtdServices.kLspStream,
+                'methods': <Map<String, Object?>>[
+                  for (final String method in WidgetPreviewDtdServices.kRequiredLspServices)
+                    <String, Object?>{'name': method},
+                ],
+              },
+            ],
+          }),
+        );
+        fakeDtd.lspPreviewsResponse = FlutterWidgetPreviews(
+          namespaces: const <String, String>{},
+          previews: <FlutterWidgetPreviewDetails>[
+            FlutterWidgetPreviewDetails(
+              functionName: 'cardPreview',
+              hasError: false,
+              dependencyHasErrors: false,
+              isBuilder: false,
+              isMultiPreview: false,
+              packageName: 'my_app',
+              position: const Position(character: 5, line: 12),
+              previewAnnotation:
+                  "const _i4.Preview(group: 'Cards', name: 'Mobile Light', "
+                  'size: _i5.Size(375, 667.0), textScaleFactor: 1.25, '
+                  'brightness: _i5.Brightness.light)',
+              scriptUri: Uri.parse('file:///project/lib/card.dart'),
+              libraryUri: Uri.parse('package:my_app/card.dart'),
+            ),
+            FlutterWidgetPreviewDetails(
+              functionName: 'brokenPreview',
+              hasError: true,
+              dependencyHasErrors: false,
+              isBuilder: false,
+              isMultiPreview: false,
+              packageName: 'my_app',
+              position: const Position(character: 1, line: 30),
+              previewAnnotation: 'const _i4.Preview()',
+              scriptUri: Uri.parse('file:///project/lib/broken.dart'),
+              libraryUri: Uri.parse('package:my_app/broken.dart'),
+            ),
+            FlutterWidgetPreviewDetails(
+              functionName: 'outsideLibPreview',
+              hasError: false,
+              dependencyHasErrors: false,
+              isBuilder: false,
+              isMultiPreview: false,
+              position: const Position(character: 1, line: 4),
+              previewAnnotation: 'const _i4.Preview()',
+              scriptUri: Uri.parse('file:///project/test/preview_test.dart'),
+              libraryUri: Uri.parse('test/preview_test.dart'),
+            ),
+          ],
+          scriptUris: <Uri>[
+            Uri.parse('file:///project/lib/card.dart'),
+            Uri.parse('file:///project/lib/broken.dart'),
+          ],
+        );
+
+        const scaffoldEntry = PreviewEntry(
+          brightness: 'dark',
+          column: 5,
+          functionName: 'cardPreviews',
+          group: 'Cards',
+          hasError: false,
+          height: 667.0,
+          id: 'package:my_app/card.dart::cardPreviews#0',
+          libraryUri: 'package:my_app/card.dart',
+          line: 12,
+          multiPreviewIndex: 0,
+          name: 'Dark Variant',
+          packageName: 'my_app',
+          scriptUri: 'file:///project/lib/card.dart',
+          width: 375.0,
+        );
+
+        final services = WidgetPreviewDtdServices(
+          addUuidToServiceName: true,
+          dtd: fakeDtd,
+          dtdLauncher: FakeDtdLauncher(),
+          fs: fs,
+          logger: logger,
+          onHotRestartPreviewerRequest: () {},
+          onSyncPreviews: ({required Duration timeout}) async {
+            syncCallCount++;
+            return SyncPreviewsResponse(
+              compileError: syncCompileSuccess ? null : 'Compile failed',
+              compileSuccess: syncCompileSuccess,
+              errorPreviewCount: syncCompileSuccess ? 0 : 1,
+              fullRestart: false,
+              reloaded: syncCompileSuccess,
+            );
+          },
+          previewAnalytics: analytics,
+          project: project,
+          shutdownHooks: shutdownHooks,
+        );
+        fakeDtd.onCall =
+            (String? serviceName, String methodName, Map<String, Object?>? params) async {
+              if (serviceName == services.widgetPreviewScaffoldService &&
+                  methodName == WidgetPreviewDtdServices.kGetPreviews) {
+                if (throwServiceDisappeared) {
+                  throw RpcException(RpcErrorCodes.kServiceDisappeared, 'Service disappeared');
+                }
+                scaffoldCalls.add(params);
+                return DTDResponse(
+                  '1',
+                  PreviewListResponse.kTypeName,
+                  const PreviewListResponse(previews: <PreviewEntry>[scaffoldEntry]).toJson(),
+                );
+              }
+              if (serviceName == 'Lsp' && methodName == 'dart/workspace/getFlutterWidgetPreviews') {
+                return DTDResponse('1', 'result', <String, Object?>{
+                  'result': fakeDtd.lspPreviewsResponse!.toJson(),
+                });
+              }
+              if (serviceName == 'Lsp' && methodName == 'dart/workspace/analysis/complete') {
+                fakeDtd.waitForAnalysisCallCount++;
+                return DTDResponse('1', 'Null', <String, Object?>{'type': 'Null', 'result': null});
+              }
+              throw UnimplementedError('Unexpected call: $serviceName.$methodName');
+            };
+
+        await services.connect(dtdWsUri: Uri.parse('ws://127.0.0.1:54322/secret'));
+        final DTDServiceCallback listCallback = _callbackFor(
+          services,
+          WidgetPreviewDtdServices.kListPreviews,
+        );
+
+        // 1. Disconnected scaffold falls back to LSP metadata, filtering out null packageName
+        // and honoring fileUri filtering.
+        final Map<String, Object?> fallbackAllJson = await listCallback(
+          Parameters('listPreviews', <String, Object?>{}),
+        );
+        expect(syncCallCount, 1);
+        expect(scaffoldCalls, isEmpty);
+        final PreviewListResponse fallbackAll = PreviewListResponse.fromJson(fallbackAllJson);
+        expect(fallbackAll.previews, hasLength(2));
+        expect(
+          fallbackAll.previews.map((PreviewEntry e) => e.id).toList(),
+          equals(<String>[
+            'package:my_app/broken.dart::brokenPreview',
+            'package:my_app/card.dart::cardPreview',
+          ]),
+        );
+        final PreviewEntry brokenFallback = fallbackAll.previews.first;
+        expect(brokenFallback.hasError, isTrue);
+        expect(brokenFallback.errorMessage, 'package:my_app/broken.dart has errors!');
+        expect(brokenFallback.group, 'Invalid Previews');
+
+        final PreviewEntry cardFallback = fallbackAll.previews.last;
+        expect(cardFallback.hasError, isFalse);
+        expect(cardFallback.errorMessage, isNull);
+        expect(cardFallback.group, 'Cards');
+        expect(cardFallback.name, 'Mobile Light');
+        expect(cardFallback.width, 375.0);
+        expect(cardFallback.height, 667.0);
+        expect(cardFallback.textScaleFactor, 1.25);
+        expect(cardFallback.brightness, 'light');
+
+        // Filter fallback by libraryUri with sync: false.
+        final Map<String, Object?> filteredFallbackJson = await listCallback(
+          Parameters('listPreviews', <String, Object?>{
+            'fileUri': 'package:my_app/card.dart',
+            'sync': false,
+          }),
+        );
+        expect(syncCallCount, 1);
+        final PreviewListResponse filteredFallback = PreviewListResponse.fromJson(
+          filteredFallbackJson,
+        );
+        expect(filteredFallback.previews, hasLength(1));
+        expect(filteredFallback.previews.single.id, 'package:my_app/card.dart::cardPreview');
+
+        // 2. Once scaffold connects, delegates to PreviewScaffold-<uuid>.getPreviews.
+        services.markScaffoldConnected();
+        final Map<String, Object?> connectedJson = await listCallback(
+          Parameters('listPreviews', <String, Object?>{'fileUri': 'file:///project/lib/card.dart'}),
+        );
+        expect(syncCallCount, 2);
+        expect(
+          scaffoldCalls,
+          equals(<Map<String, Object?>?>[
+            <String, Object?>{'fileUri': 'file:///project/lib/card.dart'},
+          ]),
+        );
+        final PreviewListResponse connectedList = PreviewListResponse.fromJson(connectedJson);
+        expect(connectedList.previews, equals(<PreviewEntry>[scaffoldEntry]));
+
+        // 3. If syncPreviews reports compileSuccess: false, falls back to LSP metadata
+        // instead of querying a stale scaffold isolate.
+        syncCompileSuccess = false;
+        final Map<String, Object?> compileFailedJson = await listCallback(
+          Parameters('listPreviews', <String, Object?>{}),
+        );
+        expect(syncCallCount, 3);
+        expect(scaffoldCalls, hasLength(1));
+        expect(PreviewListResponse.fromJson(compileFailedJson).previews, hasLength(2));
+
+        // 4. If scaffold service disappears mid-call, gracefully falls back to LSP metadata.
+        syncCompileSuccess = true;
+        throwServiceDisappeared = true;
+        final Map<String, Object?> disappearedJson = await listCallback(
+          Parameters('listPreviews', <String, Object?>{'sync': false}),
+        );
+        expect(syncCallCount, 3);
+        expect(PreviewListResponse.fromJson(disappearedJson).previews, hasLength(2));
 
         await fakeDtd.close();
       },

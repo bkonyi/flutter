@@ -7,33 +7,51 @@ import 'package:material_ui/material_ui.dart';
 
 import 'widget_preview.dart';
 
+const kInvalidPreviewsGroupName = 'Invalid Previews';
+
 Iterable<WidgetPreview> buildMultiWidgetPreview({
-  required String packageName,
-  required String scriptUri,
-  required int line,
   required int column,
+  required String functionName,
+  required String libraryUri,
+  required int line,
+  required String packageName,
   required MultiPreview preview,
   required Object? Function() previewFunction,
+  required String scriptUri,
+  String? errorMessage,
+  bool hasError = false,
 }) {
-  return preview.transform().map(
-    (p) => buildWidgetPreview(
-      packageName: packageName,
-      scriptUri: scriptUri,
-      line: line,
-      column: column,
-      transformedPreview: p,
-      previewFunction: previewFunction,
-    ),
-  );
+  return <WidgetPreview>[
+    for (final (int index, Preview transformedPreview)
+        in preview.transform().indexed)
+      buildWidgetPreview(
+        column: column,
+        errorMessage: errorMessage,
+        functionName: functionName,
+        hasError: hasError,
+        libraryUri: libraryUri,
+        line: line,
+        multiPreviewIndex: index,
+        packageName: packageName,
+        previewFunction: previewFunction,
+        scriptUri: scriptUri,
+        transformedPreview: transformedPreview,
+      ),
+  ];
 }
 
 WidgetPreview buildWidgetPreview({
-  required String packageName,
-  required String scriptUri,
-  required int line,
   required int column,
-  required Preview transformedPreview,
+  required String functionName,
+  required String libraryUri,
+  required int line,
+  required String packageName,
   required Object? Function() previewFunction,
+  required String scriptUri,
+  required Preview transformedPreview,
+  String? errorMessage,
+  bool hasError = false,
+  int? multiPreviewIndex,
 }) {
   Widget Function() previewBuilder;
   if (previewFunction is WidgetBuilder Function()) {
@@ -45,34 +63,45 @@ WidgetPreview buildWidgetPreview({
   }
   return WidgetPreview(
     builder: previewBuilder,
-    scriptUri: scriptUri,
-    line: line,
     column: column,
-    previewData: transformedPreview,
+    errorMessage: errorMessage,
+    functionName: functionName,
+    hasError: hasError,
+    libraryUri: libraryUri,
+    line: line,
+    multiPreviewIndex: multiPreviewIndex,
     packageName: packageName,
+    previewData: transformedPreview,
+    scriptUri: scriptUri,
   );
 }
 
 WidgetPreview buildWidgetPreviewError({
+  required int column,
+  required bool dependencyHasErrors,
+  required String functionName,
+  required String libraryUri,
+  required int line,
   required String packageName,
   required String scriptUri,
-  required int line,
-  required int column,
-  required String packageUri,
-  required String functionName,
-  required bool dependencyHasErrors,
+  String? errorMessage,
+  bool hasError = true,
 }) {
-  var errorMessage = '$packageUri has errors!';
-  if (dependencyHasErrors) {
-    errorMessage = 'Dependency of $errorMessage';
+  var resolvedErrorMessage = errorMessage ?? '$libraryUri has errors!';
+  if (errorMessage == null && dependencyHasErrors) {
+    resolvedErrorMessage = 'Dependency of $resolvedErrorMessage';
   }
   return WidgetPreview(
-    builder: () => Text('$functionName: $errorMessage'),
-    scriptUri: scriptUri,
-    line: line,
+    builder: () => Text('$functionName: $resolvedErrorMessage'),
     column: column,
-    previewData: const Preview(group: 'Invalid Previews'),
+    errorMessage: resolvedErrorMessage,
+    functionName: functionName,
+    hasError: hasError,
+    libraryUri: libraryUri,
+    line: line,
     packageName: packageName,
+    previewData: const Preview(group: kInvalidPreviewsGroupName),
+    scriptUri: scriptUri,
   );
 }
 

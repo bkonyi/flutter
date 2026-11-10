@@ -758,6 +758,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'flutter_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:flutter_project/foo.dart',
+    functionName: 'preview',
     line: 4,
     column: 1,
     previewFunction: () => _i3.preview(),

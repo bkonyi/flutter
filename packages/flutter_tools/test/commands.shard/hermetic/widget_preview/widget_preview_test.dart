@@ -755,6 +755,43 @@ environment:
         )(Parameters('hotReloadPreviewer', <String, Object?>{}));
         expect(reloadJson, equals(const Success().toJson()));
         expect(fakeResidentRunner.restartCount, 1);
+
+        // Verify listPreviews is wired on the command's dtdService and falls back to
+        // _lastGeneratedPreviews when scaffold is disconnected.
+        wiredStartCommand.onChangeDetected(
+          FlutterWidgetPreviews(
+            namespaces: const <String, String>{
+              'widget_preview.dart': '_i1',
+              'utils.dart': '_i2',
+              'package:my_app/main.dart': '_i3',
+              'package:flutter/src/widget_previews/widget_previews.dart': '_i4',
+            },
+            previews: <FlutterWidgetPreviewDetails>[
+              FlutterWidgetPreviewDetails(
+                functionName: 'wiredPreview',
+                hasError: false,
+                dependencyHasErrors: false,
+                isBuilder: false,
+                isMultiPreview: false,
+                packageName: 'my_app',
+                position: const Position(character: 2, line: 8),
+                previewAnnotation: "const _i4.Preview(name: 'Wired')",
+                scriptUri: fs.file(_kMainDartPath).uri,
+                libraryUri: Uri.parse('package:my_app/main.dart'),
+              ),
+            ],
+            scriptUris: <Uri>[fs.file(_kMainDartPath).uri],
+          ),
+        );
+        await pumpEventQueue();
+
+        final Map<String, Object?> listJson = await callbackFor(
+          WidgetPreviewDtdServices.kListPreviews,
+        )(Parameters('listPreviews', <String, Object?>{'sync': false}));
+        final PreviewListResponse parsedList = PreviewListResponse.fromJson(listJson);
+        expect(parsedList.previews, hasLength(1));
+        expect(parsedList.previews.single.id, 'package:my_app/main.dart::wiredPreview');
+        expect(parsedList.previews.single.name, 'Wired');
       },
     );
   });

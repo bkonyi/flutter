@@ -25,7 +25,11 @@ class WidgetPreviewScaffoldController {
     @visibleForTesting WidgetPreviewScaffoldDtdServices? dtdServicesOverride,
     // ignore: prefer_initializing_formals
   }) : _previews = previews,
-       dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices();
+       dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices() {
+    _context = _createPathContext();
+    _refreshPreviewsSnapshot();
+    dtdServices.onGetPreviews = getPreviews;
+  }
 
   @visibleForTesting
   static const kFilterBySelectedFilePreference = 'filterBySelectedFile';
@@ -34,9 +38,7 @@ class WidgetPreviewScaffoldController {
   /// listening for events.
   Future<void> initialize() async {
     await dtdServices.connect();
-    context = path.Context(
-      style: dtdServices.isWindows ? path.Style.windows : path.Style.posix,
-    );
+    _context = _createPathContext();
     _registerListeners();
     await Future.wait<void>([
       dtdServices
@@ -51,6 +53,8 @@ class WidgetPreviewScaffoldController {
   /// Cleanup internal controller state.
   Future<void> dispose() async {
     await dtdServices.dispose();
+    clearAllDiagnostics();
+    _liveDiagnosticPruners.clear();
 
     _layoutType.dispose();
     _filterBySelectedFile.dispose();
@@ -61,14 +65,179 @@ class WidgetPreviewScaffoldController {
   }
 
   /// Update state after the project has been reassembled due to a hot reload.
-  void onHotReload() => _updateFilteredPreviewSet();
+  void onHotReload() {
+    _refreshPreviewsSnapshot();
+    clearAllDiagnostics();
+    _updateFilteredPreviewSet();
+  }
 
   /// The active DTD connection used to communicate with other developer tooling.
   final WidgetPreviewScaffoldDtdServices dtdServices;
 
   final PreviewsCallback _previews;
+  var _cachedPreviews = const <WidgetPreview>[];
 
-  late final path.Context context;
+  void _refreshPreviewsSnapshot() {
+    _cachedPreviews = List<WidgetPreview>.unmodifiable(_previews());
+  }
+
+  /// All unfiltered [WidgetPreview] instances currently defined in the project.
+  WidgetPreviews get previews => _cachedPreviews;
+
+  late path.Context _context;
+  path.Context get context => _context;
+
+  path.Context _createPathContext() => path.Context(
+    style: dtdServices.isWindows ? path.Style.windows : path.Style.posix,
+  );
+
+  final Map<WidgetPreview, _PreviewDiagnosticsState> _diagnosticsByPreview =
+      Map<WidgetPreview, _PreviewDiagnosticsState>.identity();
+  final Map<WidgetPreview, VoidCallback> _liveDiagnosticPruners =
+      Map<WidgetPreview, VoidCallback>.identity();
+
+  /// Registers a callback invoked on-demand by [diagnosticsFor] to prune stale
+  /// build/paint diagnostics when a mounted preview subtree has recovered.
+  void registerDiagnosticPruner(
+    WidgetPreview preview,
+    VoidCallback pruneStaleDiagnostics,
+  ) {
+    _liveDiagnosticPruners[preview] = pruneStaleDiagnostics;
+  }
+
+  /// Unregisters the diagnostic pruner for [preview] if it matches [pruner].
+  void unregisterDiagnosticPruner(WidgetPreview preview, VoidCallback pruner) {
+    if (identical(_liveDiagnosticPruners[preview], pruner)) {
+      _liveDiagnosticPruners.remove(preview);
+    }
+  }
+
+  /// Records a runtime [diagnostic] for [preview], deduplicating identical
+  /// entries within the same phase.
+  void recordDiagnostic(WidgetPreview preview, PreviewDiagnostic diagnostic) {
+    final _PreviewDiagnosticsState state = _diagnosticsByPreview.putIfAbsent(
+      preview,
+      _PreviewDiagnosticsState.new,
+    );
+    state.add(diagnostic);
+  }
+
+  /// Clears captured runtime diagnostics for [preview] in [phase].
+  ///
+  /// When [preserveOverflow] is `true`, `RenderFlex` overflow diagnostics are
+  /// retained across incremental paints until the render subtree stops
+  /// overflowing or is reassembled.
+  void clearPhaseDiagnostics(
+    WidgetPreview preview,
+    PreviewDiagnosticPhase phase, {
+    bool preserveOverflow = false,
+  }) {
+    final _PreviewDiagnosticsState? state = _diagnosticsByPreview[preview];
+    if (state == null) {
+      return;
+    }
+    state.clearPhase(phase, preserveOverflow: preserveOverflow);
+    if (state.isEmpty) {
+      _diagnosticsByPreview.remove(preview);
+    }
+  }
+
+  /// Clears `RenderFlex` paint overflow diagnostics for [preview] once no
+  /// descendant `RenderFlex` remains in an overflowing state.
+  void clearRenderFlexOverflowDiagnostics(WidgetPreview preview) {
+    final _PreviewDiagnosticsState? state = _diagnosticsByPreview[preview];
+    if (state == null) {
+      return;
+    }
+    state.clearRenderFlexOverflows();
+    if (state.isEmpty) {
+      _diagnosticsByPreview.remove(preview);
+    }
+  }
+
+  /// Clears all captured runtime diagnostics for [preview].
+  void clearDiagnosticsFor(WidgetPreview preview) {
+    _diagnosticsByPreview.remove(preview);
+  }
+
+  /// Clears all captured runtime diagnostics across all previews.
+  void clearAllDiagnostics() {
+    _diagnosticsByPreview.clear();
+  }
+
+  /// Returns all active compile and runtime [PreviewDiagnostic]s for [preview].
+  List<PreviewDiagnostic> diagnosticsFor(WidgetPreview preview) {
+    _liveDiagnosticPruners[preview]?.call();
+    final _PreviewDiagnosticsState? state = _diagnosticsByPreview[preview];
+    return <PreviewDiagnostic>[
+      if (preview.hasError)
+        PreviewDiagnostic(
+          kind: .compileError,
+          phase: .compile,
+          summary: preview.errorMessage ?? '${preview.libraryUri} has errors!',
+        ),
+      if (state != null) ...state.all,
+    ];
+  }
+
+  /// Builds a [PreviewListResponse] across unfiltered [previews], optionally
+  /// filtered by [fileUri] (`scriptUri` or `libraryUri`), ignoring UI-only
+  /// selected-file and search filters.
+  PreviewListResponse getPreviews({String? fileUri}) {
+    final entries = <PreviewEntry>[];
+    for (final WidgetPreview preview in _cachedPreviews) {
+      if (fileUri != null &&
+          fileUri.isNotEmpty &&
+          !_matchesFileUri(
+            fileUri: fileUri,
+            libraryUri: preview.libraryUri,
+            pathContext: _context,
+            scriptUri: preview.scriptUri,
+          )) {
+        continue;
+      }
+      final List<PreviewDiagnostic> diagnostics = diagnosticsFor(preview);
+      final bool hasError = preview.hasError || diagnostics.isNotEmpty;
+      final String? errorMessage = preview.hasError
+          ? preview.errorMessage
+          : (diagnostics.isNotEmpty
+                ? diagnostics.map((PreviewDiagnostic d) => d.summary).join('\n')
+                : null);
+      final double? width = switch (preview.size?.width) {
+        final double w when w.isFinite => w,
+        _ => null,
+      };
+      final double? height = switch (preview.size?.height) {
+        final double h when h.isFinite => h,
+        _ => null,
+      };
+      final double? textScaleFactor = switch (preview.textScaleFactor) {
+        final double scale when scale.isFinite => scale,
+        _ => null,
+      };
+      entries.add(
+        PreviewEntry(
+          brightness: preview.brightness?.name,
+          column: preview.column,
+          errorMessage: errorMessage,
+          functionName: preview.functionName,
+          group: preview.previewData.group,
+          hasError: hasError,
+          height: height,
+          id: preview.id,
+          libraryUri: preview.libraryUri,
+          line: preview.line,
+          multiPreviewIndex: preview.multiPreviewIndex,
+          name: preview.name,
+          packageName: preview.packageName,
+          scriptUri: preview.scriptUri,
+          textScaleFactor: textScaleFactor,
+          width: width,
+        ),
+      );
+    }
+    return PreviewListResponse(previews: entries);
+  }
 
   /// Specifies how the previews should be laid out.
   ValueListenable<LayoutType> get layoutTypeListenable => _layoutType;
@@ -231,8 +400,6 @@ class WidgetPreviewScaffoldController {
   void _updateFilteredPreviewSet({
     bool editorServiceAvailabilityUpdated = false,
   }) {
-    final previews = _previews();
-
     final normalizedSearchQuery = _searchQuery.value.trim().toLowerCase();
     String? selectedSourcePath;
 
@@ -259,7 +426,7 @@ class WidgetPreviewScaffoldController {
     }
 
     final previewGroups = <String, WidgetPreviewGroup>{};
-    for (final preview in previews) {
+    for (final preview in _cachedPreviews) {
       if (selectedSourcePath != null &&
           !context.equals(
             // TODO(bkonyi): we can probably save some cycles by caching the file path
@@ -283,5 +450,82 @@ class WidgetPreviewScaffoldController {
           .add(preview);
     }
     _filteredPreviewSet.value = previewGroups.values.toList();
+  }
+
+  static bool _matchesFileUri({
+    required String fileUri,
+    required String libraryUri,
+    required path.Context pathContext,
+    required String scriptUri,
+  }) {
+    if (libraryUri == fileUri || scriptUri == fileUri) {
+      return true;
+    }
+    final Uri? parsedScript = Uri.tryParse(scriptUri);
+    if (parsedScript == null || !parsedScript.isScheme('file')) {
+      return false;
+    }
+    final String scriptPath = pathContext.fromUri(parsedScript);
+    final Uri? parsedFilter = Uri.tryParse(fileUri);
+    if (parsedFilter != null && parsedFilter.isScheme('file')) {
+      return pathContext.equals(scriptPath, pathContext.fromUri(parsedFilter));
+    }
+    if (!fileUri.startsWith('package:') && !fileUri.startsWith('dart:')) {
+      return pathContext.equals(scriptPath, pathContext.normalize(fileUri));
+    }
+    return false;
+  }
+}
+
+class _PreviewDiagnosticsState {
+  final build = <PreviewDiagnostic>[];
+  final layout = <PreviewDiagnostic>[];
+  final paint = <PreviewDiagnostic>[];
+
+  bool get isEmpty => build.isEmpty && layout.isEmpty && paint.isEmpty;
+
+  Iterable<PreviewDiagnostic> get all sync* {
+    yield* build;
+    yield* layout;
+    yield* paint;
+  }
+
+  void add(PreviewDiagnostic diagnostic) {
+    final List<PreviewDiagnostic> bucket = switch (diagnostic.phase) {
+      .compile || .build => build,
+      .layout => layout,
+      .paint => paint,
+    };
+    if (!bucket.contains(diagnostic)) {
+      bucket.add(diagnostic);
+    }
+  }
+
+  void clearPhase(
+    PreviewDiagnosticPhase phase, {
+    bool preserveOverflow = false,
+  }) {
+    switch (phase) {
+      case .compile || .build:
+        build.clear();
+      case .layout:
+        layout.clear();
+      case .paint:
+        if (preserveOverflow) {
+          paint.removeWhere(
+            (PreviewDiagnostic d) => d.kind != PreviewDiagnosticKind.overflow,
+          );
+        } else {
+          paint.clear();
+        }
+    }
+  }
+
+  void clearRenderFlexOverflows() {
+    paint.removeWhere(
+      (PreviewDiagnostic d) =>
+          d.kind == PreviewDiagnosticKind.overflow &&
+          d.targetType == 'RenderFlex',
+    );
   }
 }

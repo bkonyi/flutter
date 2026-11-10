@@ -65,6 +65,9 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   final preferences = <String, Object?>{};
 
   @override
+  PreviewListResponse Function({String? fileUri})? onGetPreviews;
+
+  @override
   Future<void> connect({Uri? dtdUri}) async {}
 
   @override

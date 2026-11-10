@@ -35,10 +35,10 @@ class PreviewCodeGenerator {
   static const _kBuildWidgetPreviewError = 'buildWidgetPreviewError';
   static const _kColumn = 'column';
   static const _kDependencyHasErrors = 'dependencyHasErrors';
+  static const _kLibraryUri = 'libraryUri';
   static const _kLine = 'line';
   static const _kListType = 'List';
   static const _kPackageName = 'packageName';
-  static const _kPackageUri = 'packageUri';
   static const _kPreview = 'preview';
   static const _kPreviewFunction = 'previewFunction';
   static const _kPreviewFunctionName = 'functionName';
@@ -277,6 +277,8 @@ class PreviewCodeGenerator {
     final args = <String, cb.Expression>{
       _kPackageName: cb.literalString(preview.packageName!),
       _kScriptUri: cb.literalString(preview.scriptUri.toString()),
+      _kLibraryUri: cb.literalString(uri.toString()),
+      _kPreviewFunctionName: cb.literalString(preview.functionName),
       _kLine: cb.literalNum(preview.line),
       _kColumn: cb.literalNum(preview.column),
     };
@@ -284,8 +286,6 @@ class PreviewCodeGenerator {
     if (libraryDetails.hasErrors || libraryDetails.dependencyHasErrors) {
       return cb.refer(_kBuildWidgetPreviewError, _kUtilsUri).call([], {
         ...args,
-        _kPackageUri: cb.literalString(uri.toString()),
-        _kPreviewFunctionName: cb.literalString(preview.functionName),
         _kDependencyHasErrors: cb.literalBool(libraryDetails.dependencyHasErrors),
       });
     }
@@ -318,6 +318,8 @@ class PreviewCodeGenerator {
     final args = <String, cb.Expression>{
       _kPackageName: cb.literalString(preview.packageName!),
       _kScriptUri: cb.literalString(preview.scriptUri.toString()),
+      _kLibraryUri: cb.literalString(uri.toString()),
+      _kPreviewFunctionName: cb.literalString(preview.functionName),
       _kLine: cb.literalNum(preview.position.line),
       _kColumn: cb.literalNum(preview.position.character),
     };
@@ -325,8 +327,6 @@ class PreviewCodeGenerator {
     if (preview.hasError || preview.dependencyHasErrors) {
       return cb.refer(_kBuildWidgetPreviewError, _kUtilsUri).call([], {
         ...args,
-        _kPackageUri: cb.literalString(uri.toString()),
-        _kPreviewFunctionName: cb.literalString(preview.functionName),
         _kDependencyHasErrors: cb.literalBool(preview.dependencyHasErrors),
       });
     }

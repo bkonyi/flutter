@@ -19,9 +19,15 @@ import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/persistent_preferences.dart';
+import 'package:flutter/widget_previews.dart';
+import 'package:flutter/widgets.dart' show Brightness, Size, SizedBox;
 import 'package:path/path.dart' as path;
 import 'package:test/fake.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
+import 'package:widget_preview_scaffold/src/utils.dart';
+import 'package:widget_preview_scaffold/src/widget_preview.dart'
+    as scaffold_preview;
+import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
 
 import '../../../../packages/flutter_tools/test/src/common.dart';
 import '../../../../packages/flutter_tools/test/src/fake_process_manager.dart'
@@ -115,6 +121,8 @@ void main() {
   Future<WidgetPreviewDtdServices> launchDtdServer({
     Future<void> Function()? onHotReloadPreviewer,
     void Function()? onHotRestartPreviewerRequest,
+    Future<SyncPreviewsResponse> Function({required Duration timeout})?
+    onSyncPreviews,
     Uri? Function()? webPreviewUriProvider,
   }) async {
     final server = WidgetPreviewDtdServices(
@@ -128,6 +136,7 @@ void main() {
       logger: logger,
       onHotReloadPreviewer: onHotReloadPreviewer,
       onHotRestartPreviewerRequest: onHotRestartPreviewerRequest ?? () {},
+      onSyncPreviews: onSyncPreviews,
       previewAnalytics: WidgetPreviewAnalytics(
         analytics: getInitializedFakeAnalyticsInstance(
           // We don't care about anything written to the file system by analytics, so we're safe
@@ -298,6 +307,116 @@ void main() {
           json.decode(preferencesFile.readAsStringSync()),
           <String, Object?>{kFlagKey: true},
         );
+      },
+    );
+
+    testWithoutContext(
+      'registers ${WidgetPreviewScaffoldDtdServices.kGetPreviews} on scaffold '
+      'service and delegates ${WidgetPreviewDtdServices.kListPreviews} end-to-end',
+      () async {
+        var syncCalls = 0;
+        dtdServer = await launchDtdServer(
+          onSyncPreviews: ({required Duration timeout}) async {
+            syncCalls++;
+            return const SyncPreviewsResponse(
+              compileSuccess: true,
+              errorPreviewCount: 0,
+              fullRestart: false,
+              reloaded: true,
+            );
+          },
+        );
+        dtdServer.setDevToolsServerAddress(
+          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
+          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
+        );
+
+        final dtd = WidgetPreviewScaffoldDtdServices();
+        scaffoldDtd = dtd;
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: dtd,
+          previews: () => <scaffold_preview.WidgetPreview>[
+            buildWidgetPreview(
+              column: 5,
+              functionName: 'cardPreview',
+              libraryUri: 'package:my_app/card.dart',
+              line: 12,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/card.dart',
+              transformedPreview: const Preview(
+                brightness: Brightness.light,
+                group: 'Cards',
+                name: 'Mobile Light',
+                size: Size(375, 667),
+              ),
+            ),
+            buildWidgetPreviewError(
+              column: 1,
+              dependencyHasErrors: false,
+              functionName: 'brokenPreview',
+              libraryUri: 'package:my_app/broken.dart',
+              line: 20,
+              packageName: 'my_app',
+              scriptUri: 'file:///project/lib/broken.dart',
+            ),
+          ],
+        );
+
+        await dtd.connect(dtdUri: dtdServer.dtdUri);
+        await dtdServer.waitForScaffoldConnected();
+
+        // Direct scaffold getPreviews call over DTD (ignoring UI selected-file filter).
+        expect(controller.filterBySelectedFileListenable.value, isTrue);
+        final scaffoldResponse = await dtd.dtd.call(
+          dtd.scaffoldServiceName,
+          WidgetPreviewScaffoldDtdServices.kGetPreviews,
+        );
+        final allPreviews = PreviewListResponse.fromDTDResponse(
+          scaffoldResponse,
+        );
+        expect(allPreviews.previews, hasLength(2));
+        expect(
+          allPreviews.previews.first.id,
+          'package:my_app/card.dart::cardPreview',
+        );
+        expect(allPreviews.previews.first.hasError, isFalse);
+        expect(
+          allPreviews.previews.last.id,
+          'package:my_app/broken.dart::brokenPreview',
+        );
+        expect(allPreviews.previews.last.hasError, isTrue);
+        expect(
+          allPreviews.previews.last.errorMessage,
+          'package:my_app/broken.dart has errors!',
+        );
+
+        // Tool listPreviews call over DTD (syncs by default and forwards fileUri).
+        final filteredToolResponse = await dtd.dtd.call(
+          WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
+          WidgetPreviewDtdServices.kListPreviews,
+          params: <String, Object?>{'fileUri': 'package:my_app/card.dart'},
+        );
+        expect(syncCalls, 1);
+        final filteredList = PreviewListResponse.fromDTDResponse(
+          filteredToolResponse,
+        );
+        expect(filteredList.previews, hasLength(1));
+        expect(
+          filteredList.previews.single.id,
+          'package:my_app/card.dart::cardPreview',
+        );
+        expect(filteredList.previews.single.width, 375.0);
+        expect(filteredList.previews.single.height, 667.0);
+        expect(filteredList.previews.single.brightness, 'light');
+
+        // sync: false skips onSyncPreviews.
+        await dtd.dtd.call(
+          WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
+          WidgetPreviewDtdServices.kListPreviews,
+          params: <String, Object?>{'sync': false},
+        );
+        expect(syncCalls, 1);
       },
     );
   });

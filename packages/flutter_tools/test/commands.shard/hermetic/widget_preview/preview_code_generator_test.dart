@@ -344,6 +344,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/foo.dart',
+    functionName: 'preview',
     line: 4,
     column: 1,
     previewFunction: () => _i3.preview(),
@@ -352,6 +354,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/bar.dart',
+    functionName: 'barPreview1',
     line: 10,
     column: 1,
     previewFunction: () => _i5.barPreview1(),
@@ -360,6 +364,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/bar.dart',
+    functionName: 'barPreview2',
     line: 13,
     column: 1,
     previewFunction: () => _i5.barPreview2(),
@@ -369,6 +375,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/bar.dart',
+    functionName: 'barPreview3',
     line: 16,
     column: 1,
     previewFunction: () => _i5.barPreview3(),
@@ -387,6 +395,8 @@ List<_i1.WidgetPreview> previews() => [
   ..._i2.buildMultiWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/custom_previews.dart',
+    functionName: 'preview',
     line: 69,
     column: 1,
     previewFunction: () => _i11.preview(),
@@ -395,6 +405,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/custom_previews.dart',
+    functionName: 'preview',
     line: 70,
     column: 1,
     previewFunction: () => _i11.preview(),
@@ -403,6 +415,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/custom_previews.dart',
+    functionName: 'collectionPreview',
     line: 73,
     column: 1,
     previewFunction: () => _i11.collectionPreview(),
@@ -418,19 +432,19 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreviewError(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/error.dart',
+    functionName: 'preview',
     line: 6,
     column: 1,
-    packageUri: 'package:foo_project/src/error.dart',
-    functionName: 'preview',
     dependencyHasErrors: false,
   ),
   _i2.buildWidgetPreviewError(
     packageName: 'foo_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:foo_project/src/transitive_error.dart',
+    functionName: 'preview',
     line: 6,
     column: 1,
-    packageUri: 'package:foo_project/src/transitive_error.dart',
-    functionName: 'preview',
     dependencyHasErrors: true,
   ),
 ];
@@ -523,6 +537,8 @@ List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'foo_project',
     scriptUri: 'file:///user/flutter_project/lib/preview.dart',
+    libraryUri: 'package:foo_project/preview.dart',
+    functionName: 'validPreview',
     line: 4,
     column: 1,
     previewFunction: () => _i3.validPreview(),
@@ -532,6 +548,115 @@ List<_i1.WidgetPreview> previews() => [
 ''';
       expect(generatedPreviewFile.readAsStringSync(), expectedGeneratedPreviewFileContents);
     });
+
+    testWithoutContext(
+      'emits libraryUri and functionName for LSP MultiPreview and error previews',
+      () async {
+        await previewDetector.initialize();
+        final File generatedPreviewFile = project.widgetPreviewScaffold.childFile(
+          PreviewCodeGenerator.getGeneratedPreviewFilePath(fs),
+        );
+        generatedPreviewFile.createSync(recursive: true);
+
+        final update = FlutterWidgetPreviews(
+          namespaces: <String, String>{
+            'widget_preview.dart': '_i1',
+            'utils.dart': '_i2',
+            'package:foo_project/a_multi.dart': '_i3',
+            'package:foo_project/b_error.dart': '_i4',
+            'package:foo_project/c_dep_error.dart': '_i5',
+          },
+          previews: <FlutterWidgetPreviewDetails>[
+            FlutterWidgetPreviewDetails(
+              functionName: 'multiPreview',
+              hasError: false,
+              dependencyHasErrors: false,
+              isBuilder: false,
+              isMultiPreview: true,
+              packageName: 'foo_project',
+              position: const Position(character: 3, line: 10),
+              previewAnnotation: 'const _i3.MyMultiPreview()',
+              scriptUri: Uri.file('/user/flutter_project/lib/a_multi.dart'),
+              libraryUri: Uri.parse('package:foo_project/a_multi.dart'),
+            ),
+            FlutterWidgetPreviewDetails(
+              functionName: 'brokenPreview',
+              hasError: true,
+              dependencyHasErrors: false,
+              isBuilder: false,
+              isMultiPreview: false,
+              packageName: 'foo_project',
+              position: const Position(character: 1, line: 20),
+              previewAnnotation: 'const Preview()',
+              scriptUri: Uri.file('/user/flutter_project/lib/b_error.dart'),
+              libraryUri: Uri.parse('package:foo_project/b_error.dart'),
+            ),
+            FlutterWidgetPreviewDetails(
+              functionName: 'depBrokenPreview',
+              hasError: false,
+              dependencyHasErrors: true,
+              isBuilder: false,
+              isMultiPreview: false,
+              packageName: 'foo_project',
+              position: const Position(character: 1, line: 30),
+              previewAnnotation: 'const Preview()',
+              scriptUri: Uri.file('/user/flutter_project/lib/c_dep_error.dart'),
+              libraryUri: Uri.parse('package:foo_project/c_dep_error.dart'),
+            ),
+          ],
+          scriptUris: <Uri>[
+            Uri.file('/user/flutter_project/lib/a_multi.dart'),
+            Uri.file('/user/flutter_project/lib/b_error.dart'),
+            Uri.file('/user/flutter_project/lib/c_dep_error.dart'),
+          ],
+        );
+
+        codeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(update);
+
+        const expectedGeneratedPreviewFileContents = '''
+// ignore_for_file: implementation_imports
+// ignore_for_file: no_leading_underscores_for_library_prefixes
+
+import 'widget_preview.dart' as _i1;
+import 'utils.dart' as _i2;
+import 'package:foo_project/a_multi.dart' as _i3;
+import 'package:foo_project/b_error.dart' as _i4;
+import 'package:foo_project/c_dep_error.dart' as _i5;
+
+List<_i1.WidgetPreview> previews() => [
+  ..._i2.buildMultiWidgetPreview(
+    packageName: 'foo_project',
+    scriptUri: 'file:///user/flutter_project/lib/a_multi.dart',
+    libraryUri: 'package:foo_project/a_multi.dart',
+    functionName: 'multiPreview',
+    line: 10,
+    column: 3,
+    previewFunction: () => _i3.multiPreview(),
+    preview: const _i3.MyMultiPreview(),
+  ),
+  _i2.buildWidgetPreviewError(
+    packageName: 'foo_project',
+    scriptUri: 'file:///user/flutter_project/lib/b_error.dart',
+    libraryUri: 'package:foo_project/b_error.dart',
+    functionName: 'brokenPreview',
+    line: 20,
+    column: 1,
+    dependencyHasErrors: false,
+  ),
+  _i2.buildWidgetPreviewError(
+    packageName: 'foo_project',
+    scriptUri: 'file:///user/flutter_project/lib/c_dep_error.dart',
+    libraryUri: 'package:foo_project/c_dep_error.dart',
+    functionName: 'depBrokenPreview',
+    line: 30,
+    column: 1,
+    dependencyHasErrors: true,
+  ),
+];
+''';
+        expect(generatedPreviewFile.readAsStringSync(), expectedGeneratedPreviewFileContents);
+      },
+    );
 
     testWithoutContext(
       'correctly generates ${PreviewCodeGenerator.getGeneratedDtdConnectionInfoFilePath(fs)}',

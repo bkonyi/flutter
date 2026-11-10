@@ -9,10 +9,12 @@ import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_connection_info.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/dtd/utils.dart';
+import 'package:widget_preview_scaffold/src/widget_preview.dart';
 
 /// Provides services, streams, and RPC invocations to interact with Flutter developer tooling.
 class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   WidgetPreviewScaffoldDtdServices({
+    this.onGetPreviews,
     this.scaffoldServiceName = kWidgetPreviewScaffoldService,
   });
 
@@ -31,6 +33,8 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kGetWebPreviewUrl = 'getWebPreviewUrl';
   static const kGetServiceInfo = 'getServiceInfo';
   static const kSyncPreviews = 'syncPreviews';
+  static const kListPreviews = 'listPreviews';
+  static const kGetPreviews = 'getPreviews';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
 
@@ -41,10 +45,14 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
 
   // END KEEP SYNCED
 
+  static const kFileUri = 'fileUri';
   static const kUrl = 'url';
 
   /// The DTD service name under which scaffold RPC methods are registered.
   final String scaffoldServiceName;
+
+  /// Callback invoked when [kGetPreviews] is requested over DTD.
+  PreviewListResponse Function({String? fileUri})? onGetPreviews;
 
   /// Connects to the Dart Tooling Daemon (DTD) specified by the Flutter tool.
   ///
@@ -53,6 +61,8 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   Future<void> connect({Uri? dtdUri}) async {
     final Uri dtdWsUri = dtdUri ?? Uri.parse(kWidgetPreviewDtdUri);
     dtd = await DartToolingDaemon.connect(dtdWsUri);
+    await _determineIfWindows();
+    await dtd.registerService(scaffoldServiceName, kGetPreviews, _getPreviews);
     unawaited(
       dtd.postEvent(
         kWidgetPreviewScaffoldStream,
@@ -60,8 +70,18 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         const <String, Object?>{},
       ),
     );
-    await _determineIfWindows();
     await initializeEditorService(this);
+  }
+
+  Future<Map<String, Object?>> _getPreviews(Parameters params) async {
+    final String? fileUri =
+        params.value == null || params[kFileUri].valueOr(null) == null
+        ? null
+        : params[kFileUri].asString;
+    final PreviewListResponse response =
+        onGetPreviews?.call(fileUri: fileUri) ??
+        const PreviewListResponse(previews: <PreviewEntry>[]);
+    return response.toJson();
   }
 
   /// Disposes the DTD connection.
@@ -77,10 +97,11 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   }) => dtd.safeCall(kWidgetPreviewService, methodName, params: params);
 
   /// Returns `true` if the operating system is Windows.
-  late final bool isWindows;
+  bool get isWindows => _isWindows;
+  bool _isWindows = false;
 
   Future<void> _determineIfWindows() async {
-    isWindows = (BoolResponse.fromDTDResponse(
+    _isWindows = (BoolResponse.fromDTDResponse(
       (await _call(kIsWindows))!,
     )).value!;
   }

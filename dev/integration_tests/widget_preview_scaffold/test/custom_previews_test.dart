@@ -69,6 +69,8 @@ WidgetPreviewerWidgetScaffolding previewsForCustomMultiPreview() {
   final previews = buildMultiWidgetPreview(
     packageName: '',
     scriptUri: '',
+    libraryUri: 'package:foo/foo.dart',
+    functionName: 'preview',
     preview: BrightnessPreview(name: 'MyPreview'),
     previewFunction: () => Text('Foo'),
     line: -1,
