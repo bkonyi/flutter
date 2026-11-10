@@ -27,8 +27,10 @@ import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/theme/theme.dart';
 
 import 'package:widget_preview_scaffold/src/controls.dart';
+import 'package:widget_preview_scaffold/src/embed_preview.dart';
 import 'package:widget_preview_scaffold/src/generated_preview.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_inspector_service.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
@@ -398,7 +400,7 @@ const _kFallbackPreviewSize = Size(400, 400);
 
 /// Size of the error card for [constraints], falling back to
 /// [_kFallbackPreviewSize] when unbounded.
-Size _errorSizeFor(BoxConstraints constraints) =>
+Size errorPreviewSizeFor(BoxConstraints constraints) =>
     constraints.hasBoundedWidth && constraints.hasBoundedHeight
     ? constraints.biggest
     : _kFallbackPreviewSize;
@@ -607,7 +609,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
       preview = WidgetPreviewErrorWidget(
         controller: widget.controller,
         error: error,
-        size: _errorSizeFor(maxSizeConstraints),
+        size: errorPreviewSizeFor(maxSizeConstraints),
         stackTrace: stackTrace,
         title: 'Failed to layout widget preview: ',
       );
@@ -662,7 +664,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
             return WidgetPreviewErrorWidget(
               controller: widget.controller,
               error: error,
-              size: _errorSizeFor(maxSizeConstraints),
+              size: errorPreviewSizeFor(maxSizeConstraints),
               stackTrace: stackTrace,
             );
           }
@@ -700,7 +702,7 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
         child: SizedBox(
           width: size?.width == double.infinity ? null : size?.width,
           height: size?.height == double.infinity ? null : size?.height,
-          child: _WidgetPreviewWrapper(
+          child: WidgetPreviewWrapper(
             previewerConstraints: maxSizeConstraints,
             onLayoutError: _handleLayoutError,
             onLayoutSuccess: _handleLayoutSuccess,
@@ -1182,10 +1184,11 @@ class _ScaledLayoutRenderObject extends RenderShiftedBox {
 // handle unconstrained widgets. This should be reworked.
 /// Wrapper applying a custom render object to force constraints on
 /// unconstrained widgets.
-class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
-  const _WidgetPreviewWrapper({
+class WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
+  const WidgetPreviewWrapper({
     required this.previewerConstraints,
     super.child,
+    super.key,
     this.onLayoutError,
     this.onLayoutSuccess,
     this.onPaintDiagnostic,
@@ -1228,8 +1231,11 @@ class _WidgetPreviewWrapper extends SingleChildRenderObjectWidget {
   @override
   void updateRenderObject(
     BuildContext context,
-    _WidgetPreviewWrapperBox renderObject,
+    covariant RenderObject renderObject,
   ) {
+    if (renderObject is! _WidgetPreviewWrapperBox) {
+      return;
+    }
     renderObject
       ..onLayoutError = onLayoutError
       ..onLayoutSuccess = onLayoutSuccess
@@ -1340,7 +1346,9 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
         final StackTrace stackTrace,
       )) {
         _hasLayoutError = true;
-        size = constraints.constrain(_errorSizeFor(_previewerConstraints));
+        size = constraints.constrain(
+          errorPreviewSizeFor(_previewerConstraints),
+        );
         onLayoutError?.call(error, stackTrace);
       } else {
         size = constraints.constrain(child.size);
@@ -1356,7 +1364,7 @@ class _WidgetPreviewWrapperBox extends RenderShiftedBox {
                 : error,
             stackTrace,
           );
-      size = constraints.constrain(_errorSizeFor(_previewerConstraints));
+      size = constraints.constrain(errorPreviewSizeFor(_previewerConstraints));
       onLayoutError?.call(layoutError, layoutStackTrace);
     } finally {
       isPerformingPreviewLayout = previousIsPerforming;
@@ -1470,14 +1478,23 @@ class PreviewAssetBundle extends PlatformAssetBundle {
 /// the preview scaffold project which prevents us from being able to use hot
 /// restart to iterate on this file.
 Future<void> mainImpl() async {
+  final initialEmbedParams = EmbedPreviewParams.fromCurrentUrl();
   final controller = WidgetPreviewScaffoldController(previews: previews);
-  await controller.initialize();
-  // WARNING: do not move this line. This constructor sets
-  // [WidgetInspectorService.instance] to the custom service for the widget
-  // previewer. If [WidgetsFlutterBinding.ensureInitialized()] is invoked before
-  // the custom service is set, inspector service extensions will be registered
-  // against the wrong service.
-  WidgetPreviewScaffoldInspectorService(dtdServices: controller.dtdServices);
+  try {
+    await controller.initialize();
+  } on Object {
+    if (!initialEmbedParams.isEmbed) {
+      rethrow;
+    }
+  }
+  if (!initialEmbedParams.isEmbed) {
+    // WARNING: do not move this line. This constructor sets
+    // [WidgetInspectorService.instance] to the custom service for the widget
+    // previewer. If [WidgetsFlutterBinding.ensureInitialized()] is invoked before
+    // the custom service is set, inspector service extensions will be registered
+    // against the wrong service.
+    WidgetPreviewScaffoldInspectorService(dtdServices: controller.dtdServices);
+  }
   final WidgetsBinding binding = WidgetsFlutterBinding.ensureInitialized();
   // Disable the injection of [WidgetInspector] into the widget tree built by
   // [WidgetsApp]. [WidgetInspector] instances will be created for each
@@ -1522,6 +1539,9 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
 
   WebViewController? _webViewController;
   FlutterExceptionHandler? _originalOnError;
+  late EmbedPreviewParams _embedParams;
+  late bool _isEmbedSession;
+  StreamSubscription<String>? _fragmentSubscription;
   final _activeStageSession = ValueNotifier<_StageCaptureSession?>(null);
   late final StagePreviewCaptureCallback _stageCaptureHost =
       _captureStagedPreview;
@@ -1529,12 +1549,34 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
   @override
   void initState() {
     super.initState();
+    _embedParams = EmbedPreviewParams.fromCurrentUrl();
+    _isEmbedSession = _embedParams.isEmbed;
+    _fragmentSubscription = onUrlFragmentChange.listen((String fragment) {
+      if (!mounted) {
+        return;
+      }
+      final updated = EmbedPreviewParams.fromFragment(fragment);
+      if (updated != _embedParams) {
+        if (!_isEmbedSession && updated.isEmbed) {
+          widget.controller.detachStageCaptureHost(_stageCaptureHost);
+        }
+        setState(() {
+          _embedParams = updated;
+          if (updated.isEmbed) {
+            _isEmbedSession = true;
+          }
+        });
+      }
+    });
     _originalOnError = FlutterError.onError;
     FlutterError.onError = _handleFlutterError;
-    widget.controller.attachStageCaptureHost(_stageCaptureHost);
-    if (widget.enableWebView) {
-      _webViewController = WebViewController()
-        ..loadRequest(widget.controller.devToolsUri);
+    if (!_isEmbedSession) {
+      widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      if (widget.enableWebView) {
+        if (widget.controller.devToolsUri case final Uri devToolsUri) {
+          _webViewController = WebViewController()..loadRequest(devToolsUri);
+        }
+      }
     }
   }
 
@@ -1543,12 +1585,16 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.controller, widget.controller)) {
       oldWidget.controller.detachStageCaptureHost(_stageCaptureHost);
-      widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      if (!_isEmbedSession) {
+        widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      }
     }
   }
 
   @override
   void dispose() {
+    unawaited(_fragmentSubscription?.cancel());
+    _fragmentSubscription = null;
     widget.controller.detachStageCaptureHost(_stageCaptureHost);
     _activeStageSession.dispose();
     if (FlutterError.onError == _handleFlutterError) {
@@ -1798,6 +1844,13 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isEmbedSession || _embedParams.isEmbed) {
+      return EmbedPreviewScaffold(
+        controller: widget.controller,
+        ideTheme: widget.ideTheme,
+        params: _embedParams,
+      );
+    }
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: themeFor(
@@ -1829,7 +1882,8 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
                     children: [
                       OutlineDecoration.onlyRight(child: previewView!),
                       OutlineDecoration.onlyLeft(
-                        child: widget.enableWebView
+                        child:
+                            widget.enableWebView && _webViewController != null
                             ? WebViewWidget(controller: _webViewController!)
                             : Container(),
                       ),
@@ -2214,7 +2268,7 @@ class _StagedPreviewHost extends StatelessWidget {
                     child: SizedBox(
                       width: constrainedWidth,
                       height: constrainedHeight,
-                      child: _WidgetPreviewWrapper(
+                      child: WidgetPreviewWrapper(
                         onLayoutError: session.recordLayoutError,
                         onPaintDiagnostic: session.recordDiagnostic,
                         previewerConstraints: const BoxConstraints(),

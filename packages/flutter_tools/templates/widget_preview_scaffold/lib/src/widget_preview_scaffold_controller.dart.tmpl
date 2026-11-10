@@ -7,9 +7,42 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'dtd/dtd_services.dart';
 import 'widget_preview.dart';
+
+/// Result of resolving a preview identifier or unique shorthand name against
+/// discovered widget previews.
+sealed class PreviewLookupResult {
+  const PreviewLookupResult();
+}
+
+/// Successful resolution of a single [WidgetPreview].
+final class PreviewLookupMatch extends PreviewLookupResult {
+  const PreviewLookupMatch(this.preview);
+
+  final WidgetPreview preview;
+}
+
+/// Resolution failure when no preview matched [previewId] (or none was given).
+final class PreviewLookupMissing extends PreviewLookupResult {
+  const PreviewLookupMissing({required this.availableIds, this.previewId});
+
+  final List<String> availableIds;
+  final String? previewId;
+}
+
+/// Resolution failure when a shorthand [previewId] matched multiple previews.
+final class PreviewLookupAmbiguous extends PreviewLookupResult {
+  const PreviewLookupAmbiguous({
+    required this.candidateIds,
+    required this.previewId,
+  });
+
+  final List<String> candidateIds;
+  final String previewId;
+}
 
 /// Define the Enum for Layout Types
 enum LayoutType { gridView, listView }
@@ -60,8 +93,12 @@ class WidgetPreviewScaffoldController {
   /// Initializes the controller by establishing a connection to DTD and
   /// listening for events.
   Future<void> initialize() async {
-    await dtdServices.connect();
+    final EmbedPreviewParams embedParams = EmbedPreviewParams.fromCurrentUrl();
+    await dtdServices.connect(readOnly: embedParams.isEmbed);
     _context = _createPathContext();
+    if (embedParams.isEmbed) {
+      return;
+    }
     _registerListeners();
     await Future.wait<void>([
       dtdServices
@@ -94,6 +131,7 @@ class WidgetPreviewScaffoldController {
     _layoutType.dispose();
     _filterBySelectedFile.dispose();
     _searchQuery.dispose();
+    _previewsRevision.dispose();
     for (final searchField in _searchFields) {
       searchField.dispose();
     }
@@ -104,6 +142,7 @@ class WidgetPreviewScaffoldController {
     _refreshPreviewsSnapshot();
     clearAllDiagnostics();
     _updateFilteredPreviewSet();
+    _previewsRevision.value++;
   }
 
   /// The active DTD connection used to communicate with other developer tooling.
@@ -315,16 +354,18 @@ class WidgetPreviewScaffoldController {
     }
   }
 
-  /// Resolves [previewId] against all unfiltered [previews].
-  ///
-  /// Matches canonical [WidgetPreview.id] first, falling back to a unique
-  /// `previewData.name` match when [previewId] does not contain `'::'`.
-  /// Throws an [RpcException] with code `101` when no preview matches or code
-  /// `102` listing candidate canonical IDs when a shorthand name is ambiguous.
-  WidgetPreview resolvePreview(String previewId) {
+  /// Resolves [previewId] against all unfiltered [previews] without throwing.
+  PreviewLookupResult resolvePreviewMatch(String? previewId) {
+    if (previewId == null || previewId.isEmpty) {
+      return PreviewLookupMissing(
+        availableIds: <String>[
+          for (final WidgetPreview preview in _cachedPreviews) preview.id,
+        ],
+      );
+    }
     for (final WidgetPreview preview in _cachedPreviews) {
       if (preview.id == previewId) {
-        return preview;
+        return PreviewLookupMatch(preview);
       }
     }
     if (!previewId.contains(_kCanonicalIdSeparator)) {
@@ -333,25 +374,47 @@ class WidgetPreviewScaffoldController {
           if (preview.previewData.name == previewId) preview,
       ];
       if (nameMatches.length == 1) {
-        return nameMatches.single;
+        return PreviewLookupMatch(nameMatches.single);
       }
       if (nameMatches.length > 1) {
-        final String candidates = nameMatches
-            .map((WidgetPreview p) => p.id)
-            .join(', ');
-        throw RpcException(
-          WidgetPreviewScaffoldDtdServices.kAmbiguousPreviewNameErrorCode,
-          'Preview name "$previewId" is ambiguous; specify one of: $candidates',
+        return PreviewLookupAmbiguous(
+          candidateIds: <String>[
+            for (final WidgetPreview preview in nameMatches) preview.id,
+          ],
+          previewId: previewId,
         );
       }
     }
-    final String availableIds = _cachedPreviews
-        .map((WidgetPreview p) => p.id)
-        .join(', ');
-    throw RpcException(
-      WidgetPreviewScaffoldDtdServices.kPreviewNotFoundErrorCode,
-      'Preview "$previewId" not found. Available IDs: $availableIds',
+    return PreviewLookupMissing(
+      availableIds: <String>[
+        for (final WidgetPreview preview in _cachedPreviews) preview.id,
+      ],
+      previewId: previewId,
     );
+  }
+
+  /// Resolves [previewId] against all unfiltered [previews].
+  ///
+  /// Matches canonical [WidgetPreview.id] first, falling back to a unique
+  /// `previewData.name` match when [previewId] does not contain `'::'`.
+  /// Throws an [RpcException] with code `101` when no preview matches or code
+  /// `102` listing candidate canonical IDs when a shorthand name is ambiguous.
+  WidgetPreview resolvePreview(String previewId) {
+    return switch (resolvePreviewMatch(previewId)) {
+      PreviewLookupMatch(:final WidgetPreview preview) => preview,
+      PreviewLookupAmbiguous(:final List<String> candidateIds) =>
+        throw RpcException(
+          WidgetPreviewScaffoldDtdServices.kAmbiguousPreviewNameErrorCode,
+          'Preview name "$previewId" is ambiguous; specify one of: '
+          '${candidateIds.join(', ')}',
+        ),
+      PreviewLookupMissing(:final List<String> availableIds) =>
+        throw RpcException(
+          WidgetPreviewScaffoldDtdServices.kPreviewNotFoundErrorCode,
+          'Preview "$previewId" not found. Available IDs: '
+          '${availableIds.join(', ')}',
+        ),
+    };
   }
 
   /// Stages [request] in the off-screen host serialized by an async lock,
@@ -401,8 +464,12 @@ class WidgetPreviewScaffoldController {
   ValueListenable<bool> get editorServiceAvailable =>
       dtdServices.editorServiceAvailable;
 
+  /// Monotonically incremented whenever [onHotReload] refreshes [previews].
+  ValueListenable<int> get previewsRevisionListenable => _previewsRevision;
+  final _previewsRevision = ValueNotifier<int>(0);
+
   /// The DevTools instance that's used to display the widget inspector within the previewer.
-  late final Uri devToolsUri;
+  Uri? devToolsUri;
 
   /// Specifies if only previews from the currently selected source file should be rendered.
   ValueListenable<bool> get filterBySelectedFileListenable =>

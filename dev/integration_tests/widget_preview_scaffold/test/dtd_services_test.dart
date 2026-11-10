@@ -27,6 +27,7 @@ import 'package:path/path.dart' as path;
 import 'package:test/fake.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart'
     as scaffold_preview;
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
@@ -115,6 +116,7 @@ void main() {
   });
 
   tearDown(() async {
+    debugResetUrlTestState();
     await scaffoldDtd?.dtd.close();
     scaffoldDtd = null;
     await dtdServer.shutdownHooks.runShutdownHooks(logger);
@@ -630,6 +632,143 @@ void main() {
             ),
           ),
         );
+      },
+    );
+
+    testWithoutContext(
+      'viewer-only readOnly connect skips service registration and Connected, and reloads on PreviewReloaded',
+      () async {
+        dtdServer = await launchDtdServer();
+        dtdServer.setDevToolsServerAddress(
+          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
+          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
+        );
+
+        // Observe all events posted to WidgetPreviewScaffold stream.
+        final observerDtd = await DartToolingDaemon.connect(dtdServer.dtdUri!);
+        addTearDown(observerDtd.close);
+        final observedEvents = <DTDEvent>[];
+        final StreamSubscription<DTDEvent> observerSub = observerDtd
+            .onEvent(WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot)
+            .listen(observedEvents.add);
+        addTearDown(observerSub.cancel);
+        await observerDtd.streamListen(
+          WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot,
+        );
+
+        // Connect primary scaffold normally so PreviewScaffold methods exist.
+        final primaryDtd = WidgetPreviewScaffoldDtdServices();
+        scaffoldDtd = primaryDtd;
+        WidgetPreviewScaffoldController(
+          dtdServicesOverride: primaryDtd,
+          previews: () => <scaffold_preview.WidgetPreview>[
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'primaryCard',
+              libraryUri: 'package:my_app/card.dart',
+              line: 10,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/card.dart',
+              transformedPreview: const Preview(name: 'Primary'),
+            ),
+          ],
+        );
+        await primaryDtd.connect(dtdUri: dtdServer.dtdUri);
+        await dtdServer.waitForScaffoldConnected();
+        await pumpEventQueue();
+        expect(
+          observedEvents
+              .where(
+                (DTDEvent e) =>
+                    e.kind ==
+                    WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
+              )
+              .length,
+          1,
+        );
+
+        // Connect a second viewer-only client via embed=1 URL fragment and
+        // explicit readOnly: true without colliding on PreviewScaffold RPCs.
+        debugSetUrlFragment(
+          'embed=1&previewId=Primary&dtdProxy=/dtd_ws',
+          baseUri: Uri.parse('https://preview.proxy.example:8443/'),
+        );
+        final EmbedPreviewParams parsed = EmbedPreviewParams.fromCurrentUrl();
+        expect(parsed.isEmbed, isTrue);
+        expect(
+          parsed.resolveDtdProxyUri(getBaseUri()),
+          Uri.parse('wss://preview.proxy.example:8443/dtd_ws'),
+        );
+
+        var viewerReloadCallbacks = 0;
+        final viewerDtd = WidgetPreviewScaffoldDtdServices(
+          onPreviewReloaded: () => viewerReloadCallbacks++,
+        );
+        addTearDown(viewerDtd.dispose);
+        await viewerDtd.connect(dtdUri: dtdServer.dtdUri, readOnly: true);
+        await pumpEventQueue();
+
+        // No second Connected event was posted by the viewer-only client.
+        expect(
+          observedEvents
+              .where(
+                (DTDEvent e) =>
+                    e.kind ==
+                    WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
+              )
+              .length,
+          1,
+        );
+
+        // Primary scaffold RPCs continue routing cleanly without collision.
+        final DTDResponse primaryList = await observerDtd.call(
+          primaryDtd.scaffoldServiceName,
+          WidgetPreviewScaffoldDtdServices.kGetPreviews,
+        );
+        expect(
+          PreviewListResponse.fromDTDResponse(primaryList).previews,
+          hasLength(1),
+        );
+
+        // Broadcasting PreviewReloaded triggers reload only on the viewer client.
+        await dtdServer.postPreviewReloaded(fullRestart: false);
+        await pumpEventQueue();
+        expect(viewerReloadCallbacks, 1);
+
+        // Default viewer without onPreviewReloaded triggers reloadWindow().
+        final defaultViewerDtd = WidgetPreviewScaffoldDtdServices();
+        addTearDown(defaultViewerDtd.dispose);
+        await defaultViewerDtd.connect(dtdUri: dtdServer.dtdUri);
+        await dtdServer.postPreviewReloaded(fullRestart: true);
+        await pumpEventQueue();
+        expect(viewerReloadCallbacks, 2);
+        expect(debugReloadCount, 1);
+
+        // Verify PreviewReloaded payload data was preserved on the stream.
+        final List<DTDEvent> reloadedEvents = observedEvents
+            .where(
+              (DTDEvent e) =>
+                  e.kind == WidgetPreviewDtdServices.kPreviewReloadedEvent,
+            )
+            .toList();
+        expect(reloadedEvents, hasLength(2));
+        expect(
+          reloadedEvents.first.data[WidgetPreviewDtdServices.kFullRestart],
+          isFalse,
+        );
+        expect(
+          reloadedEvents.last.data[WidgetPreviewDtdServices.kFullRestart],
+          isTrue,
+        );
+
+        // Disposal unsubscribes from further PreviewReloaded events.
+        await viewerDtd.dispose();
+        await defaultViewerDtd.dispose();
+        await dtdServer.postPreviewReloaded(fullRestart: false);
+        await pumpEventQueue();
+        expect(viewerReloadCallbacks, 2);
+        expect(debugReloadCount, 1);
       },
     );
   });

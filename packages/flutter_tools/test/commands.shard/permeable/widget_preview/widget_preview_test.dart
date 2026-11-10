@@ -82,6 +82,13 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake implements WidgetPreview
     scaffoldConnected = false;
   }
 
+  final postedReloadedEvents = <bool>[];
+
+  @override
+  Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    postedReloadedEvents.add(fullRestart);
+  }
+
   @override
   Future<void> launchAndConnect({required AnalysisServer analysisServer}) async {
     dtdUri = Uri.parse('ws://localhost:1234');
@@ -1287,6 +1294,7 @@ List<_i1.WidgetPreview> previews() => [
         expect(fakeResidentRunner.restartCount, 5);
         expect(fakeResidentRunner.maxConcurrentRestarts, 1);
         expect(fakeResidentRunner.fullRestartRequests, <bool>[false, false, false, false, true]);
+        expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false, false, false, true]);
 
         // 4. Ignore reload requests after the previewer has finished.
         fakeResidentRunner.waitForAppToFinishCompleter!.complete(0);

@@ -570,7 +570,10 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   /// rejected due to unsupported changes.
   @visibleForTesting
   Future<OperationResult?> handleReload() async {
-    final (:OperationResult? result, fullRestart: _) = await _performReload();
+    final (:OperationResult? result, :bool fullRestart) = await _performReload();
+    if (result != null && result.isOk && !shutdownHooks.isShuttingDown) {
+      await _dtdService.postPreviewReloaded(fullRestart: fullRestart);
+    }
     return result;
   }
 
@@ -602,7 +605,10 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             case .hotReload:
               await handleReload();
             case .hotRestart:
-              await _performFullRestart();
+              final OperationResult? result = await _performFullRestart();
+              if (result != null && result.isOk && !shutdownHooks.isShuttingDown) {
+                await _dtdService.postPreviewReloaded(fullRestart: true);
+              }
           }
         } on Object catch (e, st) {
           logger.printTrace('Error during widget preview reload: $e\n$st');
@@ -696,6 +702,18 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
         );
       }
       await _dtdService.waitForScaffoldConnected(timeout: timeout);
+    }
+
+    if (compileSuccess) {
+      if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return SyncPreviewsResponse(
+          compileSuccess: true,
+          errorPreviewCount: errorPreviewCount,
+          fullRestart: fullRestart,
+          reloaded: false,
+        );
+      }
+      await _dtdService.postPreviewReloaded(fullRestart: fullRestart);
     }
 
     return SyncPreviewsResponse(

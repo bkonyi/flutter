@@ -49,6 +49,8 @@ class FakeDartToolingDaemon extends Fake implements DartToolingDaemon {
     dtdServices: <String>[],
   );
   RpcException? streamListenError;
+  Exception? postEventException;
+  Error? postEventError;
   Future<DTDResponse> Function(
     String? serviceName,
     String methodName,
@@ -71,6 +73,12 @@ class FakeDartToolingDaemon extends Fake implements DartToolingDaemon {
 
   @override
   Future<void> postEvent(String streamId, String eventKind, Map<String, Object?> eventData) async {
+    if (postEventException case final Exception error) {
+      throw error;
+    }
+    if (postEventError case final Error error) {
+      throw error;
+    }
     postedEvents.add((streamId: streamId, eventKind: eventKind, eventData: eventData));
   }
 
@@ -885,6 +893,62 @@ void main() {
         await fakeDtd.close();
       },
     );
+
+    testWithoutContext('postPreviewReloaded emits PreviewReloaded on widgetPreviewScaffoldStream and handles disconnected/closed DTD safely', () async {
+      // Safe no-op before DTD connection is established.
+      final disconnectedServices = WidgetPreviewDtdServices(
+        addUuidToServiceName: false,
+        dtdLauncher: FakeDtdLauncher(),
+        fs: fs,
+        logger: logger,
+        onHotRestartPreviewerRequest: () {},
+        previewAnalytics: analytics,
+        project: project,
+        shutdownHooks: shutdownHooks,
+      );
+      await disconnectedServices.postPreviewReloaded(fullRestart: false);
+
+      final fakeDtd = FakeDartToolingDaemon();
+      final services = WidgetPreviewDtdServices(
+        addUuidToServiceName: true,
+        dtd: fakeDtd,
+        dtdLauncher: FakeDtdLauncher(),
+        fs: fs,
+        logger: logger,
+        onHotRestartPreviewerRequest: () {},
+        previewAnalytics: analytics,
+        project: project,
+        shutdownHooks: shutdownHooks,
+      );
+      await services.connect(dtdWsUri: Uri.parse('ws://127.0.0.1:54322/secret'));
+
+      await services.postPreviewReloaded(fullRestart: false);
+      await services.postPreviewReloaded(fullRestart: true);
+
+      expect(fakeDtd.postedEvents, hasLength(2));
+      expect(fakeDtd.postedEvents[0].streamId, services.widgetPreviewScaffoldStream);
+      expect(fakeDtd.postedEvents[0].eventKind, WidgetPreviewDtdServices.kPreviewReloadedEvent);
+      expect(
+        fakeDtd.postedEvents[0].eventData,
+        equals(<String, Object?>{WidgetPreviewDtdServices.kFullRestart: false}),
+      );
+      expect(fakeDtd.postedEvents[1].streamId, services.widgetPreviewScaffoldStream);
+      expect(fakeDtd.postedEvents[1].eventKind, WidgetPreviewDtdServices.kPreviewReloadedEvent);
+      expect(
+        fakeDtd.postedEvents[1].eventData,
+        equals(<String, Object?>{WidgetPreviewDtdServices.kFullRestart: true}),
+      );
+
+      // Transport/closed errors from postEvent do not propagate out of reload paths.
+      fakeDtd.postEventException = RpcException(RpcErrorCodes.kConnectionFailed, 'Disconnected');
+      await services.postPreviewReloaded(fullRestart: false);
+
+      fakeDtd.postEventException = null;
+      fakeDtd.postEventError = StateError('The client is closed.');
+      await services.postPreviewReloaded(fullRestart: true);
+
+      await fakeDtd.close();
+    });
 
     testWithoutContext(
       'listPreviews syncs when requested, delegates to scaffold getPreviews when connected, '

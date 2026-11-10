@@ -3,13 +3,14 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:ui' show Brightness;
+import 'dart:ui' show Brightness, VoidCallback;
 
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_connection_info.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/dtd/utils.dart';
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 
 /// Provides services, streams, and RPC invocations to interact with Flutter developer tooling.
@@ -17,6 +18,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   WidgetPreviewScaffoldDtdServices({
     this.onCapturePreview,
     this.onGetPreviews,
+    this.onPreviewReloaded,
     this.scaffoldServiceName = kWidgetPreviewScaffoldService,
   });
 
@@ -40,6 +42,8 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kCapturePreview = 'capturePreview';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
+  static const kPreviewReloadedEvent = 'PreviewReloaded';
+  static const kFullRestart = 'fullRestart';
 
   /// Error code for [RpcException] thrown when a requested preview ID or name
   /// does not match any registered preview.
@@ -76,13 +80,36 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
   onCapturePreview;
 
+  /// Callback invoked when [kPreviewReloadedEvent] is received on
+  /// [kWidgetPreviewScaffoldStream] in viewer-only mode.
+  VoidCallback? onPreviewReloaded;
+
+  StreamSubscription<DTDEvent>? _scaffoldStreamSubscription;
+  bool _dtdInitialized = false;
+  bool _editorServiceInitialized = false;
+
   /// Connects to the Dart Tooling Daemon (DTD) specified by the Flutter tool.
   ///
-  /// If the connection is successful, the Widget Preview Scaffold will register services and
-  /// subscribe to various streams to interact directly with other tooling (e.g., IDEs).
-  Future<void> connect({Uri? dtdUri}) async {
-    final Uri dtdWsUri = dtdUri ?? Uri.parse(kWidgetPreviewDtdUri);
+  /// When [readOnly] is `true` (or the current URL fragment sets `embed=1`), the
+  /// scaffold connects as a viewer-only client without registering scaffold RPCs
+  /// or posting [kWidgetPreviewConnectedEvent], and reloads the page when
+  /// [kPreviewReloadedEvent] arrives on [kWidgetPreviewScaffoldStream].
+  Future<void> connect({Uri? dtdUri, bool readOnly = false}) async {
+    final EmbedPreviewParams embedParams = EmbedPreviewParams.fromCurrentUrl();
+    final bool isViewerOnly = readOnly || embedParams.isEmbed;
+    final Uri? proxyUri = embedParams.isEmbed
+        ? embedParams.resolveDtdProxyUri(getBaseUri())
+        : null;
+    final Uri dtdWsUri = dtdUri ?? proxyUri ?? Uri.parse(kWidgetPreviewDtdUri);
+    if (isViewerOnly && dtdWsUri.toString().isEmpty) {
+      return;
+    }
     dtd = await DartToolingDaemon.connect(dtdWsUri);
+    _dtdInitialized = true;
+    if (isViewerOnly) {
+      await _subscribeToScaffoldReloadEvents();
+      return;
+    }
     await _determineIfWindows();
     await dtd.registerService(scaffoldServiceName, kGetPreviews, _getPreviews);
     await dtd.registerService(
@@ -97,7 +124,24 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         const <String, Object?>{},
       ),
     );
+    _editorServiceInitialized = true;
     await initializeEditorService(this);
+  }
+
+  Future<void> _subscribeToScaffoldReloadEvents() async {
+    await _scaffoldStreamSubscription?.cancel();
+    _scaffoldStreamSubscription = dtd
+        .onEvent(kWidgetPreviewScaffoldStream)
+        .listen((DTDEvent event) {
+          if (event.kind == kPreviewReloadedEvent) {
+            if (onPreviewReloaded case final VoidCallback callback) {
+              callback();
+            } else {
+              reloadWindow();
+            }
+          }
+        });
+    await dtd.safeStreamListen(kWidgetPreviewScaffoldStream);
   }
 
   Future<Map<String, Object?>> _getPreviews(Parameters params) async {
@@ -177,8 +221,14 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   /// Disposes the DTD connection.
   @override
   Future<void> dispose() async {
-    super.dispose();
-    await dtd.close();
+    if (_editorServiceInitialized) {
+      super.dispose();
+    }
+    await _scaffoldStreamSubscription?.cancel();
+    _scaffoldStreamSubscription = null;
+    if (_dtdInitialized) {
+      await dtd.close();
+    }
   }
 
   Future<DTDResponse?> _call(

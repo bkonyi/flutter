@@ -24,6 +24,7 @@ import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/preview_code_generator.dart';
@@ -67,6 +68,12 @@ class FakeWidgetPreviewDtdServices extends Fake implements WidgetPreviewDtdServi
   Duration? lastWaitForScaffoldTimeout;
   Completer<void>? scaffoldConnectedCompleter;
   FlutterWidgetPreviews? nextPreviews;
+  final postedReloadedEvents = <bool>[];
+
+  @override
+  Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    postedReloadedEvents.add(fullRestart);
+  }
 
   @override
   void markScaffoldConnected() {
@@ -804,6 +811,136 @@ environment:
         expect(parsedList.previews.single.name, 'Wired');
       },
     );
+
+    testWithoutContext('broadcasts PreviewReloaded with fullRestart payload on successful syncPreviews, handleReload, and _triggerReload, and skips on failure', () async {
+      // 1. syncPreviews incremental reload, fallback hot restart, and failure.
+      var mode = 'ok';
+      final fakeResidentRunner = FakeResidentRunner(
+        onRestart: (bool fullRestart) {
+          if (mode == 'reject_then_ok') {
+            return fullRestart
+                ? OperationResult.ok
+                : OperationResult(
+                    1,
+                    _kFailedRecompileMessage,
+                    updateFSReport: UpdateFSReport(hotReloadRejected: true),
+                  );
+          }
+          if (mode == 'fail') {
+            return OperationResult(1, _kFailedRecompileMessage, updateFSReport: UpdateFSReport());
+          }
+          return OperationResult.ok;
+        },
+      );
+      final WidgetPreviewStartCommand startCommand = createStartCommand(fakeResidentRunner);
+
+      final SyncPreviewsResponse incrementalSync = await startCommand.syncPreviews();
+      expect(incrementalSync.compileSuccess, isTrue);
+      expect(incrementalSync.reloaded, isTrue);
+      expect(incrementalSync.fullRestart, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+
+      mode = 'reject_then_ok';
+      final SyncPreviewsResponse fallbackSync = await startCommand.syncPreviews();
+      expect(fallbackSync.compileSuccess, isTrue);
+      expect(fallbackSync.reloaded, isTrue);
+      expect(fallbackSync.fullRestart, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true]);
+
+      mode = 'fail';
+      final SyncPreviewsResponse failedSync = await startCommand.syncPreviews();
+      expect(failedSync.compileSuccess, isFalse);
+      expect(failedSync.reloaded, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true]);
+
+      // 2. File-watcher _triggerReload (via onChangeDetected) and onHotRestartRequest.
+      mode = 'ok';
+      startCommand.onChangeDetected(emptyPreviewUpdate);
+      await pumpEventQueue();
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true, false]);
+
+      mode = 'reject_then_ok';
+      startCommand.onChangeDetected(emptyPreviewUpdate);
+      await pumpEventQueue();
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true, false, true]);
+
+      mode = 'fail';
+      startCommand.onChangeDetected(emptyPreviewUpdate);
+      await pumpEventQueue();
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true, false, true]);
+
+      mode = 'ok';
+      startCommand.onHotRestartRequest();
+      await pumpEventQueue();
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true, false, true, true]);
+
+      mode = 'fail';
+      startCommand.onHotRestartRequest();
+      await pumpEventQueue();
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, true, false, true, true]);
+
+      // 3. Verify real WidgetPreviewDtdServices posts PreviewReloaded on
+      // widgetPreviewScaffoldStream through DartToolingDaemon.
+      final recordingDtd = _RecordingBroadcastDtd();
+      addTearDown(recordingDtd.close);
+      final realDtdServices = WidgetPreviewDtdServices(
+        addUuidToServiceName: false,
+        dtd: recordingDtd,
+        dtdLauncher: DtdLauncher(
+          artifacts: Artifacts.test(),
+          logger: logger,
+          processManager: FakeProcessManager.empty(),
+        ),
+        fs: fs,
+        logger: logger,
+        onHotRestartPreviewerRequest: () {},
+        previewAnalytics: WidgetPreviewAnalytics(
+          analytics: getInitializedFakeAnalyticsInstance(
+            fs: fs,
+            fakeFlutterVersion: FakeFlutterVersion(),
+          ),
+        ),
+        project: scaffoldProject,
+        shutdownHooks: ShutdownHooks(),
+      );
+      await realDtdServices.connect(dtdWsUri: Uri.parse('ws://127.0.0.1:54322/secret'));
+      final wiredCommand = WidgetPreviewCommand(
+        buildSystem: TestBuildSystem.all(BuildResult(success: true)),
+        buildTargets: const BuildTargetsImpl(),
+        toolContext: FakeToolContext(
+          artifacts: Artifacts.test(),
+          fs: fs,
+          logger: logger,
+          platform: FakePlatform(),
+          processManager: FakeProcessManager.empty(),
+          shutdownHooks: ShutdownHooks(),
+          signals: FakeSignals(),
+        ),
+        dtdServicesOverride: realDtdServices,
+      );
+      final wiredStart = (wiredCommand.subcommands['start']! as WidgetPreviewStartCommand)
+        ..previewCodeGenerator = PreviewCodeGenerator(
+          widgetPreviewScaffoldProject: scaffoldProject,
+          fs: fs,
+        )
+        ..widgetPreviewApp = FakeResidentRunner();
+
+      wiredStart.onChangeDetected(emptyPreviewUpdate);
+      await pumpEventQueue();
+      expect(recordingDtd.postedEvents, hasLength(1));
+      expect(
+        recordingDtd.postedEvents.single.streamId,
+        WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot,
+      );
+      expect(
+        recordingDtd.postedEvents.single.eventKind,
+        WidgetPreviewDtdServices.kPreviewReloadedEvent,
+      );
+      expect(
+        recordingDtd.postedEvents.single.eventData,
+        equals(const <String, Object?>{WidgetPreviewDtdServices.kFullRestart: false}),
+      );
+    });
   });
 
   group('$WidgetPreviewSessionClient, $WidgetPreviewListCommand, and $WidgetPreviewSnapshotCommand', () {
@@ -2376,6 +2513,48 @@ class _FakeCliDartToolingDaemon extends Fake implements DartToolingDaemon {
     }
     if (closeError case final Exception error) {
       throw error;
+    }
+  }
+}
+
+class _RecordingBroadcastDtd extends Fake implements DartToolingDaemon {
+  final postedEvents = <({String streamId, String eventKind, Map<String, Object?> eventData})>[];
+  final _controllers = <String, StreamController<DTDEvent>>{};
+
+  @override
+  Future<RegisteredServicesResponse> getRegisteredServices() async =>
+      RegisteredServicesResponse.fromDTDResponse(
+        DTDResponse('1', RegisteredServicesResponse.type, <String, Object?>{
+          'type': RegisteredServicesResponse.type,
+          'dtdServices': <String>[],
+          'clientServices': <Map<String, Object?>>[],
+        }),
+      );
+
+  @override
+  Future<void> registerService(
+    String service,
+    String method,
+    DTDServiceCallback callback, {
+    Map<String, Object?>? capabilities,
+  }) async {}
+
+  @override
+  Future<void> streamListen(String streamId) async {}
+
+  @override
+  Stream<DTDEvent> onEvent(String streamId) =>
+      _controllers.putIfAbsent(streamId, StreamController<DTDEvent>.broadcast).stream;
+
+  @override
+  Future<void> postEvent(String streamId, String eventKind, Map<String, Object?> eventData) async {
+    postedEvents.add((streamId: streamId, eventKind: eventKind, eventData: eventData));
+  }
+
+  @override
+  Future<void> close() async {
+    for (final StreamController<DTDEvent> controller in _controllers.values) {
+      await controller.close();
     }
   }
 }

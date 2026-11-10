@@ -133,6 +133,8 @@ class WidgetPreviewDtdServices {
   static const kCapturePreview = 'capturePreview';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
+  static const kPreviewReloadedEvent = 'PreviewReloaded';
+  static const kFullRestart = 'fullRestart';
 
   /// Error code for [RpcException] thrown when a requested preview ID or name
   /// does not match any registered preview.
@@ -225,6 +227,24 @@ class WidgetPreviewDtdServices {
       completer.complete();
     }
     _scaffoldConnectedCompleter = null;
+  }
+
+  /// Posts [kPreviewReloadedEvent] on [widgetPreviewScaffoldStream] once a
+  /// reload or hot restart succeeds.
+  Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    final DartToolingDaemon? dtd = _dtd;
+    if (dtd == null) {
+      return;
+    }
+    try {
+      await dtd.postEvent(widgetPreviewScaffoldStream, kPreviewReloadedEvent, <String, Object?>{
+        kFullRestart: fullRestart,
+      });
+    } on RpcException catch (e) {
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+    } on StateError catch (e) {
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+    }
   }
 
   /// Waits until the widget preview scaffold has posted

@@ -71,12 +71,20 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
   onCapturePreview;
 
+  Uri? lastConnectDtdUri;
+  bool? lastConnectReadOnly;
+
   @override
-  Future<void> connect({Uri? dtdUri}) async {}
+  Future<void> connect({Uri? dtdUri, bool readOnly = false}) async {
+    lastConnectDtdUri = dtdUri;
+    lastConnectReadOnly = readOnly;
+  }
 
   @override
   Future<void> dispose() async {
-    super.dispose();
+    if (!(lastConnectReadOnly ?? false)) {
+      super.dispose();
+    }
   }
 
   bool hotRestartInvoked = false;
