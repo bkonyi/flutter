@@ -42,8 +42,12 @@ import '../widget_preview/preview_code_generator.dart';
 import '../widget_preview/preview_detector.dart';
 import '../widget_preview/preview_manifest.dart';
 import '../widget_preview/preview_pubspec_builder.dart';
+import '../widget_preview/preview_session_client.dart';
 import '../widget_preview/utils.dart';
 import 'create_base.dart';
+
+export '../widget_preview/preview_session_client.dart'
+    show WidgetPreviewListCommand, WidgetPreviewSnapshotCommand;
 
 typedef ResidentRunnerFactory = ResidentRunner Function(
   FlutterDevice device, {
@@ -75,6 +79,8 @@ class WidgetPreviewCommand extends FlutterCommand {
       ),
     );
     addSubcommand(WidgetPreviewCleanCommand(toolContext: toolContext));
+    addSubcommand(WidgetPreviewListCommand(toolContext: toolContext, verbose: verboseHelp));
+    addSubcommand(WidgetPreviewSnapshotCommand(toolContext: toolContext, verbose: verboseHelp));
   }
 
   @override
@@ -203,6 +209,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       );
   }
 
+  static const kStart = 'start';
   static const kDtdUrl = 'dtd-url';
   static const kWidgetPreviewScaffoldName = 'widget_preview_scaffold';
   static const kLaunchPreviewer = 'launch-previewer';
@@ -230,7 +237,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   String get description => 'Starts the widget preview environment.';
 
   @override
-  String get name => 'start';
+  String get name => kStart;
 
   final bool verbose;
 

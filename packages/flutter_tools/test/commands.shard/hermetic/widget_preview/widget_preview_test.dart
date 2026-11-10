@@ -3,32 +3,42 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:io' as io;
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
 import 'package:file_testing/file_testing.dart';
+import 'package:flutter_tools/executable.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/commands/daemon.dart';
 import 'package:flutter_tools/src/commands/widget_preview.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
+import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/preview_code_generator.dart';
+import 'package:flutter_tools/src/widget_preview/preview_session_client.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
+import 'package:process/process.dart';
 import 'package:test/fake.dart';
 
 import '../../../src/common.dart';
-import '../../../src/context.dart' show FakeProcessManager, FakeSignals;
-import '../../../src/fakes.dart';
+import '../../../src/context.dart' show FakeSignals;
+import '../../../src/fake_process_manager.dart'
+    show FakeCommand, FakeProcess, FakeProcessManager, hasNoRemainingExpectations;
+import '../../../src/fakes.dart' hide FakeProcess;
 import '../../../src/test_build_system.dart';
+import '../../../src/test_flutter_command_runner.dart';
 
 const _kFailedRecompileMessage = 'Failed to recompile application.';
 const _kProjectRootPath = '/project';
@@ -795,4 +805,1577 @@ environment:
       },
     );
   });
+
+  group('$WidgetPreviewSessionClient, $WidgetPreviewListCommand, and $WidgetPreviewSnapshotCommand', () {
+    const kDtdWsUri1 = 'ws://127.0.0.1:54321/secret1';
+    const kDtdWsUri2 = 'ws://127.0.0.1:54322/secret2';
+    const kPreviewServiceUuid = 'widget-preview-111';
+    const kScaffoldServiceUuid = 'PreviewScaffold-111';
+    const kScaffoldStreamUuid = 'WidgetPreviewScaffold-111';
+    const kPreviewId = 'package:my_app/card.dart::cardPreview';
+    // Standard 8-byte PNG file signature (\x89PNG\r\n\x1a\n).
+    const kFakePngBytes = <int>[137, 80, 78, 71, 13, 10, 26, 10];
+    final String kFakePngBase64 = base64.encode(kFakePngBytes);
+
+    late MemoryFileSystem fs;
+    late BufferLogger bufferLogger;
+    late FakeStdio fakeStdio;
+    late Logger machineLogger;
+    late Logger humanLogger;
+    late Directory projectDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      bufferLogger = BufferLogger.test();
+      fakeStdio = FakeStdio();
+      machineLogger =
+          LoggerFactory(
+            outputPreferences: OutputPreferences.test(),
+            stdio: fakeStdio,
+            terminal: Terminal.test(),
+          ).createLogger(
+            daemon: false,
+            machine: true,
+            prefixedErrors: false,
+            verbose: false,
+            widgetPreviews: false,
+            windows: false,
+          );
+      humanLogger = bufferLogger;
+      projectDir = fs.directory(_kProjectRootPath)..createSync(recursive: true);
+      fs.currentDirectory = projectDir;
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: my_app
+environment:
+  sdk: ^3.7.0
+''');
+    });
+
+    PreviewServiceInfo createServiceInfo({
+      String dtdUri = kDtdWsUri1,
+      String previewService = kPreviewServiceUuid,
+      String projectRoot = _kProjectRootPath,
+      bool scaffoldConnected = true,
+      String scaffoldService = kScaffoldServiceUuid,
+      String scaffoldStream = kScaffoldStreamUuid,
+      String? webPreviewUri = 'http://localhost:8080',
+    }) {
+      return PreviewServiceInfo(
+        dtdUri: dtdUri,
+        previewService: previewService,
+        projectRoot: projectRoot,
+        scaffoldConnected: scaffoldConnected,
+        scaffoldService: scaffoldService,
+        scaffoldStream: scaffoldStream,
+        webPreviewUri: webPreviewUri,
+      );
+    }
+
+    PreviewEntry createSampleEntry({
+      String id = kPreviewId,
+      String? name = 'Mobile Light',
+      bool hasError = false,
+      String? errorMessage,
+    }) {
+      return PreviewEntry(
+        brightness: 'light',
+        column: 4,
+        errorMessage: errorMessage,
+        functionName: 'cardPreview',
+        group: 'Cards',
+        hasError: hasError,
+        height: 220.0,
+        id: id,
+        libraryUri: 'package:my_app/card.dart',
+        line: 12,
+        name: name,
+        packageName: 'my_app',
+        scriptUri: 'file:///project/lib/card.dart',
+        width: 375.0,
+      );
+    }
+
+    Future<({FlutterCommandResult? commandResult, int exitCode})> runSubcommand({
+      required List<String> args,
+      required WidgetPreviewSessionClient client,
+      required bool isSnapshot,
+      required bool machine,
+      FileSystem? fileSystem,
+      Logger? loggerOverride,
+      Platform? platform,
+    }) async {
+      final FileSystem activeFs = fileSystem ?? fs;
+      final Logger activeLogger = loggerOverride ?? (machine ? machineLogger : humanLogger);
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: activeFs,
+        logger: activeLogger,
+        platform: platform ?? FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final parent = WidgetPreviewCommand(
+        buildSystem: TestBuildSystem.all(BuildResult(success: true)),
+        buildTargets: const BuildTargetsImpl(),
+        toolContext: toolContext,
+      );
+      expect(parent.subcommands['list'], isA<WidgetPreviewListCommand>());
+      expect(parent.subcommands['snapshot'], isA<WidgetPreviewSnapshotCommand>());
+
+      final FlutterCommand subcommand = isSnapshot
+          ? WidgetPreviewSnapshotCommand(toolContext: toolContext, sessionClientOverride: client)
+          : WidgetPreviewListCommand(toolContext: toolContext, sessionClientOverride: client);
+      final runner = TestFlutterCommandRunner(toolContext: toolContext)..addCommand(subcommand);
+      var exitCode = 0;
+      try {
+        await runner.run(<String>[subcommand.name, ...args]);
+      } on ProcessExit catch (error) {
+        exitCode = error.exitCode;
+      }
+      final FlutterCommandResult? commandResult = switch (subcommand) {
+        WidgetPreviewSnapshotCommand(:final FlutterCommandResult? lastCommandResult) =>
+          lastCommandResult,
+        WidgetPreviewListCommand(:final FlutterCommandResult? lastCommandResult) =>
+          lastCommandResult,
+        _ => null,
+      };
+      return (commandResult: commandResult, exitCode: exitCode);
+    }
+
+    testWithoutContext('connects via explicit --dtd-url, matches projectRoot or single-service fallback, and closes DTD', () async {
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(projectRoot: '/other/project'),
+        },
+        listPreviewsResponse: PreviewListResponse(previews: <PreviewEntry>[createSampleEntry()]),
+      );
+      final connectedUris = <Uri>[];
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri uri) async {
+          connectedUris.add(uri);
+          return fakeDtd;
+        },
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>['--dtd-url=$kDtdWsUri1', '--machine'],
+        client: client,
+        isSnapshot: false,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      expect(connectedUris, <Uri>[Uri.parse(kDtdWsUri1)]);
+      expect(fakeDtd.closed, isTrue);
+      expect(
+        fakeDtd.calls,
+        contains(
+          equals(<String, Object?>{
+            'service': kPreviewServiceUuid,
+            'method': WidgetPreviewDtdServices.kListPreviews,
+            'params': <String, Object?>{'sync': true},
+          }),
+        ),
+      );
+      final decoded = jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      final PreviewListResponse parsed = PreviewListResponse.fromJson(decoded);
+      expect(parsed.previews, hasLength(1));
+      expect(parsed.previews.single.id, kPreviewId);
+    });
+
+    testWithoutContext('auto-discovers active DTD via dart tooling-daemon --list and DART_DATA_HOME/dtd matching projectRoot', () async {
+      final Directory dtdDataDir = fs.directory('/dart_data/dtd')..createSync(recursive: true);
+      dtdDataDir
+          .childFile('session_matching.json')
+          .writeAsStringSync(
+            jsonEncode(<String, Object?>{
+              'tooling_daemon_details': <String, Object?>{'uri': kDtdWsUri2},
+            }),
+          );
+
+      final otherDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>['widget-preview-other'],
+        serviceInfos: <String, PreviewServiceInfo>{
+          'widget-preview-other': createServiceInfo(
+            previewService: 'widget-preview-other',
+            projectRoot: '/unrelated/project',
+          ),
+        },
+      );
+      final matchingDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(dtdUri: kDtdWsUri2),
+        },
+        listPreviewsResponse: PreviewListResponse(previews: <PreviewEntry>[createSampleEntry()]),
+      );
+
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final processManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(
+          command: <String>[dartBinary, 'tooling-daemon', '--list'],
+          stdout: 'Active DTD: $kDtdWsUri1\n',
+        ),
+      ]);
+      final toolContext = FakeToolContext(
+        artifacts: artifacts,
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(environment: <String, String>{'DART_DATA_HOME': '/dart_data'}),
+        processManager: processManager,
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri uri) async {
+          return switch (uri.toString()) {
+            kDtdWsUri1 => otherDtd,
+            kDtdWsUri2 => matchingDtd,
+            _ => fail('Unexpected DTD URI: $uri'),
+          };
+        },
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>['--no-sync', '--file=lib/card.dart'],
+        client: client,
+        isSnapshot: false,
+        machine: false,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      expect(processManager, hasNoRemainingExpectations);
+      expect(otherDtd.closed, isTrue);
+      expect(matchingDtd.closed, isTrue);
+      expect(
+        matchingDtd.calls,
+        contains(
+          equals(<String, Object?>{
+            'service': kPreviewServiceUuid,
+            'method': WidgetPreviewDtdServices.kListPreviews,
+            'params': <String, Object?>{'sync': false, 'fileUri': 'file:///project/lib/card.dart'},
+          }),
+        ),
+      );
+      expect(bufferLogger.statusText, contains('Found 1 widget preview(s):'));
+      expect(bufferLogger.statusText, contains(kPreviewId));
+      expect(bufferLogger.statusText, contains('"Mobile Light"'));
+    });
+
+    testWithoutContext('falls back to one-shot headless widget-preview start --headless --machine and terminates child process in finally', () async {
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        listPreviewsResponse: const PreviewListResponse(previews: <PreviewEntry>[]),
+      );
+      final processCompleter = Completer<void>();
+      final String startedEventLine = jsonEncode(<Map<String, Object?>>[
+        <String, Object?>{
+          'event': 'widget_preview.initializing',
+          'params': <String, Object?>{'pid': 4321},
+        },
+        <String, Object?>{
+          'event': 'widget_preview.started',
+          'params': <String, Object?>{
+            'url': 'http://localhost:54321',
+            'dtdUri': kDtdWsUri1,
+            'previewService': kPreviewServiceUuid,
+            'scaffoldService': kScaffoldServiceUuid,
+            'projectRoot': _kProjectRootPath,
+          },
+        },
+      ]);
+      final fakeHeadlessProcess = FakeProcess(
+        completer: processCompleter,
+        stdout: utf8.encode('$startedEventLine\n'),
+      );
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final cache = FakeCache(fileSystem: fs, flutterRoot: '/flutter');
+      final processManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+        FakeCommand(
+          command: const <String>[
+            '/flutter/bin/flutter',
+            'widget-preview',
+            'start',
+            '--headless',
+            '--machine',
+          ],
+          workingDirectory: _kProjectRootPath,
+          process: fakeHeadlessProcess,
+        ),
+      ]);
+      final shutdownHooks = ShutdownHooks();
+      final toolContext = FakeToolContext(
+        artifacts: artifacts,
+        cache: cache,
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(),
+        processManager: processManager,
+        shutdownHooks: shutdownHooks,
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri uri) async {
+          expect(uri.toString(), kDtdWsUri1);
+          return fakeDtd;
+        },
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: const <String>[],
+        client: client,
+        isSnapshot: false,
+        machine: false,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      expect(processManager, hasNoRemainingExpectations);
+      expect(fakeHeadlessProcess.signals, <io.ProcessSignal>[io.ProcessSignal.sigterm]);
+      expect(processCompleter.isCompleted, isTrue);
+      expect(fakeDtd.closed, isTrue);
+      expect(bufferLogger.statusText, contains('No widget previews found.'));
+
+      // Running shutdown hooks afterwards must be idempotent and not re-signal
+      // an already terminated process.
+      await shutdownHooks.runShutdownHooks(bufferLogger);
+      expect(fakeHeadlessProcess.signals, <io.ProcessSignal>[io.ProcessSignal.sigterm]);
+    });
+
+    testWithoutContext(
+      'reports captured error details when ephemeral headless child exits prematurely',
+      () async {
+        final String errorEventLine = jsonEncode(<Map<String, Object?>>[
+          <String, Object?>{
+            'event': 'widget_preview.logMessage',
+            'params': <String, Object?>{
+              'level': 'error',
+              'message': 'Failed to locate Chrome binary.',
+            },
+          },
+        ]);
+        final fakeHeadlessProcess = FakeProcess(
+          exitCode: 1,
+          stdout: utf8.encode('$errorEventLine\n'),
+          stderr: utf8.encode('Fatal browser launch error.\n'),
+        );
+        final artifacts = Artifacts.test();
+        final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+        final cache = FakeCache(fileSystem: fs, flutterRoot: '/flutter');
+        final processManager = FakeProcessManager.list(<FakeCommand>[
+          FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+          FakeCommand(
+            command: const <String>[
+              '/flutter/bin/flutter',
+              'widget-preview',
+              'start',
+              '--headless',
+              '--machine',
+            ],
+            workingDirectory: _kProjectRootPath,
+            process: fakeHeadlessProcess,
+          ),
+        ]);
+        final toolContext = FakeToolContext(
+          artifacts: artifacts,
+          cache: cache,
+          fs: fs,
+          logger: machineLogger,
+          platform: FakePlatform(),
+          processManager: processManager,
+          shutdownHooks: ShutdownHooks(),
+          signals: FakeSignals(),
+          stdio: fakeStdio,
+        );
+        final client = WidgetPreviewSessionClient(
+          toolContext: toolContext,
+          dtdConnector: (Uri uri) => fail('Should not connect to DTD: $uri'),
+        );
+
+        final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+          args: const <String>['--machine'],
+          client: client,
+          isSnapshot: false,
+          machine: true,
+        );
+
+        expect(commandResult?.exitStatus, ExitStatus.fail);
+        expect(exitCode, 1);
+        expect(processManager, hasNoRemainingExpectations);
+        final errorJson =
+            jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+        expect(
+          errorJson['error'],
+          allOf(
+            contains('Headless widget preview exited prematurely with code 1.'),
+            contains('Failed to locate Chrome binary.'),
+            contains('Fatal browser launch error.'),
+          ),
+        );
+      },
+    );
+
+    testWithoutContext('snapshot syncs previews, captures snapshot with overrides, forces includeImage when --output and --no-image are combined, and omits imageBase64 from stdout JSON', () async {
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        captureResponse: CapturePreviewResponse(
+          diagnostics: const <PreviewDiagnostic>[],
+          hasErrors: false,
+          imageBase64: kFakePngBase64,
+          name: 'Mobile Dark',
+          pixelRatio: 2.0,
+          previewId: kPreviewId,
+          renderedHeight: 640.0,
+          renderedWidth: 360.0,
+        ),
+      );
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => fakeDtd,
+      );
+
+      const outputPath = '/project/snapshots/card.png';
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>[
+          kPreviewId,
+          '--dtd-url=$kDtdWsUri1',
+          '--width=360',
+          '--height=640',
+          '--brightness=dark',
+          '--pixel-ratio=2.0',
+          '--text-scale-factor=1.25',
+          '--no-image',
+          '--output=$outputPath',
+          '--machine',
+        ],
+        client: client,
+        isSnapshot: true,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      // Verify syncPreviews ran before capturePreview, and includeImage was forced to true
+      // on the RPC so --output could be written to disk despite --no-image.
+      expect(
+        fakeDtd.calls,
+        equals(<Map<String, Object?>>[
+          <String, Object?>{
+            'service': kPreviewServiceUuid,
+            'method': WidgetPreviewDtdServices.kGetServiceInfo,
+            'params': null,
+          },
+          <String, Object?>{
+            'service': kPreviewServiceUuid,
+            'method': WidgetPreviewDtdServices.kSyncPreviews,
+            'params': null,
+          },
+          <String, Object?>{
+            'service': kScaffoldServiceUuid,
+            'method': WidgetPreviewDtdServices.kCapturePreview,
+            'params': <String, Object?>{
+              'previewId': kPreviewId,
+              'includeImage': true,
+              'width': 360.0,
+              'height': 640.0,
+              'pixelRatio': 2.0,
+              'brightness': 'dark',
+              'textScaleFactor': 1.25,
+            },
+          },
+        ]),
+      );
+
+      final File savedFile = fs.file(outputPath);
+      expect(savedFile, exists);
+      expect(savedFile.readAsBytesSync(), equals(kFakePngBytes));
+
+      // Verify stdout is raw CapturePreviewResponse JSON (not wrapped in WidgetPreviewMachineAwareLogger
+      // event array) and imageBase64 is omitted (null) because --no-image was passed.
+      final String stdoutText = fakeStdio.writtenToStdout.single.trim();
+      expect(stdoutText.startsWith('{'), isTrue);
+      final decoded = jsonDecode(stdoutText) as Map<String, Object?>;
+      final CapturePreviewResponse parsed = CapturePreviewResponse.fromJson(decoded);
+      expect(parsed.previewId, kPreviewId);
+      expect(parsed.imageBase64, isNull);
+      expect(parsed.hasErrors, isFalse);
+    });
+
+    testWithoutContext('snapshot returns failed FlutterCommandResult and non-zero exit code when hasErrors is true while still writing --output PNG and full diagnostics', () async {
+      const overflowDiag = PreviewDiagnostic(
+        kind: .overflow,
+        overflowAxis: 'horizontal',
+        overflowPixels: 48.0,
+        overflowSide: 'right',
+        phase: .paint,
+        summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+        targetType: 'RenderFlex',
+      );
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        captureResponse: CapturePreviewResponse(
+          diagnostics: const <PreviewDiagnostic>[overflowDiag],
+          hasErrors: true,
+          imageBase64: kFakePngBase64,
+          name: 'Overflowing Card',
+          pixelRatio: 1.0,
+          previewId: kPreviewId,
+          renderedHeight: 220.0,
+          renderedWidth: 375.0,
+        ),
+      );
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => fakeDtd,
+      );
+
+      const outputPath = '/project/snapshots/overflow.png';
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>[
+          kPreviewId,
+          '--dtd-url=$kDtdWsUri1',
+          '--no-sync',
+          '--output=$outputPath',
+          '--machine',
+        ],
+        client: client,
+        isSnapshot: true,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.fail);
+      expect(exitCode, 1);
+      expect(fs.file(outputPath), exists);
+      expect(fs.file(outputPath).readAsBytesSync(), equals(kFakePngBytes));
+
+      final decoded = jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      final CapturePreviewResponse parsed = CapturePreviewResponse.fromJson(decoded);
+      expect(parsed.hasErrors, isTrue);
+      expect(parsed.imageBase64, kFakePngBase64);
+      expect(parsed.diagnostics, equals(const <PreviewDiagnostic>[overflowDiag]));
+    });
+
+    testWithoutContext(
+      'snapshot --no-sync waits for Connected event when scaffoldConnected is initially false',
+      () async {
+        final fakeDtd = _FakeCliDartToolingDaemon(
+          serviceNames: <String>[kPreviewServiceUuid],
+          serviceInfos: <String, PreviewServiceInfo>{
+            kPreviewServiceUuid: createServiceInfo(scaffoldConnected: false),
+          },
+          captureResponse: const CapturePreviewResponse(
+            diagnostics: <PreviewDiagnostic>[],
+            hasErrors: false,
+            name: 'Mobile Light',
+            pixelRatio: 1.0,
+            previewId: kPreviewId,
+            renderedHeight: 220.0,
+            renderedWidth: 375.0,
+          ),
+        );
+        fakeDtd.onStreamSubscribed = (String streamId) {
+          if (streamId == kScaffoldStreamUuid) {
+            scheduleMicrotask(() {
+              fakeDtd.emitEvent(
+                kScaffoldStreamUuid,
+                WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
+              );
+            });
+          }
+        };
+        final toolContext = FakeToolContext(
+          artifacts: Artifacts.test(),
+          fs: fs,
+          logger: humanLogger,
+          platform: FakePlatform(),
+          processManager: FakeProcessManager.empty(),
+          shutdownHooks: ShutdownHooks(),
+          signals: FakeSignals(),
+          stdio: fakeStdio,
+        );
+        final client = WidgetPreviewSessionClient(
+          toolContext: toolContext,
+          dtdConnector: (Uri _) async => fakeDtd,
+        );
+
+        final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+          args: <String>[kPreviewId, '--dtd-url=$kDtdWsUri1', '--no-sync', '--no-image'],
+          client: client,
+          isSnapshot: true,
+          machine: false,
+        );
+
+        expect(commandResult?.exitStatus, ExitStatus.success);
+        expect(exitCode, 0);
+        expect(bufferLogger.statusText, contains('Captured preview $kPreviewId'));
+      },
+    );
+
+    testWithoutContext('formats RpcException, compile failure, and validation errors as structured JSON in --machine mode and throws ToolExit in human mode', () async {
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        captureError: RpcException(
+          WidgetPreviewDtdServices.kPreviewNotFoundErrorCode,
+          'Preview "missingPreview" not found.',
+        ),
+      );
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => fakeDtd,
+      );
+
+      // 1. RpcException (preview not found) in --machine mode.
+      final (
+        commandResult: FlutterCommandResult? rpcCommandResult,
+        exitCode: int rpcExitCode,
+      ) = await runSubcommand(
+        args: <String>['missingPreview', '--dtd-url=$kDtdWsUri1', '--machine'],
+        client: client,
+        isSnapshot: true,
+        machine: true,
+      );
+      expect(rpcCommandResult?.exitStatus, ExitStatus.fail);
+      expect(rpcExitCode, 1);
+      final rpcErrorJson =
+          jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      expect(rpcErrorJson['error'], 'Preview "missingPreview" not found.');
+      expect(rpcErrorJson['code'], WidgetPreviewDtdServices.kPreviewNotFoundErrorCode);
+      expect(rpcErrorJson['previewId'], 'missingPreview');
+      expect(fakeStdio.writtenToStderr, isEmpty);
+
+      // 2. Invalid --brightness option in --machine mode.
+      fakeStdio.stdout.writes.clear();
+      final (
+        commandResult: FlutterCommandResult? brightnessCommandResult,
+        exitCode: int brightnessExitCode,
+      ) = await runSubcommand(
+        args: <String>[kPreviewId, '--brightness=sepia', '--machine'],
+        client: client,
+        isSnapshot: true,
+        machine: true,
+      );
+      expect(brightnessCommandResult?.exitStatus, ExitStatus.fail);
+      expect(brightnessExitCode, 1);
+      final brightnessErrorJson =
+          jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      expect(brightnessErrorJson['error'], contains('Invalid value for "--brightness"'));
+      expect(brightnessErrorJson['previewId'], kPreviewId);
+
+      // 3. Compile failure during syncPreviews in --machine mode vs human mode.
+      fakeStdio.stdout.writes.clear();
+      fakeDtd
+        ..captureError = null
+        ..syncResponse = const SyncPreviewsResponse(
+          compileError: _kFailedRecompileMessage,
+          compileSuccess: false,
+          errorPreviewCount: 1,
+          fullRestart: false,
+          reloaded: false,
+        );
+      final (
+        commandResult: FlutterCommandResult? compileCommandResult,
+        exitCode: int compileExitCode,
+      ) = await runSubcommand(
+        args: <String>[kPreviewId, '--dtd-url=$kDtdWsUri1', '--machine'],
+        client: client,
+        isSnapshot: true,
+        machine: true,
+      );
+      expect(compileCommandResult?.exitStatus, ExitStatus.fail);
+      expect(compileExitCode, 1);
+      final compileErrorJson =
+          jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      expect(compileErrorJson['error'], _kFailedRecompileMessage);
+      expect(compileErrorJson['previewId'], kPreviewId);
+
+      await expectLater(
+        runSubcommand(
+          args: <String>[kPreviewId, '--dtd-url=$kDtdWsUri1'],
+          client: client,
+          isSnapshot: true,
+          machine: false,
+        ),
+        throwsToolExit(message: _kFailedRecompileMessage),
+      );
+    });
+
+    testWithoutContext('times out ephemeral headless startup, signals initializing VM pid, and escalates to sigkill on hung process exit', () async {
+      final String initOnlyLine = jsonEncode(<Map<String, Object?>>[
+        <String, Object?>{
+          'event': 'widget_preview.initializing',
+          'params': <String, Object?>{'pid': 4321},
+        },
+      ]);
+      final hungProcess = _StubbornExitProcess(
+        exitCompleter: Completer<void>(),
+        stdoutBytes: utf8.encode('$initOnlyLine\n'),
+      );
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final cache = FakeCache(fileSystem: fs, flutterRoot: '/flutter');
+      final killedPids = <int>[];
+      final processManager = _PidTrackingFakeProcessManager(
+        commands: <FakeCommand>[
+          FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+          FakeCommand(
+            command: const <String>[
+              '/flutter/bin/flutter',
+              'widget-preview',
+              'start',
+              '--headless',
+              '--machine',
+            ],
+            workingDirectory: _kProjectRootPath,
+            process: hungProcess,
+          ),
+        ],
+        onKillPid: (int pid, io.ProcessSignal signal) {
+          killedPids.add(pid);
+          return false;
+        },
+      );
+      final toolContext = FakeToolContext(
+        artifacts: artifacts,
+        cache: cache,
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: processManager,
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri uri) => fail('Should not connect to DTD: $uri'),
+        headlessStartupTimeout: const Duration(milliseconds: 20),
+        processExitTimeout: const Duration(milliseconds: 15),
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: const <String>['--machine'],
+        client: client,
+        isSnapshot: false,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.fail);
+      expect(exitCode, 1);
+      expect(processManager.base, hasNoRemainingExpectations);
+      // Verify both the wrapper pid (1234) and initializing VM pid (4321) were targeted,
+      // and sigterm escalated to sigkill when exitCode did not complete within processExitTimeout.
+      expect(killedPids, containsAll(<int>[1234, 4321]));
+      expect(
+        hungProcess.signals,
+        equals(<io.ProcessSignal>[io.ProcessSignal.sigterm, io.ProcessSignal.sigkill]),
+      );
+      expect(hungProcess.exited, isTrue);
+      final errorJson = jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      expect(
+        errorJson['error'],
+        contains('Timed out waiting for headless widget preview to start'),
+      );
+    });
+
+    testWithoutContext('snapshot --no-sync fails promptly when session.dtd.done completes early or scaffoldReadyTimeout expires', () async {
+      // 1. Early DTD disconnect before Connected event arrives.
+      final disconnectingDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(scaffoldConnected: false),
+        },
+      );
+      disconnectingDtd.onStreamSubscribed = (String streamId) {
+        if (streamId == kScaffoldStreamUuid) {
+          scheduleMicrotask(disconnectingDtd.simulateUnexpectedDisconnect);
+        }
+      };
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final disconnectClient = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => disconnectingDtd,
+      );
+      await expectLater(
+        runSubcommand(
+          args: <String>[kPreviewId, '--dtd-url=$kDtdWsUri1', '--no-sync', '--no-image'],
+          client: disconnectClient,
+          isSnapshot: true,
+          machine: false,
+        ),
+        throwsToolExit(
+          message: 'Connection to DTD closed before the widget preview scaffold became ready.',
+        ),
+      );
+
+      // 2. Bounded timeout when scaffold never connects and DTD stays open.
+      final silentScaffoldDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(scaffoldConnected: false),
+        },
+      );
+      final timeoutClient = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => silentScaffoldDtd,
+        scaffoldReadyTimeout: const Duration(milliseconds: 20),
+      );
+      await expectLater(
+        runSubcommand(
+          args: <String>[kPreviewId, '--dtd-url=$kDtdWsUri1', '--no-sync', '--no-image'],
+          client: timeoutClient,
+          isSnapshot: true,
+          machine: false,
+        ),
+        throwsToolExit(message: 'Timed out waiting for the widget preview scaffold to connect'),
+      );
+    });
+
+    testWithoutContext('restricts WidgetPreviewMachineAwareLogger to start and keeps list/snapshot --machine stdout clean under warnings, progress, and -v', () async {
+      expect(
+        findCommandAndSubcommandName(<String>[
+          '-v',
+          'widget-preview',
+          'start',
+          '--headless',
+          '--machine',
+        ]),
+        equals((commandName: 'widget-preview', subcommandName: 'start')),
+      );
+      expect(
+        findCommandAndSubcommandName(<String>['-v', 'widget-preview', 'list', '--machine']),
+        equals((commandName: 'widget-preview', subcommandName: 'list')),
+      );
+      expect(
+        findCommandAndSubcommandName(<String>[
+          'widget-preview',
+          '-v',
+          'snapshot',
+          kPreviewId,
+          '--machine',
+        ]),
+        equals((commandName: 'widget-preview', subcommandName: 'snapshot')),
+      );
+      expect(
+        findCommandAndSubcommandName(<String>['widget-preview', 'clean']),
+        equals((commandName: 'widget-preview', subcommandName: 'clean')),
+      );
+
+      final factory = LoggerFactory(
+        outputPreferences: OutputPreferences.test(),
+        stdio: fakeStdio,
+        terminal: Terminal.test(),
+      );
+      final Logger startMachineLogger = factory.createLogger(
+        daemon: false,
+        machine: true,
+        prefixedErrors: false,
+        verbose: true,
+        widgetPreviews: true,
+        windows: false,
+      );
+      expect(startMachineLogger, isA<WidgetPreviewMachineAwareLogger>());
+
+      // For list/snapshot --machine (even with -v), executable.dart sets
+      // widgetPreviews: false and mutes verbose stdout logging.
+      final Logger cliMachineLogger = factory.createLogger(
+        daemon: false,
+        machine: true,
+        prefixedErrors: false,
+        verbose: false,
+        widgetPreviews: false,
+        windows: false,
+      );
+      expect(cliMachineLogger, isA<MachineOutputLogger>());
+      expect(cliMachineLogger, isNot(isA<WidgetPreviewMachineAwareLogger>()));
+
+      // Simulate cache.lock() progress, warnings, and trace logs before and during list --machine.
+      final Status lockProgress = cliMachineLogger.startProgress(
+        'Waiting for another flutter command to release the startup lock...',
+      );
+      lockProgress.stop();
+      cliMachineLogger.printWarning('Non-fatal pub warning');
+      cliMachineLogger.printTrace('Verbose trace message');
+
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        listPreviewsResponse: PreviewListResponse(previews: <PreviewEntry>[createSampleEntry()]),
+      );
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: cliMachineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => fakeDtd,
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>['--dtd-url=$kDtdWsUri1', '--machine'],
+        client: client,
+        isSnapshot: false,
+        loggerOverride: cliMachineLogger,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      // Stdout must contain strictly the single PreviewListResponse JSON object,
+      // with zero widget_preview.logMessage event arrays, progress text, or warnings.
+      final String fullStdout = fakeStdio.writtenToStdout.join();
+      expect(fullStdout, isNot(contains('widget_preview.logMessage')));
+      expect(fullStdout, isNot(contains('startup lock')));
+      final decoded = jsonDecode(fullStdout.trim()) as Map<String, Object?>;
+      expect(PreviewListResponse.fromJson(decoded).previews.single.id, kPreviewId);
+      expect(fakeStdio.writtenToStderr.join(), contains('Non-fatal pub warning'));
+    });
+
+    testWithoutContext('converts closed-peer StateError to ToolExit, swallows dtd.close errors, and never swallows TestFailure or non-peer Errors', () async {
+      // 1. Closed JSON-RPC peer StateError + WebSocket close exception in finally.
+      final closingPeerDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        callStateError: StateError(
+          'The client closed with pending request "$kPreviewServiceUuid.listPreviews".',
+        ),
+        closeError: const FormatException('WebSocket closed abnormally'),
+      );
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: machineLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final closingClient = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => closingPeerDtd,
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: <String>['--dtd-url=$kDtdWsUri1', '--machine'],
+        client: closingClient,
+        isSnapshot: false,
+        machine: true,
+      );
+      expect(commandResult?.exitStatus, ExitStatus.fail);
+      expect(exitCode, 1);
+      expect(closingPeerDtd.closed, isTrue);
+      final errorJson = jsonDecode(fakeStdio.writtenToStdout.single.trim()) as Map<String, Object?>;
+      expect(errorJson['error'], contains('DTD connection closed while invoking'));
+
+      // 2. TestFailure / non-peer Error thrown in dtdConnector during auto-discovery or
+      // explicit --dtd-url MUST NOT be swallowed as a connection failure.
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final discoveryToolContext = FakeToolContext(
+        artifacts: artifacts,
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.list(<FakeCommand>[
+          FakeCommand(
+            command: <String>[dartBinary, 'tooling-daemon', '--list'],
+            stdout: 'Active DTD: $kDtdWsUri1\n',
+          ),
+        ]),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final failingConnectorClient = WidgetPreviewSessionClient(
+        toolContext: discoveryToolContext,
+        dtdConnector: (Uri uri) => fail('Unexpected DTD URI: $uri'),
+      );
+
+      await expectLater(
+        runSubcommand(
+          args: const <String>[],
+          client: failingConnectorClient,
+          isSnapshot: false,
+          machine: false,
+        ),
+        throwsA(isA<TestFailure>()),
+      );
+
+      final nonPeerStateErrorDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{kPreviewServiceUuid: createServiceInfo()},
+        callStateError: StateError('Bad state: No element'),
+      );
+      final nonPeerErrorClient = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        dtdConnector: (Uri _) async => nonPeerStateErrorDtd,
+      );
+      await expectLater(
+        runSubcommand(
+          args: <String>['--dtd-url=$kDtdWsUri1'],
+          client: nonPeerErrorClient,
+          isSnapshot: false,
+          machine: false,
+        ),
+        throwsStateError,
+      );
+    });
+
+    testWithoutContext('resolves relative --file against fs.currentDirectory inside pub workspace member and falls back to positional projectDir', () async {
+      final Directory workspaceDir = fs.directory('/workspace')..createSync(recursive: true);
+      workspaceDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: my_workspace
+environment:
+  sdk: ^3.7.0
+workspace:
+  - packages/card_pkg
+''');
+      final Directory memberDir = workspaceDir.childDirectory('packages').childDirectory('card_pkg')
+        ..createSync(recursive: true);
+      memberDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: card_pkg
+resolution: workspace
+environment:
+  sdk: ^3.7.0
+''');
+      memberDir.childDirectory('lib').childFile('card.dart').createSync(recursive: true);
+
+      final fakeDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(projectRoot: '/workspace'),
+        },
+        listPreviewsResponse: PreviewListResponse(previews: <PreviewEntry>[createSampleEntry()]),
+      );
+
+      // 1. Invoked from inside workspace member directory without positional dir.
+      fs.currentDirectory = memberDir;
+      final memberToolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(),
+        processManager: FakeProcessManager.empty(),
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final memberClient = WidgetPreviewSessionClient(
+        toolContext: memberToolContext,
+        dtdConnector: (Uri _) async => fakeDtd,
+      );
+      final (
+        commandResult: FlutterCommandResult? memberResult,
+        exitCode: int memberExitCode,
+      ) = await runSubcommand(
+        args: <String>['--dtd-url=$kDtdWsUri1', '--no-sync', '--file=lib/card.dart'],
+        client: memberClient,
+        isSnapshot: false,
+        machine: false,
+      );
+      expect(memberResult?.exitStatus, ExitStatus.success);
+      expect(memberExitCode, 0);
+      expect(
+        fakeDtd.calls.last,
+        equals(<String, Object?>{
+          'service': kPreviewServiceUuid,
+          'method': WidgetPreviewDtdServices.kListPreviews,
+          'params': <String, Object?>{
+            'sync': false,
+            'fileUri': 'file:///workspace/packages/card_pkg/lib/card.dart',
+          },
+        }),
+      );
+
+      // 2. Invoked from an external directory with positional member directory argument.
+      fakeDtd.calls.clear();
+      final Directory outsideDir = fs.directory('/outside')..createSync(recursive: true);
+      fs.currentDirectory = outsideDir;
+      final (
+        commandResult: FlutterCommandResult? positionalResult,
+        exitCode: int positionalExitCode,
+      ) = await runSubcommand(
+        args: <String>[
+          '--dtd-url=$kDtdWsUri1',
+          '--no-sync',
+          '--file=lib/card.dart',
+          memberDir.path,
+        ],
+        client: memberClient,
+        isSnapshot: false,
+        machine: false,
+      );
+      expect(positionalResult?.exitStatus, ExitStatus.success);
+      expect(positionalExitCode, 0);
+      expect(
+        fakeDtd.calls.last,
+        equals(<String, Object?>{
+          'service': kPreviewServiceUuid,
+          'method': WidgetPreviewDtdServices.kListPreviews,
+          'params': <String, Object?>{
+            'sync': false,
+            'fileUri': 'file:///workspace/packages/card_pkg/lib/card.dart',
+          },
+        }),
+      );
+    });
+
+    testWithoutContext('supports Windows LOCALAPPDATA DTD discovery, Windows --file URI normalization, and flutter.bat / taskkill teardown', () async {
+      const windowsProjectRoot = r'C:\src\my_app';
+      const windowsLocalAppData = r'C:\Users\dev\AppData\Local';
+      const windowsFlutterRoot = r'C:\flutter';
+      final windowsFs = MemoryFileSystem.test(style: FileSystemStyle.windows);
+      final Directory winProjectDir = windowsFs.directory(windowsProjectRoot)
+        ..createSync(recursive: true);
+      windowsFs.currentDirectory = winProjectDir;
+      winProjectDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: my_app
+environment:
+  sdk: ^3.7.0
+''');
+      winProjectDir.childDirectory('lib').childFile('card.dart').createSync(recursive: true);
+
+      final windowsPlatform = FakePlatform(
+        operatingSystem: 'windows',
+        environment: <String, String>{'LOCALAPPDATA': windowsLocalAppData},
+      );
+
+      // 1. LOCALAPPDATA\Dart\dtd discovery + Windows backslash --file normalization.
+      final File dtdMetaFile = windowsFs.file(r'C:\Users\dev\AppData\Local\Dart\dtd\daemon.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(jsonEncode(<String, Object?>{'uri': kDtdWsUri1}));
+      final discoveryDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(projectRoot: windowsProjectRoot),
+        },
+        listPreviewsResponse: PreviewListResponse(previews: <PreviewEntry>[createSampleEntry()]),
+      );
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final discoveryProcessManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+      ]);
+      final discoveryContext = FakeToolContext(
+        artifacts: artifacts,
+        cache: FakeCache(fileSystem: windowsFs, flutterRoot: windowsFlutterRoot),
+        fs: windowsFs,
+        logger: humanLogger,
+        platform: windowsPlatform,
+        processManager: discoveryProcessManager,
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final discoveryClient = WidgetPreviewSessionClient(
+        toolContext: discoveryContext,
+        dtdConnector: (Uri uri) async {
+          expect(uri.toString(), kDtdWsUri1);
+          return discoveryDtd;
+        },
+      );
+
+      final (
+        commandResult: FlutterCommandResult? winListResult,
+        exitCode: int winListExitCode,
+      ) = await runSubcommand(
+        args: const <String>[r'--file=lib\card.dart', '--no-sync'],
+        client: discoveryClient,
+        fileSystem: windowsFs,
+        isSnapshot: false,
+        machine: false,
+        platform: windowsPlatform,
+      );
+      expect(winListResult?.exitStatus, ExitStatus.success);
+      expect(winListExitCode, 0);
+      expect(discoveryProcessManager, hasNoRemainingExpectations);
+      expect(
+        discoveryDtd.calls.last,
+        equals(<String, Object?>{
+          'service': kPreviewServiceUuid,
+          'method': WidgetPreviewDtdServices.kListPreviews,
+          'params': <String, Object?>{
+            'sync': false,
+            'fileUri': 'file:///C:/src/my_app/lib/card.dart',
+          },
+        }),
+      );
+
+      // 2. Ephemeral headless fallback on Windows spawns flutter.bat and tears down with taskkill /F /T /PID.
+      dtdMetaFile.deleteSync();
+      final winProcessCompleter = Completer<void>();
+      final String winStartedLine = jsonEncode(<Map<String, Object?>>[
+        <String, Object?>{
+          'event': 'widget_preview.initializing',
+          'params': <String, Object?>{'pid': 4321},
+        },
+        <String, Object?>{
+          'event': 'widget_preview.started',
+          'params': <String, Object?>{
+            'url': 'http://localhost:54321',
+            'dtdUri': kDtdWsUri2,
+            'previewService': kPreviewServiceUuid,
+            'scaffoldService': kScaffoldServiceUuid,
+            'projectRoot': windowsProjectRoot,
+          },
+        },
+      ]);
+      final winHeadlessProcess = FakeProcess(
+        completer: winProcessCompleter,
+        stdout: utf8.encode('$winStartedLine\n'),
+      );
+      final ephemeralDtd = _FakeCliDartToolingDaemon(
+        serviceNames: <String>[kPreviewServiceUuid],
+        serviceInfos: <String, PreviewServiceInfo>{
+          kPreviewServiceUuid: createServiceInfo(
+            dtdUri: kDtdWsUri2,
+            projectRoot: windowsProjectRoot,
+          ),
+        },
+        listPreviewsResponse: const PreviewListResponse(previews: <PreviewEntry>[]),
+      );
+      final killedWinPids = <int>[];
+      final ephemeralProcessManager = _PidTrackingFakeProcessManager(
+        commands: <FakeCommand>[
+          FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+          FakeCommand(
+            command: const <String>[
+              r'C:\flutter\bin\flutter.bat',
+              'widget-preview',
+              'start',
+              '--headless',
+              '--machine',
+            ],
+            workingDirectory: windowsProjectRoot,
+            process: winHeadlessProcess,
+          ),
+          FakeCommand(
+            command: const <String>['taskkill', '/F', '/T', '/PID', '1234'],
+            onRun: (_) {
+              if (!winProcessCompleter.isCompleted) {
+                winProcessCompleter.complete();
+              }
+            },
+          ),
+        ],
+        onKillPid: (int pid, io.ProcessSignal signal) {
+          killedWinPids.add(pid);
+          return true;
+        },
+      );
+      final ephemeralContext = FakeToolContext(
+        artifacts: artifacts,
+        cache: FakeCache(fileSystem: windowsFs, flutterRoot: windowsFlutterRoot),
+        fs: windowsFs,
+        logger: humanLogger,
+        platform: windowsPlatform,
+        processManager: ephemeralProcessManager,
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      final ephemeralClient = WidgetPreviewSessionClient(
+        toolContext: ephemeralContext,
+        dtdConnector: (Uri uri) async {
+          expect(uri.toString(), kDtdWsUri2);
+          return ephemeralDtd;
+        },
+      );
+
+      final (
+        commandResult: FlutterCommandResult? winHeadlessResult,
+        exitCode: int winHeadlessExitCode,
+      ) = await runSubcommand(
+        args: const <String>[],
+        client: ephemeralClient,
+        fileSystem: windowsFs,
+        isSnapshot: false,
+        machine: false,
+        platform: windowsPlatform,
+      );
+      expect(winHeadlessResult?.exitStatus, ExitStatus.success);
+      expect(winHeadlessExitCode, 0);
+      expect(ephemeralProcessManager.base, hasNoRemainingExpectations);
+      expect(winProcessCompleter.isCompleted, isTrue);
+      expect(killedWinPids, contains(4321));
+      expect(ephemeralDtd.closed, isTrue);
+    });
+  });
+}
+
+class _StubbornExitProcess extends FakeProcess {
+  _StubbornExitProcess({required this._exitCompleter, required List<int> stdoutBytes})
+    : super(completer: _exitCompleter, stdout: stdoutBytes);
+
+  final Completer<void> _exitCompleter;
+  bool exited = false;
+
+  @override
+  bool kill([io.ProcessSignal signal = io.ProcessSignal.sigterm]) {
+    super.kill(signal);
+    if (signal == io.ProcessSignal.sigkill && !_exitCompleter.isCompleted) {
+      exited = true;
+      _exitCompleter.complete();
+    }
+    return true;
+  }
+}
+
+class _PidTrackingFakeProcessManager extends Fake implements ProcessManager {
+  _PidTrackingFakeProcessManager({required List<FakeCommand> commands, required this.onKillPid})
+    : base = FakeProcessManager.list(commands);
+
+  final FakeProcessManager base;
+  final bool Function(int pid, io.ProcessSignal signal) onKillPid;
+
+  @override
+  bool canRun(Object? executable, {String? workingDirectory}) =>
+      base.canRun(executable, workingDirectory: workingDirectory);
+
+  @override
+  Future<io.Process> start(
+    List<Object> command, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    io.ProcessStartMode mode = io.ProcessStartMode.normal,
+  }) {
+    return base.start(
+      command,
+      workingDirectory: workingDirectory,
+      environment: environment,
+      includeParentEnvironment: includeParentEnvironment,
+      runInShell: runInShell,
+      mode: mode,
+    );
+  }
+
+  @override
+  Future<io.ProcessResult> run(
+    List<Object> command, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    Encoding? stdoutEncoding = io.systemEncoding,
+    Encoding? stderrEncoding = io.systemEncoding,
+  }) {
+    return base.run(
+      command,
+      workingDirectory: workingDirectory,
+      environment: environment,
+      includeParentEnvironment: includeParentEnvironment,
+      runInShell: runInShell,
+      stdoutEncoding: stdoutEncoding,
+      stderrEncoding: stderrEncoding,
+    );
+  }
+
+  @override
+  bool killPid(int pid, [io.ProcessSignal signal = io.ProcessSignal.sigterm]) =>
+      onKillPid(pid, signal);
+}
+
+class _FakeCliDartToolingDaemon extends Fake implements DartToolingDaemon {
+  _FakeCliDartToolingDaemon({
+    required this.serviceInfos,
+    required this.serviceNames,
+    this.callStateError,
+    this.captureError,
+    this.captureResponse,
+    this.closeError,
+    this.listPreviewsResponse,
+  });
+
+  final List<String> serviceNames;
+  final Map<String, PreviewServiceInfo> serviceInfos;
+  PreviewListResponse? listPreviewsResponse;
+  SyncPreviewsResponse syncResponse = const SyncPreviewsResponse(
+    compileSuccess: true,
+    errorPreviewCount: 0,
+    fullRestart: false,
+    reloaded: true,
+  );
+  CapturePreviewResponse? captureResponse;
+  RpcException? captureError;
+  StateError? callStateError;
+  Exception? closeError;
+  void Function(String streamId)? onStreamSubscribed;
+  final _eventControllers = <String, StreamController<DTDEvent>>{};
+  final _doneCompleter = Completer<void>();
+  final calls = <Map<String, Object?>>[];
+  bool closed = false;
+
+  @override
+  bool get isClosed => closed;
+
+  @override
+  Future<void> get done => _doneCompleter.future;
+
+  void simulateUnexpectedDisconnect() {
+    closed = true;
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
+    }
+  }
+
+  void emitEvent(String streamId, String kind) {
+    _eventControllers[streamId]?.add(DTDEvent(streamId, kind, const <String, Object?>{}, 0));
+  }
+
+  @override
+  Stream<DTDEvent> onEvent(String streamId) {
+    return _eventControllers.putIfAbsent(streamId, StreamController<DTDEvent>.broadcast).stream;
+  }
+
+  @override
+  Future<void> streamListen(String streamId) async {
+    onStreamSubscribed?.call(streamId);
+  }
+
+  @override
+  Future<RegisteredServicesResponse> getRegisteredServices() async {
+    return RegisteredServicesResponse.fromDTDResponse(
+      DTDResponse('1', RegisteredServicesResponse.type, <String, Object?>{
+        'type': RegisteredServicesResponse.type,
+        'dtdServices': <String>[],
+        'clientServices': <Map<String, Object?>>[
+          for (final String name in serviceNames)
+            <String, Object?>{'name': name, 'methods': <Map<String, Object?>>[]},
+        ],
+      }),
+    );
+  }
+
+  @override
+  Future<DTDResponse> call(
+    String? serviceName,
+    String methodName, {
+    Map<String, Object?>? params,
+  }) async {
+    calls.add(<String, Object?>{'service': serviceName, 'method': methodName, 'params': params});
+    if (methodName != WidgetPreviewDtdServices.kGetServiceInfo) {
+      if (callStateError case final StateError error) {
+        throw error;
+      }
+    }
+    switch (methodName) {
+      case WidgetPreviewDtdServices.kGetServiceInfo:
+        final PreviewServiceInfo? info = serviceInfos[serviceName];
+        if (info == null) {
+          throw RpcException(RpcErrorCodes.kMethodNotFound, 'Unknown service $serviceName');
+        }
+        return DTDResponse('1', PreviewServiceInfo.kTypeName, info.toJson());
+      case WidgetPreviewDtdServices.kListPreviews:
+        final PreviewListResponse response =
+            listPreviewsResponse ?? const PreviewListResponse(previews: <PreviewEntry>[]);
+        return DTDResponse('1', PreviewListResponse.kTypeName, response.toJson());
+      case WidgetPreviewDtdServices.kSyncPreviews:
+        return DTDResponse('1', SyncPreviewsResponse.kTypeName, syncResponse.toJson());
+      case WidgetPreviewDtdServices.kCapturePreview:
+        if (captureError case final RpcException error) {
+          throw error;
+        }
+        final CapturePreviewResponse response =
+            captureResponse ??
+            const CapturePreviewResponse(
+              diagnostics: <PreviewDiagnostic>[],
+              hasErrors: false,
+              pixelRatio: 1.0,
+              previewId: 'default',
+              renderedHeight: 100.0,
+              renderedWidth: 100.0,
+            );
+        return DTDResponse('1', CapturePreviewResponse.kTypeName, response.toJson());
+      default:
+        throw UnimplementedError('Unexpected DTD call: $serviceName.$methodName');
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
+    }
+    for (final StreamController<DTDEvent> controller in _eventControllers.values) {
+      await controller.close();
+    }
+    if (closeError case final Exception error) {
+      throw error;
+    }
+  }
 }

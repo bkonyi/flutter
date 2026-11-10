@@ -58,21 +58,18 @@ class WidgetPreviewDtdServices {
   }
 
   /// The name of the widget preview service, without a UUID.
-  @visibleForTesting
   static const kWidgetPreviewServiceRoot = 'widget-preview';
 
   /// The actual name of the registered widget preview service.
   late final String widgetPreviewService = _withUuid(kWidgetPreviewServiceRoot);
 
   /// The name of the widget preview scaffold service, without a UUID.
-  @visibleForTesting
   static const kWidgetPreviewScaffoldServiceRoot = 'PreviewScaffold';
 
   /// The actual name of the registered widget preview scaffold service.
   late final String widgetPreviewScaffoldService = _withUuid(kWidgetPreviewScaffoldServiceRoot);
 
   /// The name of the widget preview stream, without a UUID.
-  @visibleForTesting
   static const kWidgetPreviewScaffoldStreamRoot = 'WidgetPreviewScaffold';
 
   /// The actual name of the widget preview stream.

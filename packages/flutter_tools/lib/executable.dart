@@ -87,18 +87,25 @@ Future<void> main(List<String> args) async {
     args[slashQuestionHelpIndex] = '-h';
   }
 
-  final String? commandName = findCommandName(args);
+  final (:String? commandName, :String? subcommandName) = findCommandAndSubcommandName(args);
   final doctor = commandName == 'doctor';
   final bool help =
       args.contains('-h') ||
       args.contains('--help') ||
       commandName == 'help' ||
       (args.length == 1 && verbose);
-  final bool muteCommandLogging = (help || doctor) && !veryVerbose;
+  final bool runMachine = args.contains('--${FlutterGlobalOptions.kMachineFlag}');
+  final bool widgetPreviewJsonSubcommand =
+      commandName == WidgetPreviewCommand.kWidgetPreview &&
+      (subcommandName == WidgetPreviewListCommand.kList ||
+          subcommandName == WidgetPreviewSnapshotCommand.kSnapshot);
+  final bool muteCommandLogging =
+      ((help || doctor) && !veryVerbose) || (widgetPreviewJsonSubcommand && runMachine);
   final bool verboseHelp = help && verbose;
   final daemon = commandName == 'daemon';
-  final widgetPreviews = commandName == WidgetPreviewCommand.kWidgetPreview;
-  final bool runMachine = args.contains('--machine');
+  final bool widgetPreviews =
+      commandName == WidgetPreviewCommand.kWidgetPreview &&
+      subcommandName == WidgetPreviewStartCommand.kStart;
   const Platform platform = LocalPlatform();
   final stdio = Stdio();
   final ShutdownHooks shutdownHooks = LocalSignals.instance.shutdownHooks;
@@ -183,16 +190,40 @@ Future<void> main(List<String> args) async {
 /// [ArgResults.rest]. `help` is the exception, since the command runner
 /// registers it on the parser itself and so reports it as a parsed command.
 @visibleForTesting
-String? findCommandName(List<String> args, {ToolContext? toolContext}) {
+String? findCommandName(List<String> args, {ToolContext? toolContext}) =>
+    findCommandAndSubcommandName(args, toolContext: toolContext).commandName;
+
+/// Returns the top-level command name and, for `widget-preview`, its
+/// subcommand name in `args`.
+@visibleForTesting
+({String? commandName, String? subcommandName}) findCommandAndSubcommandName(
+  List<String> args, {
+  ToolContext? toolContext,
+}) {
   final ArgResults results;
   try {
     results = FlutterCommandRunner(toolContext: toolContext ?? _FallbackToolContext()).argParser
         .parse(args);
   } on ArgParserException {
     // The real parser will complain about these later.
-    return null;
+    return (commandName: null, subcommandName: null);
   }
-  return results.command?.name ?? results.rest.firstOrNull;
+  if (results.command case final ArgResults command) {
+    return (commandName: command.name, subcommandName: null);
+  }
+  final String? commandName = results.rest.firstOrNull;
+  if (commandName != WidgetPreviewCommand.kWidgetPreview) {
+    return (commandName: commandName, subcommandName: null);
+  }
+  final subcommandParser = ArgParser(allowTrailingOptions: false)
+    ..addFlag('help', abbr: 'h', negatable: false)
+    ..addFlag(FlutterGlobalOptions.kVerboseFlag, abbr: 'v', negatable: false);
+  try {
+    final ArgResults subResults = subcommandParser.parse(results.rest.skip(1));
+    return (commandName: commandName, subcommandName: subResults.rest.firstOrNull);
+  } on ArgParserException {
+    return (commandName: commandName, subcommandName: null);
+  }
 }
 
 class _FallbackToolContext implements ToolContext {
