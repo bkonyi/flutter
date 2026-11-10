@@ -133,8 +133,17 @@ class WidgetPreviewDtdServices {
   static const kSyncPreviews = 'syncPreviews';
   static const kListPreviews = 'listPreviews';
   static const kGetPreviews = 'getPreviews';
+  static const kCapturePreview = 'capturePreview';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
+
+  /// Error code for [RpcException] thrown when a requested preview ID or name
+  /// does not match any registered preview.
+  static const kPreviewNotFoundErrorCode = 101;
+
+  /// Error code for [RpcException] thrown when a shorthand preview name
+  /// matches more than one registered preview.
+  static const kAmbiguousPreviewNameErrorCode = 102;
 
   /// Error code for RpcException thrown when attempting to load a key from
   /// persistent preferences that doesn't have an entry, or when a requested

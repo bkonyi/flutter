@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'dtd/dtd_services.dart';
@@ -16,6 +17,12 @@ enum LayoutType { gridView, listView }
 typedef WidgetPreviews = Iterable<WidgetPreview>;
 typedef WidgetPreviewGroups = Iterable<WidgetPreviewGroup>;
 typedef PreviewsCallback = WidgetPreviews Function();
+typedef StagePreviewCaptureCallback =
+    Future<CapturePreviewResponse> Function({
+      required WidgetPreview preview,
+      required PreviewCaptureRequest request,
+      required double resolvedPixelRatio,
+    });
 
 /// Controller used to process events and determine which previews should be
 /// displayed and how they should be displayed in the [WidgetPreviewScaffold].
@@ -23,13 +30,29 @@ class WidgetPreviewScaffoldController {
   WidgetPreviewScaffoldController({
     required PreviewsCallback previews,
     @visibleForTesting WidgetPreviewScaffoldDtdServices? dtdServicesOverride,
+    @visibleForTesting this.stageFrameTimeout = _kDefaultStageFrameTimeout,
+    @visibleForTesting this.stageHostTimeout = _kDefaultStageHostTimeout,
     // ignore: prefer_initializing_formals
   }) : _previews = previews,
        dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices() {
     _context = _createPathContext();
     _refreshPreviewsSnapshot();
-    dtdServices.onGetPreviews = getPreviews;
+    dtdServices
+      ..onGetPreviews = getPreviews
+      ..onCapturePreview = capturePreview;
   }
+
+  static const _kDefaultCapturePixelRatio = 1.0;
+  static const _kCanonicalIdSeparator = '::';
+  static const _kDefaultStageFrameTimeout = Duration(seconds: 5);
+  static const _kDefaultStageHostTimeout = Duration(seconds: 10);
+
+  /// Maximum time to wait for a single off-screen stage frame to complete.
+  final Duration stageFrameTimeout;
+
+  /// Maximum time to wait for [WidgetPreviewScaffold] to mount and attach its
+  /// off-screen stage capture host.
+  final Duration stageHostTimeout;
 
   @visibleForTesting
   static const kFilterBySelectedFilePreference = 'filterBySelectedFile';
@@ -52,6 +75,18 @@ class WidgetPreviewScaffoldController {
 
   /// Cleanup internal controller state.
   Future<void> dispose() async {
+    _stageCaptureHost = null;
+    if (_stageCaptureHostCompleter
+        case final Completer<StagePreviewCaptureCallback> completer
+        when !completer.isCompleted) {
+      completer.completeError(
+        RpcException(
+          WidgetPreviewScaffoldDtdServices.kNoValueForKey,
+          'WidgetPreviewScaffold is not currently mounted.',
+        ),
+      );
+    }
+    _stageCaptureHostCompleter = null;
     await dtdServices.dispose();
     clearAllDiagnostics();
     _liveDiagnosticPruners.clear();
@@ -237,6 +272,122 @@ class WidgetPreviewScaffoldController {
       );
     }
     return PreviewListResponse(previews: entries);
+  }
+
+  final _captureLock = _AsyncCaptureLock();
+  StagePreviewCaptureCallback? _stageCaptureHost;
+  Completer<StagePreviewCaptureCallback>? _stageCaptureHostCompleter;
+
+  /// Registers the active [WidgetPreviewScaffold] off-screen staging host.
+  void attachStageCaptureHost(StagePreviewCaptureCallback host) {
+    _stageCaptureHost = host;
+    if (_stageCaptureHostCompleter
+        case final Completer<StagePreviewCaptureCallback> completer
+        when !completer.isCompleted) {
+      completer.complete(host);
+    }
+    _stageCaptureHostCompleter = null;
+  }
+
+  /// Unregisters [host] if it matches the currently attached staging host.
+  void detachStageCaptureHost(StagePreviewCaptureCallback host) {
+    if (_stageCaptureHost == host) {
+      _stageCaptureHost = null;
+    }
+  }
+
+  Future<StagePreviewCaptureCallback> _waitForStageCaptureHost() async {
+    if (_stageCaptureHost case final StagePreviewCaptureCallback host) {
+      return host;
+    }
+    final Completer<StagePreviewCaptureCallback> completer =
+        _stageCaptureHostCompleter ??= Completer<StagePreviewCaptureCallback>();
+    try {
+      return await completer.future.timeout(stageHostTimeout);
+    } on TimeoutException {
+      if (identical(_stageCaptureHostCompleter, completer)) {
+        _stageCaptureHostCompleter = null;
+      }
+      throw RpcException(
+        WidgetPreviewScaffoldDtdServices.kNoValueForKey,
+        'WidgetPreviewScaffold is not currently mounted.',
+      );
+    }
+  }
+
+  /// Resolves [previewId] against all unfiltered [previews].
+  ///
+  /// Matches canonical [WidgetPreview.id] first, falling back to a unique
+  /// `previewData.name` match when [previewId] does not contain `'::'`.
+  /// Throws an [RpcException] with code `101` when no preview matches or code
+  /// `102` listing candidate canonical IDs when a shorthand name is ambiguous.
+  WidgetPreview resolvePreview(String previewId) {
+    for (final WidgetPreview preview in _cachedPreviews) {
+      if (preview.id == previewId) {
+        return preview;
+      }
+    }
+    if (!previewId.contains(_kCanonicalIdSeparator)) {
+      final nameMatches = <WidgetPreview>[
+        for (final WidgetPreview preview in _cachedPreviews)
+          if (preview.previewData.name == previewId) preview,
+      ];
+      if (nameMatches.length == 1) {
+        return nameMatches.single;
+      }
+      if (nameMatches.length > 1) {
+        final String candidates = nameMatches
+            .map((WidgetPreview p) => p.id)
+            .join(', ');
+        throw RpcException(
+          WidgetPreviewScaffoldDtdServices.kAmbiguousPreviewNameErrorCode,
+          'Preview name "$previewId" is ambiguous; specify one of: $candidates',
+        );
+      }
+    }
+    final String availableIds = _cachedPreviews
+        .map((WidgetPreview p) => p.id)
+        .join(', ');
+    throw RpcException(
+      WidgetPreviewScaffoldDtdServices.kPreviewNotFoundErrorCode,
+      'Preview "$previewId" not found. Available IDs: $availableIds',
+    );
+  }
+
+  /// Stages [request] in the off-screen host serialized by an async lock,
+  /// captures its rendered dimensions, optional PNG snapshot, and diagnostics,
+  /// and unmounts the staged preview.
+  Future<CapturePreviewResponse> capturePreview(PreviewCaptureRequest request) {
+    return _captureLock.runGuarded<CapturePreviewResponse>(() async {
+      final WidgetPreview preview = resolvePreview(request.previewId);
+      final double resolvedPixelRatio =
+          request.pixelRatio ?? _kDefaultCapturePixelRatio;
+      if (preview.hasError) {
+        return CapturePreviewResponse(
+          diagnostics: <PreviewDiagnostic>[
+            PreviewDiagnostic(
+              kind: .compileError,
+              phase: .compile,
+              summary:
+                  preview.errorMessage ?? '${preview.libraryUri} has errors!',
+            ),
+          ],
+          hasErrors: true,
+          imageBase64: null,
+          name: preview.name,
+          pixelRatio: resolvedPixelRatio,
+          previewId: preview.id,
+          renderedHeight: 0.0,
+          renderedWidth: 0.0,
+        );
+      }
+      final StagePreviewCaptureCallback host = await _waitForStageCaptureHost();
+      return host(
+        preview: preview,
+        request: request,
+        resolvedPixelRatio: resolvedPixelRatio,
+      );
+    });
   }
 
   /// Specifies how the previews should be laid out.
@@ -527,5 +678,23 @@ class _PreviewDiagnosticsState {
           d.kind == PreviewDiagnosticKind.overflow &&
           d.targetType == 'RenderFlex',
     );
+  }
+}
+
+class _AsyncCaptureLock {
+  Completer<void>? _active;
+
+  Future<T> runGuarded<T>(Future<T> Function() action) async {
+    while (_active != null) {
+      await _active!.future;
+    }
+    final completer = Completer<void>();
+    _active = completer;
+    try {
+      return await action();
+    } finally {
+      _active = null;
+      completer.complete();
+    }
   }
 }

@@ -68,6 +68,10 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   PreviewListResponse Function({String? fileUri})? onGetPreviews;
 
   @override
+  Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
+  onCapturePreview;
+
+  @override
   Future<void> connect({Uri? dtdUri}) async {}
 
   @override

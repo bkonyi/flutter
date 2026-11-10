@@ -828,3 +828,110 @@ class PreviewListResponse {
     );
   }
 }
+
+/// DTD response returned by `PreviewScaffold.capturePreview` containing the
+/// rendered dimensions, optional base64-encoded PNG snapshot, and structured
+/// diagnostics for a single widget preview.
+class CapturePreviewResponse {
+  const CapturePreviewResponse({
+    required this.diagnostics,
+    required this.hasErrors,
+    required this.pixelRatio,
+    required this.previewId,
+    required this.renderedHeight,
+    required this.renderedWidth,
+    this.imageBase64,
+    this.name,
+  });
+
+  factory CapturePreviewResponse.fromDTDResponse(DTDResponse response) {
+    if (response.result[kType] != kTypeName) {
+      throw RpcException.invalidParams(
+        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
+      );
+    }
+    return CapturePreviewResponse.fromJson(response.result);
+  }
+
+  static const kDiagnostics = 'diagnostics';
+  static const kHasErrors = 'hasErrors';
+  static const kImageBase64 = 'imageBase64';
+  static const kName = 'name';
+  static const kPixelRatio = 'pixelRatio';
+  static const kPreviewId = 'previewId';
+  static const kRenderedHeight = 'renderedHeight';
+  static const kRenderedWidth = 'renderedWidth';
+  static const kType = 'type';
+  static const kTypeName = 'CapturePreviewResponse';
+
+  final List<PreviewDiagnostic> diagnostics;
+  final bool hasErrors;
+  final String? imageBase64;
+  final String? name;
+  final double pixelRatio;
+  final String previewId;
+  final double renderedHeight;
+  final double renderedWidth;
+
+  @override
+  int get hashCode => Object.hash(
+    const ListEquality<PreviewDiagnostic>().hash(diagnostics),
+    hasErrors,
+    imageBase64,
+    name,
+    pixelRatio,
+    previewId,
+    renderedHeight,
+    renderedWidth,
+  );
+
+  @override
+  bool operator ==(Object other) {
+    return other is CapturePreviewResponse &&
+        other.runtimeType == CapturePreviewResponse &&
+        const ListEquality<PreviewDiagnostic>().equals(diagnostics, other.diagnostics) &&
+        hasErrors == other.hasErrors &&
+        imageBase64 == other.imageBase64 &&
+        name == other.name &&
+        pixelRatio == other.pixelRatio &&
+        previewId == other.previewId &&
+        renderedHeight == other.renderedHeight &&
+        renderedWidth == other.renderedWidth;
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      kType: kTypeName,
+      kPreviewId: previewId,
+      kName: name,
+      kRenderedWidth: renderedWidth,
+      kRenderedHeight: renderedHeight,
+      kPixelRatio: pixelRatio,
+      kImageBase64: imageBase64,
+      kHasErrors: hasErrors,
+      kDiagnostics: <Map<String, Object?>>[
+        for (final PreviewDiagnostic diagnostic in diagnostics) diagnostic.toJson(),
+      ],
+    };
+  }
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static CapturePreviewResponse fromJson(Map<String, Object?> json) {
+    final diagnosticsJson = json[kDiagnostics]! as List<Object?>;
+    return CapturePreviewResponse(
+      diagnostics: <PreviewDiagnostic>[
+        for (final Object? item in diagnosticsJson)
+          PreviewDiagnostic.fromJson(item! as Map<String, Object?>),
+      ],
+      hasErrors: json[kHasErrors]! as bool,
+      imageBase64: json[kImageBase64] as String?,
+      name: json[kName] as String?,
+      pixelRatio: (json[kPixelRatio]! as num).toDouble(),
+      previewId: json[kPreviewId]! as String,
+      renderedHeight: (json[kRenderedHeight]! as num).toDouble(),
+      renderedWidth: (json[kRenderedWidth]! as num).toDouble(),
+    );
+  }
+}

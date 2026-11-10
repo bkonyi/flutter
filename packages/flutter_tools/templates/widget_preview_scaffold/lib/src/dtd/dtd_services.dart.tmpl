@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:ui' show Brightness;
 
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -14,6 +15,7 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 /// Provides services, streams, and RPC invocations to interact with Flutter developer tooling.
 class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   WidgetPreviewScaffoldDtdServices({
+    this.onCapturePreview,
     this.onGetPreviews,
     this.scaffoldServiceName = kWidgetPreviewScaffoldService,
   });
@@ -35,8 +37,17 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kSyncPreviews = 'syncPreviews';
   static const kListPreviews = 'listPreviews';
   static const kGetPreviews = 'getPreviews';
+  static const kCapturePreview = 'capturePreview';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
+
+  /// Error code for [RpcException] thrown when a requested preview ID or name
+  /// does not match any registered preview.
+  static const kPreviewNotFoundErrorCode = 101;
+
+  /// Error code for [RpcException] thrown when a shorthand preview name
+  /// matches more than one registered preview.
+  static const kAmbiguousPreviewNameErrorCode = 102;
 
   /// Error code for RpcException thrown when attempting to load a key from
   /// persistent preferences that doesn't have an entry, or when a requested
@@ -45,14 +56,25 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
 
   // END KEEP SYNCED
 
+  static const kBrightness = 'brightness';
   static const kFileUri = 'fileUri';
+  static const kHeight = 'height';
+  static const kIncludeImage = 'includeImage';
+  static const kPixelRatio = 'pixelRatio';
+  static const kPreviewId = 'previewId';
+  static const kTextScaleFactor = 'textScaleFactor';
   static const kUrl = 'url';
+  static const kWidth = 'width';
 
   /// The DTD service name under which scaffold RPC methods are registered.
   final String scaffoldServiceName;
 
   /// Callback invoked when [kGetPreviews] is requested over DTD.
   PreviewListResponse Function({String? fileUri})? onGetPreviews;
+
+  /// Callback invoked when [kCapturePreview] is requested over DTD.
+  Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
+  onCapturePreview;
 
   /// Connects to the Dart Tooling Daemon (DTD) specified by the Flutter tool.
   ///
@@ -63,6 +85,11 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     dtd = await DartToolingDaemon.connect(dtdWsUri);
     await _determineIfWindows();
     await dtd.registerService(scaffoldServiceName, kGetPreviews, _getPreviews);
+    await dtd.registerService(
+      scaffoldServiceName,
+      kCapturePreview,
+      _capturePreview,
+    );
     unawaited(
       dtd.postEvent(
         kWidgetPreviewScaffoldStream,
@@ -82,6 +109,69 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         onGetPreviews?.call(fileUri: fileUri) ??
         const PreviewListResponse(previews: <PreviewEntry>[]);
     return response.toJson();
+  }
+
+  Future<Map<String, Object?>> _capturePreview(Parameters params) async {
+    if (params.value == null || params[kPreviewId].valueOr(null) == null) {
+      throw RpcException.invalidParams(
+        'Missing required parameter "$kPreviewId".',
+      );
+    }
+    final String previewId = params[kPreviewId].asString;
+    final double? width = _optionalPositiveDouble(params, kWidth);
+    final double? height = _optionalPositiveDouble(params, kHeight);
+    final double? pixelRatio = _optionalPositiveDouble(params, kPixelRatio);
+    final double? textScaleFactor = _optionalPositiveDouble(
+      params,
+      kTextScaleFactor,
+    );
+    final Brightness? brightness =
+        params.value == null || params[kBrightness].valueOr(null) == null
+        ? null
+        : switch (params[kBrightness].asString) {
+            'light' => Brightness.light,
+            'dark' => Brightness.dark,
+            final String other => throw RpcException.invalidParams(
+              'Parameter "$kBrightness" must be "light" or "dark", got: "$other".',
+            ),
+          };
+    final bool includeImage =
+        params.value == null ||
+        params[kIncludeImage].valueOr(null) == null ||
+        params[kIncludeImage].asBool;
+    final Future<CapturePreviewResponse> Function(PreviewCaptureRequest)?
+    captureCallback = onCapturePreview;
+    if (captureCallback == null) {
+      throw RpcException(
+        kNoValueForKey,
+        'Preview capture is not currently available.',
+      );
+    }
+    final CapturePreviewResponse response = await captureCallback(
+      PreviewCaptureRequest(
+        brightness: brightness,
+        height: height,
+        includeImage: includeImage,
+        pixelRatio: pixelRatio,
+        previewId: previewId,
+        textScaleFactor: textScaleFactor,
+        width: width,
+      ),
+    );
+    return response.toJson();
+  }
+
+  static double? _optionalPositiveDouble(Parameters params, String key) {
+    if (params.value == null || params[key].valueOr(null) == null) {
+      return null;
+    }
+    final double value = params[key].asNum.toDouble();
+    if (!value.isFinite || value <= 0) {
+      throw RpcException.invalidParams(
+        'Parameter "$key" must be a positive finite number, got: $value.',
+      );
+    }
+    return value;
   }
 
   /// Disposes the DTD connection.

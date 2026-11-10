@@ -399,6 +399,72 @@ void main() {
         );
       },
     );
+
+    testWithoutContext('CapturePreviewResponse serialization and equality', () {
+      const overflowDiag = PreviewDiagnostic(
+        kind: .overflow,
+        overflowAxis: 'horizontal',
+        overflowPixels: 48.0,
+        overflowSide: 'right',
+        phase: .paint,
+        summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+        targetType: 'RenderFlex',
+      );
+      const captureResponse = CapturePreviewResponse(
+        diagnostics: <PreviewDiagnostic>[overflowDiag],
+        hasErrors: true,
+        imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        name: 'Mobile Light',
+        pixelRatio: 2.0,
+        previewId: 'package:my_app/card.dart::cardPreview',
+        renderedHeight: 220.0,
+        renderedWidth: 375.0,
+      );
+      final Map<String, Object?> json = captureResponse.toJson();
+      expect(
+        json,
+        equals(<String, Object?>{
+          'type': 'CapturePreviewResponse',
+          'previewId': 'package:my_app/card.dart::cardPreview',
+          'name': 'Mobile Light',
+          'renderedWidth': 375.0,
+          'renderedHeight': 220.0,
+          'pixelRatio': 2.0,
+          'imageBase64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          'hasErrors': true,
+          'diagnostics': <Map<String, Object?>>[overflowDiag.toJson()],
+        }),
+      );
+      final deserialized = CapturePreviewResponse.fromDTDResponse(
+        DTDResponse('1', CapturePreviewResponse.kTypeName, json),
+      );
+      expect(deserialized, equals(captureResponse));
+      expect(deserialized.hashCode, equals(captureResponse.hashCode));
+      expect(deserialized.toString(), contains('CapturePreviewResponse'));
+
+      // Verify JS integer-encoded float fields round-trip cleanly to double.
+      final jsEncodedJson = <String, Object?>{
+        ...json,
+        'renderedWidth': 375,
+        'renderedHeight': 220,
+        'pixelRatio': 2,
+      };
+      expect(
+        CapturePreviewResponse.fromDTDResponse(
+          DTDResponse('1', CapturePreviewResponse.kTypeName, jsEncodedJson),
+        ),
+        equals(captureResponse),
+      );
+
+      expect(
+        () => CapturePreviewResponse.fromDTDResponse(
+          DTDResponse('1', 'WrongType', <String, Object?>{'type': 'WrongType'}),
+        ),
+        throwsA(
+          isA<RpcException>().having((RpcException e) => e.code, 'code', error_code.INVALID_PARAMS),
+        ),
+      );
+    });
   });
 
   group('WidgetPreviewDtdServices Method Registration & Handlers', () {

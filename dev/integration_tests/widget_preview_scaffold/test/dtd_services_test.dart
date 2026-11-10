@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:io' show Process, ProcessStartMode;
 
+import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
@@ -21,6 +22,7 @@ import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/persistent_preferences.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter/widgets.dart' show Brightness, Size, SizedBox;
+import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/fake.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
@@ -417,6 +419,217 @@ void main() {
           params: <String, Object?>{'sync': false},
         );
         expect(syncCalls, 1);
+      },
+    );
+
+    testWithoutContext(
+      'registers ${WidgetPreviewScaffoldDtdServices.kCapturePreview} on scaffold '
+      'service and enforces wire schema and error codes over DTD',
+      () async {
+        dtdServer = await launchDtdServer();
+        dtdServer.setDevToolsServerAddress(
+          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
+          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
+        );
+
+        final dtd = WidgetPreviewScaffoldDtdServices();
+        scaffoldDtd = dtd;
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: dtd,
+          previews: () => <scaffold_preview.WidgetPreview>[
+            buildWidgetPreview(
+              column: 5,
+              functionName: 'cardPreview',
+              libraryUri: 'package:my_app/card.dart',
+              line: 12,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/card.dart',
+              transformedPreview: const Preview(name: 'Mobile Light'),
+            ),
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'dupOne',
+              libraryUri: 'package:my_app/a.dart',
+              line: 20,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/a.dart',
+              transformedPreview: const Preview(name: 'Shared'),
+            ),
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'dupTwo',
+              libraryUri: 'package:my_app/b.dart',
+              line: 30,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/b.dart',
+              transformedPreview: const Preview(name: 'Shared'),
+            ),
+            buildWidgetPreviewError(
+              column: 1,
+              dependencyHasErrors: false,
+              functionName: 'brokenPreview',
+              libraryUri: 'package:my_app/broken.dart',
+              line: 40,
+              packageName: 'my_app',
+              scriptUri: 'file:///project/lib/broken.dart',
+            ),
+          ],
+        );
+
+        scaffold_preview.PreviewCaptureRequest? lastRequest;
+        controller.attachStageCaptureHost(({
+          required scaffold_preview.WidgetPreview preview,
+          required scaffold_preview.PreviewCaptureRequest request,
+          required double resolvedPixelRatio,
+        }) async {
+          lastRequest = request;
+          return scaffold_preview.CapturePreviewResponse(
+            diagnostics: const <scaffold_preview.PreviewDiagnostic>[
+              scaffold_preview.PreviewDiagnostic(
+                kind: .overflow,
+                overflowAxis: 'horizontal',
+                overflowPixels: 48.0,
+                overflowSide: 'right',
+                phase: .paint,
+                summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+                targetType: 'RenderFlex',
+              ),
+            ],
+            hasErrors: true,
+            imageBase64: request.includeImage ? 'iVBORw0KGgo=' : null,
+            name: preview.name,
+            pixelRatio: resolvedPixelRatio,
+            previewId: preview.id,
+            renderedHeight: request.height ?? 220.0,
+            renderedWidth: request.width ?? 375.0,
+          );
+        });
+
+        await dtd.connect(dtdUri: dtdServer.dtdUri);
+        await dtdServer.waitForScaffoldConnected();
+
+        // Explicit null optional parameters and integer numbers decode cleanly.
+        final dtdResponse = await dtd.dtd.call(
+          dtd.scaffoldServiceName,
+          WidgetPreviewScaffoldDtdServices.kCapturePreview,
+          params: <String, Object?>{
+            'previewId': 'Mobile Light',
+            'width': 375,
+            'height': null,
+            'pixelRatio': null,
+            'brightness': 'dark',
+            'textScaleFactor': 1.5,
+            'includeImage': null,
+          },
+        );
+        final parsed = CapturePreviewResponse.fromDTDResponse(dtdResponse);
+        expect(parsed.previewId, 'package:my_app/card.dart::cardPreview');
+        expect(parsed.name, 'Mobile Light');
+        expect(parsed.renderedWidth, 375.0);
+        expect(parsed.renderedHeight, 220.0);
+        expect(parsed.pixelRatio, 1.0);
+        expect(parsed.imageBase64, 'iVBORw0KGgo=');
+        expect(parsed.hasErrors, isTrue);
+        expect(
+          parsed.diagnostics,
+          equals(<PreviewDiagnostic>[
+            const PreviewDiagnostic(
+              kind: .overflow,
+              overflowAxis: 'horizontal',
+              overflowPixels: 48.0,
+              overflowSide: 'right',
+              phase: .paint,
+              summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+              targetType: 'RenderFlex',
+            ),
+          ]),
+        );
+        expect(lastRequest!.brightness, Brightness.dark);
+        expect(lastRequest!.textScaleFactor, 1.5);
+        expect(lastRequest!.includeImage, isTrue);
+
+        // Compile-error preview short-circuits with compile_error diagnostic.
+        final brokenResponse = CapturePreviewResponse.fromDTDResponse(
+          await dtd.dtd.call(
+            dtd.scaffoldServiceName,
+            WidgetPreviewScaffoldDtdServices.kCapturePreview,
+            params: <String, Object?>{
+              'previewId': 'package:my_app/broken.dart::brokenPreview',
+            },
+          ),
+        );
+        expect(brokenResponse.hasErrors, isTrue);
+        expect(brokenResponse.imageBase64, isNull);
+        expect(
+          brokenResponse.diagnostics.single.kind,
+          PreviewDiagnosticKind.compileError,
+        );
+
+        // Error 101 on unknown preview and 102 on ambiguous name.
+        await expectLater(
+          dtd.dtd.call(
+            dtd.scaffoldServiceName,
+            WidgetPreviewScaffoldDtdServices.kCapturePreview,
+            params: <String, Object?>{'previewId': 'Unknown'},
+          ),
+          throwsA(
+            isA<RpcException>().having(
+              (RpcException e) => e.code,
+              'code',
+              WidgetPreviewDtdServices.kPreviewNotFoundErrorCode,
+            ),
+          ),
+        );
+        await expectLater(
+          dtd.dtd.call(
+            dtd.scaffoldServiceName,
+            WidgetPreviewScaffoldDtdServices.kCapturePreview,
+            params: <String, Object?>{'previewId': 'Shared'},
+          ),
+          throwsA(
+            isA<RpcException>().having(
+              (RpcException e) => e.code,
+              'code',
+              WidgetPreviewDtdServices.kAmbiguousPreviewNameErrorCode,
+            ),
+          ),
+        );
+
+        // Invalid parameters throw -32602 (RpcErrorCodes.kInvalidParams).
+        await expectLater(
+          dtd.dtd.call(
+            dtd.scaffoldServiceName,
+            WidgetPreviewScaffoldDtdServices.kCapturePreview,
+            params: <String, Object?>{
+              'previewId': 'Mobile Light',
+              'brightness': 'sepia',
+            },
+          ),
+          throwsA(
+            isA<RpcException>().having(
+              (RpcException e) => e.code,
+              'code',
+              RpcErrorCodes.kInvalidParams,
+            ),
+          ),
+        );
+        await expectLater(
+          dtd.dtd.call(
+            dtd.scaffoldServiceName,
+            WidgetPreviewScaffoldDtdServices.kCapturePreview,
+            params: <String, Object?>{'previewId': 'Mobile Light', 'width': 0},
+          ),
+          throwsA(
+            isA<RpcException>().having(
+              (RpcException e) => e.code,
+              'code',
+              RpcErrorCodes.kInvalidParams,
+            ),
+          ),
+        );
       },
     );
   });
