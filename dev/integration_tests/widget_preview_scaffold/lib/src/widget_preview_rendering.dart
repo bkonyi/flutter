@@ -1533,7 +1533,8 @@ class WidgetPreviewScaffold extends StatefulWidget {
   State<WidgetPreviewScaffold> createState() => _WidgetPreviewScaffoldState();
 }
 
-class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
+class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
+    with WidgetsBindingObserver {
   static const _kOffscreenStageOffset = -100000.0;
   static const _kMaxCaptureRasterDimension = 4096.0;
 
@@ -1549,24 +1550,14 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _embedParams = EmbedPreviewParams.fromCurrentUrl();
     _isEmbedSession = _embedParams.isEmbed;
+    if (_isEmbedSession) {
+      unawaited(SystemNavigator.selectMultiEntryHistory());
+    }
     _fragmentSubscription = onUrlFragmentChange.listen((String fragment) {
-      if (!mounted) {
-        return;
-      }
-      final updated = EmbedPreviewParams.fromFragment(fragment);
-      if (updated != _embedParams) {
-        if (!_isEmbedSession && updated.isEmbed) {
-          widget.controller.detachStageCaptureHost(_stageCaptureHost);
-        }
-        setState(() {
-          _embedParams = updated;
-          if (updated.isEmbed) {
-            _isEmbedSession = true;
-          }
-        });
-      }
+      _applyEmbedParams(EmbedPreviewParams.fromFragment(fragment));
     });
     _originalOnError = FlutterError.onError;
     FlutterError.onError = _handleFlutterError;
@@ -1593,6 +1584,7 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_fragmentSubscription?.cancel());
     _fragmentSubscription = null;
     widget.controller.detachStageCaptureHost(_stageCaptureHost);
@@ -1840,6 +1832,39 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
     }
 
     (_originalOnError ?? FlutterError.presentError)(details);
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) {
+    final Uri uri = routeInformation.uri;
+    final String fragment = uri.fragment.isNotEmpty
+        ? uri.fragment
+        : uri.toString();
+    final routeParams = EmbedPreviewParams.fromFragment(fragment);
+    if (routeParams.isEmbed) {
+      _applyEmbedParams(routeParams);
+      return SynchronousFuture<bool>(true);
+    }
+    if (_isEmbedSession || _embedParams.isEmbed) {
+      return SynchronousFuture<bool>(true);
+    }
+    return super.didPushRouteInformation(routeInformation);
+  }
+
+  void _applyEmbedParams(EmbedPreviewParams updated) {
+    if (!mounted || updated == _embedParams) {
+      return;
+    }
+    if (!_isEmbedSession && updated.isEmbed) {
+      widget.controller.detachStageCaptureHost(_stageCaptureHost);
+      unawaited(SystemNavigator.selectMultiEntryHistory());
+    }
+    setState(() {
+      _embedParams = updated;
+      if (updated.isEmbed) {
+        _isEmbedSession = true;
+      }
+    });
   }
 
   @override

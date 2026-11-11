@@ -21,6 +21,7 @@ class EmbedPreviewScaffold extends StatelessWidget {
 
   static const _kDefaultWindowSize = Size(800.0, 600.0);
   static const _kMaxStatusCardWidth = 480.0;
+  static const _kRootPageKey = ValueKey<String>('embed-preview-root');
   static const _kStatusCardPadding = 16.0;
   static const _kStatusSectionSpacing = 8.0;
 
@@ -50,31 +51,47 @@ class EmbedPreviewScaffold extends StatelessWidget {
                 ? (ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light)
                 : ThemeMode.system,
         };
+        // Use builder + Navigator instead of MaterialApp(home: ...) so
+        // WidgetsApp._usesNavigator stays false (never enabling
+        // SingleEntryBrowserHistory or Navigator.pushNamed on hash changes)
+        // while keeping a Navigator/Overlay ancestor for previewed widgets.
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: ThemeData.light(),
           darkTheme: ThemeData.dark(),
           themeMode: themeMode,
-          home: Scaffold(
-            body: LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-                if (lookup case PreviewLookupMatch(
-                  :final WidgetPreview preview,
-                ) when !preview.hasError) {
-                  return _buildMatchedPreview(
-                    context: context,
-                    constraints: constraints,
-                    preview: preview,
-                  );
-                }
-                return _buildStatusView(
-                  context: context,
-                  constraints: constraints,
-                  lookup: lookup,
-                );
-              },
-            ),
-          ),
+          title: null,
+          builder: (BuildContext context, Widget? _) {
+            return Navigator(
+              pages: <Page<void>>[
+                MaterialPage<void>(
+                  key: _kRootPageKey,
+                  child: Scaffold(
+                    body: LayoutBuilder(
+                      builder:
+                          (BuildContext context, BoxConstraints constraints) {
+                            if (lookup case PreviewLookupMatch(
+                              :final WidgetPreview preview,
+                            ) when !preview.hasError) {
+                              return _buildMatchedPreview(
+                                context: context,
+                                constraints: constraints,
+                                preview: preview,
+                              );
+                            }
+                            return _buildStatusView(
+                              context: context,
+                              constraints: constraints,
+                              lookup: lookup,
+                            );
+                          },
+                    ),
+                  ),
+                ),
+              ],
+              onDidRemovePage: (Page<Object?> _) {},
+            );
+          },
         );
       },
     );

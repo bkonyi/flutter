@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
@@ -616,6 +617,122 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 25));
         await assertion;
+      },
+    );
+
+    testWidgets(
+      'handles browser pushRouteInformation fragment updates without route lookup errors or single-entry history',
+      (WidgetTester tester) async {
+        final navigationCalls = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.navigation, (
+              MethodCall call,
+            ) async {
+              navigationCalls.add(call.method);
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(SystemChannels.navigation, null),
+        );
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&brightness=dark',
+        );
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Alpha: count=0'), findsOneWidget);
+        expect(navigationCalls, contains('selectMultiEntryHistory'));
+        expect(navigationCalls, isNot(contains('selectSingleEntryHistory')));
+
+        final bool handled = await WidgetsBinding.instance.handlePushRoute(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kBetaId)}&brightness=light',
+        );
+        expect(handled, isTrue);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Beta: count=0'), findsOneWidget);
+        expect(
+          find.textContaining('platform=light theme=light'),
+          findsOneWidget,
+        );
+
+        // Non-embed route push while in embed mode is absorbed without errors.
+        final bool ignoredHome = await WidgetsBinding.instance.handlePushRoute(
+          '/',
+        );
+        expect(ignoredHome, isTrue);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Beta: count=0'), findsOneWidget);
+
+        // Subsequent fragment update via onUrlFragmentChange continues to work.
+        debugSetUrlFragment('embed=1&previewId=Expanding');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Expanded Preview'), findsOneWidget);
+        expect(navigationCalls, isNot(contains('selectSingleEntryHistory')));
+      },
+    );
+
+    testWidgets(
+      'transitions from standard scaffold to embed mode via handlePushRoute and switches to multi-entry history',
+      (WidgetTester tester) async {
+        final navigationCalls = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.navigation, (
+              MethodCall call,
+            ) async {
+              navigationCalls.add(call.method);
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(SystemChannels.navigation, null),
+        );
+
+        debugSetUrlFragment('');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(find.byType(PreviewSearchControls), findsOneWidget);
+        expect(navigationCalls, contains('selectSingleEntryHistory'));
+
+        navigationCalls.clear();
+        final bool handled = await WidgetsBinding.instance.handlePushRoute(
+          'embed=1&previewId=Expanding',
+        );
+        expect(handled, isTrue);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Expanded Preview'), findsOneWidget);
+        expect(find.byType(PreviewSearchControls), findsNothing);
+        expect(navigationCalls, contains('selectMultiEntryHistory'));
+        expect(navigationCalls, isNot(contains('selectSingleEntryHistory')));
       },
     );
   });

@@ -57,7 +57,6 @@ class WidgetPreviewerWidgetScaffolding extends StatelessWidget {
 }
 
 class FakeWidgetPreviewScaffoldDtdServices extends Fake
-    with DtdEditorService
     implements WidgetPreviewScaffoldDtdServices {
   FakeWidgetPreviewScaffoldDtdServices({this.isWindows = false});
 
@@ -83,7 +82,9 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   @override
   Future<void> dispose() async {
     if (!(lastConnectReadOnly ?? false)) {
-      super.dispose();
+      selectedSourceFile.dispose();
+      editorServiceAvailable.dispose();
+      editorTheme.dispose();
     }
   }
 
@@ -113,6 +114,12 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   /// Whether or not the Editor service is available.
   @override
   final ValueNotifier<bool> editorServiceAvailable = ValueNotifier<bool>(true);
+
+  /// The current theming set in the IDE.
+  @override
+  final ValueNotifier<EditorTheme?> editorTheme = ValueNotifier<EditorTheme?>(
+    null,
+  );
 
   /// Tells the editor to navigate to a given code [location].
   ///
