@@ -150,13 +150,37 @@ class WidgetPreviewScaffoldController {
 
   final PreviewsCallback _previews;
   var _cachedPreviews = const <WidgetPreview>[];
+  var _cachedPreviewGroups = const <WidgetPreviewGroup>[];
 
   void _refreshPreviewsSnapshot() {
     _cachedPreviews = List<WidgetPreview>.unmodifiable(_previews());
+    _cachedPreviewGroups = _groupPreviews(_cachedPreviews);
+  }
+
+  static List<WidgetPreviewGroup> _groupPreviews(
+    Iterable<WidgetPreview> previews,
+  ) {
+    final previewGroups = <String, List<WidgetPreview>>{};
+    for (final WidgetPreview preview in previews) {
+      previewGroups
+          .putIfAbsent(preview.previewData.group, () => <WidgetPreview>[])
+          .add(preview);
+    }
+    return List<WidgetPreviewGroup>.unmodifiable(<WidgetPreviewGroup>[
+      for (final MapEntry(:String key, :List<WidgetPreview> value)
+          in previewGroups.entries)
+        WidgetPreviewGroup(
+          name: key,
+          previews: List<WidgetPreview>.unmodifiable(value),
+        ),
+    ]);
   }
 
   /// All unfiltered [WidgetPreview] instances currently defined in the project.
   WidgetPreviews get previews => _cachedPreviews;
+
+  /// All unfiltered [WidgetPreviewGroup]s currently defined in the project.
+  List<WidgetPreviewGroup> get allPreviewGroups => _cachedPreviewGroups;
 
   late path.Context _context;
   path.Context get context => _context;
@@ -643,7 +667,7 @@ class WidgetPreviewScaffoldController {
       selectedSourcePath = context.fromUri(selectedSourceFile.uriAsString);
     }
 
-    final previewGroups = <String, WidgetPreviewGroup>{};
+    final filteredPreviews = <WidgetPreview>[];
     for (final preview in _cachedPreviews) {
       if (selectedSourcePath != null &&
           !context.equals(
@@ -657,17 +681,9 @@ class WidgetPreviewScaffoldController {
       if (!_matchesSearchFilter(preview, normalizedSearchQuery)) {
         continue;
       }
-
-      final group = preview.previewData.group;
-      previewGroups
-          .putIfAbsent(
-            group,
-            () => WidgetPreviewGroup(name: group, previews: []),
-          )
-          .previews
-          .add(preview);
+      filteredPreviews.add(preview);
     }
-    _filteredPreviewSet.value = previewGroups.values.toList();
+    _filteredPreviewSet.value = _groupPreviews(filteredPreviews);
   }
 
   static bool _matchesFileUri({

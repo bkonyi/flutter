@@ -245,11 +245,28 @@ void main() {
         'embed=1&brightness=sepia&width=0&height=-10&textScale=NaN',
       );
       expect(invalid.isEmbed, isTrue);
+      expect(invalid.isAllPreviews, isTrue);
       expect(invalid.brightness, isNull);
       expect(invalid.width, isNull);
       expect(invalid.height, isNull);
       expect(invalid.textScale, isNull);
       expect(parseFragmentParameters('embed=1&bad=%ZZ'), isEmpty);
+
+      expect(EmbedPreviewParams.fromFragment('embed=1').isAllPreviews, isTrue);
+      expect(
+        EmbedPreviewParams.fromFragment('embed=1&previewId=').isAllPreviews,
+        isTrue,
+      );
+      expect(
+        EmbedPreviewParams.fromFragment('embed=1&previewId=*').isAllPreviews,
+        isTrue,
+      );
+      expect(
+        EmbedPreviewParams.fromFragment(
+          'embed=1&previewId=alpha',
+        ).isAllPreviews,
+        isFalse,
+      );
     });
   });
 
@@ -405,9 +422,9 @@ void main() {
     );
 
     testWidgets(
-      'displays clean status messages for missing, unknown, ambiguous, compile-error, and throwing previews',
+      'displays clean status messages for unknown, ambiguous, compile-error, and throwing previews',
       (WidgetTester tester) async {
-        debugSetUrlFragment('embed=1');
+        debugSetUrlFragment('embed=1&previewId=MissingCard');
 
         final controller = WidgetPreviewScaffoldController(
           dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
@@ -433,13 +450,7 @@ void main() {
         );
         await tester.pump();
 
-        // 1. Omitted previewId.
-        expect(find.text('No preview selected'), findsOneWidget);
-        expect(find.textContaining(_kAlphaId), findsOneWidget);
-
-        // 2. Unknown previewId.
-        debugSetUrlFragment('embed=1&previewId=MissingCard');
-        await tester.pump();
+        // 1. Unknown previewId.
         expect(find.text('Preview not found'), findsOneWidget);
         expect(find.textContaining('MissingCard'), findsOneWidget);
         expect(find.textContaining(_kAlphaId), findsOneWidget);
@@ -735,8 +746,264 @@ void main() {
         expect(navigationCalls, isNot(contains('selectSingleEntryHistory')));
       },
     );
+
+    testWidgets(
+      'renders all previews grouped by group when previewId is omitted or *',
+      (WidgetTester tester) async {
+        debugSetUrlFragment('embed=1');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildGroupedTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        expect(find.byType(PreviewSearchControls), findsNothing);
+        expect(find.byType(LayoutTypeSelector), findsNothing);
+        expect(find.text('Buttons'), findsOneWidget);
+        expect(find.text('Cards'), findsOneWidget);
+        expect(find.text('Invalid Previews'), findsOneWidget);
+        expect(find.text('1'), findsNWidgets(2));
+        expect(find.text('2'), findsOneWidget);
+        expect(find.text('Primary Button'), findsOneWidget);
+        expect(find.text('brokenButtonPreview'), findsOneWidget);
+        expect(
+          find.text('package:my_app/broken_button.dart has errors!'),
+          findsOneWidget,
+        );
+        expect(find.text('Alpha Card'), findsOneWidget);
+
+        // Interactive sibling cards continue working even when another card has errors.
+        expect(find.text('Alpha: count=0'), findsOneWidget);
+        await tester.tap(find.text('Increment').first);
+        await tester.pump();
+        expect(find.text('Alpha: count=1'), findsOneWidget);
+
+        await tester.scrollUntilVisible(
+          find.text('Beta Card'),
+          200.0,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('Beta Card'), findsOneWidget);
+        expect(find.text('300\u00D7400'), findsOneWidget);
+
+        // Switching to previewId=* also renders the grouped gallery.
+        debugSetUrlFragment('embed=1&previewId=*');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        await tester.scrollUntilVisible(
+          find.text('Buttons'),
+          -200.0,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('Buttons'), findsOneWidget);
+        expect(find.text('Primary Button'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'renders empty state when no previews exist in all-previews mode',
+      (WidgetTester tester) async {
+        debugSetUrlFragment('embed=1');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => const <WidgetPreview>[],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        expect(find.text('No widget previews detected'), findsOneWidget);
+        expect(
+          find.text('No widget previews were detected in this project.'),
+          findsOneWidget,
+        );
+
+        debugSetUrlFragment('embed=1&previewId=*');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('No widget previews detected'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'applies brightness and width overrides across all-previews gallery cards',
+      (WidgetTester tester) async {
+        debugSetUrlFragment('embed=1&previewId=*&brightness=dark&width=375');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => <WidgetPreview>[
+            _buildAlphaPreview(),
+            _buildBetaPreview(),
+          ],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        expect(find.textContaining('media=375x'), findsNWidgets(2));
+        expect(
+          find.textContaining('platform=dark theme=dark'),
+          findsNWidgets(2),
+        );
+        expect(find.text('375\u00D7auto'), findsOneWidget);
+        expect(find.text('375\u00D7400'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'scrolls wide 720px gallery cards horizontally inside narrow 400px viewport without overflow',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(400, 600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        debugSetUrlFragment('embed=1&previewId=*&width=720&height=300');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => <WidgetPreview>[_buildAlphaPreview()],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        expect(find.text('720\u00D7300'), findsOneWidget);
+        expect(find.textContaining('media=720x300'), findsOneWidget);
+        expect(
+          find.byWidgetPredicate(
+            (Widget widget) =>
+                widget is SingleChildScrollView &&
+                widget.scrollDirection == Axis.horizontal,
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'switches fragment between all-previews gallery and single-preview mode',
+      (WidgetTester tester) async {
+        debugSetUrlFragment('embed=1&previewId=*');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildGroupedTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        expect(find.text('Buttons'), findsOneWidget);
+        expect(find.text('Cards'), findsOneWidget);
+        expect(find.text('Alpha: count=0'), findsOneWidget);
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent('Beta Card')}',
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Buttons'), findsNothing);
+        expect(find.text('Alpha: count=0'), findsNothing);
+        expect(find.text('Beta: count=0'), findsOneWidget);
+
+        debugSetUrlFragment('embed=1');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Buttons'), findsOneWidget);
+        expect(find.text('Alpha: count=0'), findsOneWidget);
+        await tester.scrollUntilVisible(
+          find.text('Beta: count=0'),
+          200.0,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('Beta: count=0'), findsOneWidget);
+      },
+    );
   });
 }
+
+List<WidgetPreview> _buildGroupedTestPreviews() => <WidgetPreview>[
+  buildWidgetPreview(
+    column: 1,
+    functionName: 'primaryButtonPreview',
+    libraryUri: 'package:my_app/buttons.dart',
+    line: 10,
+    packageName: 'my_app',
+    previewFunction: () => const Text('Primary Button Widget'),
+    scriptUri: 'file:///project/lib/buttons.dart',
+    transformedPreview: const Preview(
+      group: 'Buttons',
+      name: 'Primary Button',
+    ).transform(),
+  ),
+  buildWidgetPreviewError(
+    column: 1,
+    dependencyHasErrors: false,
+    functionName: 'brokenButtonPreview',
+    libraryUri: 'package:my_app/broken_button.dart',
+    line: 20,
+    packageName: 'my_app',
+    scriptUri: 'file:///project/lib/broken_button.dart',
+  ),
+  buildWidgetPreview(
+    column: 1,
+    functionName: 'alphaPreview',
+    libraryUri: 'package:my_app/alpha.dart',
+    line: 30,
+    packageName: 'my_app',
+    previewFunction: () => const _InteractiveCardPreview(label: 'Alpha'),
+    scriptUri: 'file:///project/lib/alpha.dart',
+    transformedPreview: const Preview(
+      group: 'Cards',
+      name: 'Alpha Card',
+    ).transform(),
+  ),
+  buildWidgetPreview(
+    column: 1,
+    functionName: 'betaPreview',
+    libraryUri: 'package:my_app/beta.dart',
+    line: 40,
+    packageName: 'my_app',
+    previewFunction: () => const _InteractiveCardPreview(label: 'Beta'),
+    scriptUri: 'file:///project/lib/beta.dart',
+    transformedPreview: const Preview(
+      brightness: Brightness.dark,
+      group: 'Cards',
+      name: 'Beta Card',
+      size: Size(300, 400),
+    ).transform(),
+  ),
+];
 
 class _MinWidthGuard extends SingleChildRenderObjectWidget {
   const _MinWidthGuard({required this.minWidth, super.child});

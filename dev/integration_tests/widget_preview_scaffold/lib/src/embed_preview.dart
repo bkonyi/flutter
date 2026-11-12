@@ -10,7 +10,7 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
 
-/// Chromeless single-preview canvas for `#embed=1` mode.
+/// Chromeless single-preview or all-previews gallery canvas for `#embed=1` mode.
 class EmbedPreviewScaffold extends StatelessWidget {
   const EmbedPreviewScaffold({
     required this.controller,
@@ -19,8 +19,20 @@ class EmbedPreviewScaffold extends StatelessWidget {
     super.key,
   });
 
+  static const _kBadgeBorderRadius = 4.0;
+  static const _kBadgeHorizontalPadding = 6.0;
+  static const _kBadgeVerticalPadding = 2.0;
+  static const _kCardContentPadding = 12.0;
+  static const _kCardHeaderVerticalPadding = 8.0;
+  static const _kCardSpacing = 12.0;
   static const _kDefaultWindowSize = Size(800.0, 600.0);
+  static const _kGalleryPadding = 16.0;
+  static const _kGroupHeaderSpacing = 8.0;
+  static const _kGroupSpacing = 24.0;
   static const _kMaxStatusCardWidth = 480.0;
+  static const _kNoPreviewsMessage =
+      'No widget previews were detected in this project.';
+  static const _kNoPreviewsTitle = 'No widget previews detected';
   static const _kRootPageKey = ValueKey<String>('embed-preview-root');
   static const _kStatusCardPadding = 16.0;
   static const _kStatusSectionSpacing = 8.0;
@@ -34,15 +46,16 @@ class EmbedPreviewScaffold extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: controller.previewsRevisionListenable,
       builder: (BuildContext context, int _, Widget? _) {
-        final PreviewLookupResult lookup = controller.resolvePreviewMatch(
-          params.previewId,
-        );
-        final WidgetPreview? matchedPreview = switch (lookup) {
-          PreviewLookupMatch(:final WidgetPreview preview) => preview,
-          PreviewLookupMissing() || PreviewLookupAmbiguous() => null,
+        final PreviewLookupResult? lookup = params.isAllPreviews
+            ? null
+            : controller.resolvePreviewMatch(params.previewId);
+        final Brightness? explicitBrightness = switch (lookup) {
+          PreviewLookupMatch(:final WidgetPreview preview) =>
+            params.brightness ?? preview.brightness,
+          PreviewLookupMissing() ||
+          PreviewLookupAmbiguous() ||
+          null => params.brightness,
         };
-        final Brightness? explicitBrightness =
-            params.brightness ?? matchedPreview?.brightness;
         final ThemeMode themeMode = switch (explicitBrightness) {
           Brightness.light => ThemeMode.light,
           Brightness.dark => ThemeMode.dark,
@@ -70,19 +83,40 @@ class EmbedPreviewScaffold extends StatelessWidget {
                     body: LayoutBuilder(
                       builder:
                           (BuildContext context, BoxConstraints constraints) {
+                            if (lookup == null) {
+                              final List<WidgetPreviewGroup> groups =
+                                  controller.allPreviewGroups;
+                              if (groups.isEmpty) {
+                                return _buildStatusView(
+                                  context: context,
+                                  constraints: constraints,
+                                  message: _kNoPreviewsMessage,
+                                  title: _kNoPreviewsTitle,
+                                );
+                              }
+                              return _buildAllPreviewsGallery(
+                                context: context,
+                                constraints: constraints,
+                                groups: groups,
+                              );
+                            }
                             if (lookup case PreviewLookupMatch(
                               :final WidgetPreview preview,
                             ) when !preview.hasError) {
-                              return _buildMatchedPreview(
+                              return _buildPreviewSubtree(
                                 context: context,
-                                constraints: constraints,
+                                outerConstraints: constraints,
                                 preview: preview,
+                                viewportConstraints: constraints,
                               );
                             }
+                            final (String title, String message) =
+                                _lookupStatusDetails(lookup);
                             return _buildStatusView(
                               context: context,
                               constraints: constraints,
-                              lookup: lookup,
+                              message: message,
+                              title: title,
                             );
                           },
                     ),
@@ -97,11 +131,13 @@ class EmbedPreviewScaffold extends StatelessWidget {
     );
   }
 
-  Widget _buildMatchedPreview({
-    required BuildContext context,
-    required BoxConstraints constraints,
-    required WidgetPreview preview,
-  }) {
+  ({
+    Brightness resolvedBrightness,
+    double? resolvedHeight,
+    double? resolvedTextScale,
+    double? resolvedWidth,
+  })
+  _resolvePreviewSettings(BuildContext context, WidgetPreview preview) {
     final double? previewWidth = switch (preview.size?.width) {
       final double w when w.isFinite => w,
       _ => null,
@@ -110,25 +146,49 @@ class EmbedPreviewScaffold extends StatelessWidget {
       final double h when h.isFinite => h,
       _ => null,
     };
-    final double? resolvedWidth = params.width ?? previewWidth;
-    final double? resolvedHeight = params.height ?? previewHeight;
-    final Brightness resolvedBrightness =
-        params.brightness ?? preview.brightness ?? Theme.of(context).brightness;
     final double? resolvedTextScale = switch (params.textScale ??
         preview.textScaleFactor) {
       final double scale when scale.isFinite && scale > 0 => scale,
       _ => null,
     };
+    return (
+      resolvedBrightness:
+          params.brightness ??
+          preview.brightness ??
+          Theme.of(context).brightness,
+      resolvedHeight: params.height ?? previewHeight,
+      resolvedTextScale: resolvedTextScale,
+      resolvedWidth: params.width ?? previewWidth,
+    );
+  }
+
+  Widget _buildPreviewSubtree({
+    required BuildContext context,
+    required BoxConstraints outerConstraints,
+    required WidgetPreview preview,
+    required BoxConstraints viewportConstraints,
+    double? fallbackWindowHeight,
+  }) {
+    final (
+      :Brightness resolvedBrightness,
+      :double? resolvedHeight,
+      :double? resolvedTextScale,
+      :double? resolvedWidth,
+    ) = _resolvePreviewSettings(
+      context,
+      preview,
+    );
 
     final double constraintWidth =
         resolvedWidth ??
-        (constraints.hasBoundedWidth
-            ? constraints.maxWidth
+        (outerConstraints.hasBoundedWidth
+            ? outerConstraints.maxWidth
             : _kDefaultWindowSize.width);
     final double constraintHeight =
         resolvedHeight ??
-        (constraints.hasBoundedHeight
-            ? constraints.maxHeight
+        fallbackWindowHeight ??
+        (outerConstraints.hasBoundedHeight
+            ? outerConstraints.maxHeight
             : _kDefaultWindowSize.height);
     final windowConstraints = BoxConstraints.loose(
       Size(constraintWidth, constraintHeight),
@@ -170,7 +230,7 @@ class EmbedPreviewScaffold extends StatelessWidget {
               previewerConstraints: windowConstraints,
               resolvedHeight: resolvedHeight,
               resolvedWidth: resolvedWidth,
-              viewportConstraints: constraints,
+              viewportConstraints: viewportConstraints,
             ),
           ),
         ),
@@ -178,47 +238,200 @@ class EmbedPreviewScaffold extends StatelessWidget {
     );
   }
 
+  Widget _buildAllPreviewsGallery({
+    required BuildContext context,
+    required BoxConstraints constraints,
+    required List<WidgetPreviewGroup> groups,
+  }) {
+    final ThemeData theme = Theme.of(context);
+    final double fallbackWindowHeight =
+        (constraints.hasBoundedHeight
+            ? constraints.maxHeight
+            : _kDefaultWindowSize.height) /
+        2;
+    final items = <_GalleryItem>[
+      for (
+        var groupIndex = 0;
+        groupIndex < groups.length;
+        groupIndex++
+      ) ...<_GalleryItem>[
+        _GalleryGroupHeader(
+          group: groups[groupIndex],
+          topSpacing: groupIndex > 0 ? _kGroupSpacing : 0.0,
+        ),
+        for (final WidgetPreview preview in groups[groupIndex].previews)
+          _GalleryPreviewItem(preview: preview),
+      ],
+    ];
+    return ListView.builder(
+      padding: const EdgeInsets.all(_kGalleryPadding),
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) {
+        return switch (items[index]) {
+          _GalleryGroupHeader(
+            :final WidgetPreviewGroup group,
+            :final double topSpacing,
+          ) =>
+            Padding(
+              padding: EdgeInsets.only(top: topSpacing, bottom: _kCardSpacing),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      group.name,
+                      style: theme.textTheme.titleMedium,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: _kGroupHeaderSpacing),
+                  _buildBadge(theme: theme, label: '${group.previews.length}'),
+                ],
+              ),
+            ),
+          _GalleryPreviewItem(:final WidgetPreview preview) => Padding(
+            padding: const EdgeInsets.only(bottom: _kCardSpacing),
+            child: _buildGalleryPreviewCard(
+              context: context,
+              fallbackWindowHeight: fallbackWindowHeight,
+              outerConstraints: constraints,
+              preview: preview,
+            ),
+          ),
+        };
+      },
+    );
+  }
+
+  Widget _buildGalleryPreviewCard({
+    required BuildContext context,
+    required double fallbackWindowHeight,
+    required BoxConstraints outerConstraints,
+    required WidgetPreview preview,
+  }) {
+    final ThemeData theme = Theme.of(context);
+    final (
+      :Brightness resolvedBrightness,
+      :double? resolvedHeight,
+      :double? resolvedTextScale,
+      :double? resolvedWidth,
+    ) = _resolvePreviewSettings(
+      context,
+      preview,
+    );
+    final String? sizeLabel = switch ((resolvedWidth, resolvedHeight)) {
+      (final double w, final double h) => '${w.toInt()}\u00D7${h.toInt()}',
+      (final double w, null) => '${w.toInt()}\u00D7auto',
+      (null, final double h) => 'auto\u00D7${h.toInt()}',
+      (null, null) => null,
+    };
+
+    return Card.outlined(
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: _kCardContentPadding,
+              vertical: _kCardHeaderVerticalPadding,
+            ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    preview.name ?? preview.functionName,
+                    style: theme.textTheme.titleSmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (sizeLabel != null) ...<Widget>[
+                  const SizedBox(width: _kGroupHeaderSpacing),
+                  _buildBadge(theme: theme, label: sizeLabel),
+                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1.0),
+          Padding(
+            padding: const EdgeInsets.all(_kCardContentPadding),
+            child: preview.hasError
+                ? SelectableText(
+                    preview.errorMessage ?? '${preview.libraryUri} has errors!',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  )
+                : LayoutBuilder(
+                    builder:
+                        (BuildContext context, BoxConstraints cardConstraints) {
+                          return _buildPreviewSubtree(
+                            context: context,
+                            fallbackWindowHeight: fallbackWindowHeight,
+                            outerConstraints: outerConstraints,
+                            preview: preview,
+                            viewportConstraints: cardConstraints,
+                          );
+                        },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBadge({required ThemeData theme, required String label}) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: _kBadgeHorizontalPadding,
+          vertical: _kBadgeVerticalPadding,
+        ),
+        child: Text(label, style: theme.textTheme.labelSmall),
+      ),
+    );
+  }
+
+  (String title, String message) _lookupStatusDetails(
+    PreviewLookupResult lookup,
+  ) => switch (lookup) {
+    PreviewLookupMatch(:final WidgetPreview preview) => (
+      'Preview has errors',
+      preview.errorMessage ?? '${preview.libraryUri} has errors!',
+    ),
+    PreviewLookupAmbiguous(
+      :final List<String> candidateIds,
+      :final String previewId,
+    ) =>
+      (
+        'Ambiguous preview name',
+        'Preview name "$previewId" is ambiguous; specify one of:\n'
+            '${candidateIds.join('\n')}',
+      ),
+    PreviewLookupMissing(
+      :final List<String> availableIds,
+      :final String? previewId,
+    ) =>
+      (
+        'Preview not found',
+        availableIds.isEmpty
+            ? 'Preview "${previewId ?? ''}" was not found.'
+            : 'Preview "${previewId ?? ''}" was not found. Available previews:\n'
+                  '${availableIds.join('\n')}',
+      ),
+  };
+
   Widget _buildStatusView({
     required BuildContext context,
     required BoxConstraints constraints,
-    required PreviewLookupResult lookup,
+    required String message,
+    required String title,
   }) {
-    final (String title, String message) = switch (lookup) {
-      PreviewLookupMatch(:final WidgetPreview preview) => (
-        'Preview has errors',
-        preview.errorMessage ?? '${preview.libraryUri} has errors!',
-      ),
-      PreviewLookupAmbiguous(
-        :final List<String> candidateIds,
-        :final String previewId,
-      ) =>
-        (
-          'Ambiguous preview name',
-          'Preview name "$previewId" is ambiguous; specify one of:\n'
-              '${candidateIds.join('\n')}',
-        ),
-      PreviewLookupMissing(
-        :final List<String> availableIds,
-        :final String? previewId,
-      ) =>
-        switch (previewId) {
-          null => (
-            'No preview selected',
-            availableIds.isEmpty
-                ? 'No widget previews were detected in this project.'
-                : 'Specify a previewId in the URL fragment. Available previews:\n'
-                      '${availableIds.join('\n')}',
-          ),
-          final String id => (
-            'Preview not found',
-            availableIds.isEmpty
-                ? 'Preview "$id" was not found.'
-                : 'Preview "$id" was not found. Available previews:\n'
-                      '${availableIds.join('\n')}',
-          ),
-        },
-    };
-
     final ThemeData theme = Theme.of(context);
     return WidgetPreviewerWindowConstraints(
       constraints: constraints,
@@ -408,4 +621,21 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       );
     }
   }
+}
+
+sealed class _GalleryItem {
+  const _GalleryItem();
+}
+
+final class _GalleryGroupHeader extends _GalleryItem {
+  const _GalleryGroupHeader({required this.group, required this.topSpacing});
+
+  final WidgetPreviewGroup group;
+  final double topSpacing;
+}
+
+final class _GalleryPreviewItem extends _GalleryItem {
+  const _GalleryPreviewItem({required this.preview});
+
+  final WidgetPreview preview;
 }

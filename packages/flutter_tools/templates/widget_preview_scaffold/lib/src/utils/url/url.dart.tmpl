@@ -33,7 +33,8 @@ Map<String, String> parseFragmentParameters(String fragment) {
   }
 }
 
-/// Parsed URL fragment configuration for chromeless single-preview embed mode.
+/// Parsed URL fragment configuration for chromeless single-preview or
+/// all-previews embed mode.
 @immutable
 class EmbedPreviewParams {
   const EmbedPreviewParams({
@@ -71,6 +72,7 @@ class EmbedPreviewParams {
     );
   }
 
+  static const kAllPreviewsValue = '*';
   static const kBrightnessParam = 'brightness';
   static const kDarkBrightness = 'dark';
   static const kDtdProxyParam = 'dtdProxy';
@@ -92,6 +94,10 @@ class EmbedPreviewParams {
   final String? previewId;
   final double? textScale;
   final double? width;
+
+  /// Whether this embed configuration targets the grouped all-previews gallery
+  /// (when [previewId] is omitted, empty, or [kAllPreviewsValue]).
+  bool get isAllPreviews => previewId == null || previewId == kAllPreviewsValue;
 
   /// Resolves [dtdProxy] against [baseUri] using `ws` or `wss`, or returns
   /// `null` if [dtdProxy] is unset or [baseUri] has no authority.
