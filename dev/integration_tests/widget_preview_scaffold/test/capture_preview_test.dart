@@ -157,6 +157,16 @@ PreviewLocalizationsData _throwingLocalizationsCallback() {
   throw StateError('staged localizations callback failure');
 }
 
+PreviewLocalizationsData _defaultCaptureLocalizations() =>
+    const PreviewLocalizationsData(
+      locale: Locale('en', 'US'),
+      localizationsDelegates: <LocalizationsDelegate<Object?>>[
+        DefaultMaterialLocalizations.delegate,
+        DefaultCupertinoLocalizations.delegate,
+        DefaultWidgetsLocalizations.delegate,
+      ],
+    );
+
 void main() {
   final LiveTestWidgetsFlutterBinding binding =
       LiveTestWidgetsFlutterBinding.ensureInitialized();
@@ -1456,6 +1466,51 @@ void main() {
       expect(afterMidCaptureUnmount.renderedWidth, 150.0);
       expect(afterMidCaptureUnmount.renderedHeight, 75.0);
       expect(afterMidCaptureUnmount.imageBase64, isNotNull);
+    },
+  );
+
+  testWidgets(
+    'off-screen capturePreview renders a bare Material TextField when defaultLocalizations is provided',
+    (tester) async {
+      final WidgetPreview preview = buildWidgetPreview(
+        column: 1,
+        defaultLocalizations: _defaultCaptureLocalizations,
+        functionName: 'bareMaterialTextField',
+        libraryUri: 'package:my_app/text_field.dart',
+        line: 10,
+        packageName: 'my_app',
+        previewFunction: () => const Material(
+          child: SizedBox(width: 220, height: 80, child: TextField()),
+        ),
+        scriptUri: 'file:///project/lib/text_field.dart',
+        transformedPreview: const Preview(
+          name: 'Bare Material TextField',
+        ).transform(),
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: () => <WidgetPreview>[preview],
+      );
+      await controller.initialize();
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+      await tester.pump();
+
+      final CapturePreviewResponse response = await controller.capturePreview(
+        const PreviewCaptureRequest(previewId: 'Bare Material TextField'),
+      );
+      expect(response.hasErrors, isFalse);
+      expect(response.diagnostics, isEmpty);
+      expect(response.imageBase64, isNotNull);
+
+      final Uint8List pngBytes = base64Decode(response.imageBase64!);
+      expect(pngBytes, isNotEmpty);
+
+      final decoded = await _decodePngRgba(response.imageBase64!);
+      expect(decoded.width, 220);
+      expect(decoded.height, 80);
+      expect(tester.takeException(), isNull);
     },
   );
 }

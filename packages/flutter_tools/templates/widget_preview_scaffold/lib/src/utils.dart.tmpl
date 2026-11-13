@@ -18,6 +18,7 @@ Iterable<WidgetPreview> buildMultiWidgetPreview({
   required MultiPreview preview,
   required Object? Function() previewFunction,
   required String scriptUri,
+  PreviewLocalizationsData Function()? defaultLocalizations,
   String? errorMessage,
   bool hasError = false,
 }) {
@@ -26,6 +27,7 @@ Iterable<WidgetPreview> buildMultiWidgetPreview({
         in preview.transform().indexed)
       buildWidgetPreview(
         column: column,
+        defaultLocalizations: defaultLocalizations,
         errorMessage: errorMessage,
         functionName: functionName,
         hasError: hasError,
@@ -49,6 +51,7 @@ WidgetPreview buildWidgetPreview({
   required Object? Function() previewFunction,
   required String scriptUri,
   required Preview transformedPreview,
+  PreviewLocalizationsData Function()? defaultLocalizations,
   String? errorMessage,
   bool hasError = false,
   int? multiPreviewIndex,
@@ -64,6 +67,7 @@ WidgetPreview buildWidgetPreview({
   return WidgetPreview(
     builder: previewBuilder,
     column: column,
+    defaultLocalizations: defaultLocalizations,
     errorMessage: errorMessage,
     functionName: functionName,
     hasError: hasError,
