@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:dtd/dtd.dart';
 import 'package:file/file.dart';
 import 'package:file_testing/file_testing.dart';
+import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/commands/widget_preview.dart';
 import 'package:flutter_tools/src/devtools_launcher.dart';
@@ -214,6 +215,188 @@ void main() {
         reason: 'Widget preview process exited unexpectedly after flutter clean.',
       );
       await subscription.cancel();
+    });
+
+    testWithoutContext('generated _defaultPreviewLocalizations renders material_ui, cupertino_ui, and legacy material/cupertino widgets', () async {
+      tempDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: ${project.name}
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_ui: ^1.0.0
+  material_ui: ^1.0.0
+''');
+      tempDir.childDirectory('lib').childFile('localizations_previews.dart').writeAsStringSync('''
+import 'package:cupertino_ui/cupertino_ui.dart' as cupertino_ui;
+import 'package:flutter/cupertino.dart' as legacy_cupertino;
+import 'package:flutter/material.dart' as legacy_material;
+import 'package:flutter/widget_previews.dart';
+import 'package:material_ui/material_ui.dart' as material_ui;
+
+@Preview(name: 'material_ui')
+material_ui.Widget materialUiTextFieldPreview() => const material_ui.Material(
+  child: material_ui.SizedBox(width: 220, child: material_ui.TextField()),
+);
+
+@Preview(name: 'cupertino_ui')
+cupertino_ui.Widget cupertinoUiTextFieldPreview() => const cupertino_ui.SizedBox(
+  width: 220,
+  child: cupertino_ui.CupertinoTextField(),
+);
+
+@Preview(name: 'legacy_material')
+// ignore: deprecated_member_use
+legacy_material.Widget legacyMaterialTextFieldPreview() => const legacy_material.Material(
+  // ignore: deprecated_member_use
+  child: legacy_material.SizedBox(width: 220, child: legacy_material.TextField()),
+);
+
+@Preview(name: 'legacy_cupertino')
+// ignore: deprecated_member_use
+legacy_cupertino.Widget legacyCupertinoTextFieldPreview() => const legacy_cupertino.SizedBox(
+  width: 220,
+  // ignore: deprecated_member_use
+  child: legacy_cupertino.CupertinoTextField(),
+);
+''');
+
+      final ProcessResult pubGetResult = processManager.runSync(<String>[
+        flutterBin,
+        'pub',
+        'get',
+        '--offline',
+      ], workingDirectory: tempDir.path);
+      expect(
+        pubGetResult.exitCode,
+        0,
+        reason: 'stdout:\n${pubGetResult.stdout}\nstderr:\n${pubGetResult.stderr}',
+      );
+
+      final ProcessResult startResult = processManager.runSync(<String>[
+        flutterBin,
+        'widget-preview',
+        'start',
+        '--no-${WidgetPreviewStartCommand.kLaunchPreviewer}',
+      ], workingDirectory: tempDir.path);
+      expect(
+        startResult.exitCode,
+        0,
+        reason: 'stdout:\n${startResult.stdout}\nstderr:\n${startResult.stderr}',
+      );
+
+      final Directory scaffoldDir = tempDir.childDirectory('.widget_preview');
+      final String dartBin = tempDir.fileSystem.path.join(
+        tempDir.fileSystem.path.dirname(flutterBin),
+        'cache',
+        'dart-sdk',
+        'bin',
+        'dart',
+      );
+      final ProcessResult analyzeResult = processManager.runSync(<String>[
+        dartBin,
+        'analyze',
+        '--fatal-infos',
+      ], workingDirectory: scaffoldDir.path);
+      expect(
+        analyzeResult.exitCode,
+        0,
+        reason: 'stdout:\n${analyzeResult.stdout}\nstderr:\n${analyzeResult.stderr}',
+      );
+
+      scaffoldDir.childDirectory('test').childFile('generated_localizations_smoke_test.dart')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
+import 'package:cupertino_ui/cupertino_ui.dart' as cupertino_ui;
+// ignore: deprecated_member_use
+import 'package:flutter/cupertino.dart' as legacy_cupertino;
+// ignore: deprecated_member_use
+import 'package:flutter/material.dart' as legacy_material;
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' as material_ui;
+import 'package:widget_preview_scaffold/src/generated_preview.dart' as generated;
+import 'package:widget_preview_scaffold/src/widget_preview.dart';
+
+void main() {
+  testWidgets('generated previews render with synthesized localizations', (
+    tester,
+  ) async {
+    final List<WidgetPreview> generatedPreviews = generated.previews();
+    expect(generatedPreviews, hasLength(4));
+
+    await tester.pumpWidget(
+      WidgetsApp(
+        color: const Color(0xFF000000),
+        pageRouteBuilder: <T>(RouteSettings settings, WidgetBuilder builder) =>
+            PageRouteBuilder<T>(
+              settings: settings,
+              pageBuilder: (
+                BuildContext context,
+                Animation<double> animation,
+                Animation<double> secondaryAnimation,
+              ) => builder(context),
+            ),
+        builder: (BuildContext context, Widget? child) => child!,
+        home: SingleChildScrollView(
+          child: Column(
+            children: <Widget>[
+              for (final WidgetPreview preview in generatedPreviews)
+                Localizations(
+                  locale: preview.localizations!.locale!,
+                  delegates: preview.localizations!.localizationsDelegates!.toList(),
+                  child: preview.previewBuilder(),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.byType(material_ui.TextField), findsOneWidget);
+    expect(find.byType(cupertino_ui.CupertinoTextField), findsOneWidget);
+    // ignore: deprecated_member_use
+    expect(find.byType(legacy_material.TextField), findsOneWidget);
+    // ignore: deprecated_member_use
+    expect(find.byType(legacy_cupertino.CupertinoTextField), findsOneWidget);
+  });
+}
+''');
+
+      // PreviewPubspecBuilder.buildPubspec strips flutter_test when hydrating .widget_preview/pubspec.yaml.
+      final File scaffoldPubspec = scaffoldDir.childFile('pubspec.yaml');
+      scaffoldPubspec.writeAsStringSync('''
+${scaffoldPubspec.readAsStringSync()}
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+''');
+
+      final ProcessResult scaffoldPubGetResult = processManager.runSync(<String>[
+        flutterBin,
+        'pub',
+        'get',
+        '--offline',
+      ], workingDirectory: scaffoldDir.path);
+      expect(
+        scaffoldPubGetResult.exitCode,
+        0,
+        reason: 'stdout:\n${scaffoldPubGetResult.stdout}\nstderr:\n${scaffoldPubGetResult.stderr}',
+      );
+
+      final ProcessResult testResult = processManager.runSync(<String>[
+        flutterBin,
+        'test',
+        '--no-pub',
+        'test/generated_localizations_smoke_test.dart',
+      ], workingDirectory: scaffoldDir.path);
+      expect(
+        testResult.exitCode,
+        0,
+        reason: 'stdout:\n${testResult.stdout}\nstderr:\n${testResult.stderr}',
+      );
     });
   });
 }
