@@ -27,6 +27,7 @@ import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/hook_runner.dart';
 import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/devfs_web.dart';
 import 'package:flutter_tools/src/isolated/resident_web_runner.dart';
@@ -2618,6 +2619,102 @@ flutter:
         AssetBundleFactory: FakeAssetBundleFactory.new,
       },
     );
+
+    testUsingContext(
+      'skips dartBuilder.runHooks when buildNativeAssets is false',
+      () async {
+        final Directory projectDir = fileSystem.directory('/hook_project')..createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: hook_project\n');
+        projectDir.childFile('lib/main.dart').createSync(recursive: true);
+        writePackageConfigFiles(directory: projectDir, mainLibName: 'hook_project');
+
+        final FlutterProject project = FlutterProject.fromDirectoryTest(projectDir);
+        final fakeHookRunner = hookRunner! as _FakeFlutterHookRunner;
+        final String packageConfigPath = projectDir
+            .childDirectory('.dart_tool')
+            .childFile('package_config.json')
+            .path;
+
+        Future<int> runWithBuildNativeAssets({required bool buildNativeAssets}) async {
+          final ResidentRunner runner = ResidentWebRunner(
+            flutterDevice,
+            flutterProject: project,
+            debuggingOptions: DebuggingOptions.enabled(
+              BuildInfo(
+                .debug,
+                null,
+                treeShakeIcons: false,
+                packageConfigPath: packageConfigPath,
+                buildNativeAssets: buildNativeAssets,
+              ),
+            ),
+            stayResident: false,
+            buildSystem: TestBuildSystem.all(BuildResult(success: true)),
+            buildTargets: const BuildTargetsImpl(),
+            toolContext: test_fakes.FakeToolContext(
+              fs: fileSystem,
+              systemClock: SystemClock.fixed(DateTime(2001)),
+            ),
+            analytics: fakeAnalytics,
+          );
+          webDevFS.report = UpdateFSReport(success: true);
+          return runner.run();
+        }
+
+        expect(await runWithBuildNativeAssets(buildNativeAssets: false), 0);
+        expect(fakeHookRunner.runHooksCount, 0);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Pub: ThrowingPub.new,
+        AssetBundleFactory: FakeAssetBundleFactory.new,
+        FlutterHookRunner: _FakeFlutterHookRunner.new,
+      },
+    );
+
+    testUsingContext(
+      'runs dartBuilder.runHooks when buildNativeAssets is true',
+      () async {
+        final Directory projectDir = fileSystem.directory('/hook_project_enabled')..createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: hook_project_enabled\n');
+        projectDir.childFile('lib/main.dart').createSync(recursive: true);
+        writePackageConfigFiles(directory: projectDir, mainLibName: 'hook_project_enabled');
+
+        final FlutterProject project = FlutterProject.fromDirectoryTest(projectDir);
+        final fakeHookRunner = hookRunner! as _FakeFlutterHookRunner;
+        final String packageConfigPath = projectDir
+            .childDirectory('.dart_tool')
+            .childFile('package_config.json')
+            .path;
+
+        final ResidentRunner runner = ResidentWebRunner(
+          flutterDevice,
+          flutterProject: project,
+          debuggingOptions: DebuggingOptions.enabled(
+            BuildInfo(.debug, null, treeShakeIcons: false, packageConfigPath: packageConfigPath),
+          ),
+          stayResident: false,
+          buildSystem: TestBuildSystem.all(BuildResult(success: true)),
+          buildTargets: const BuildTargetsImpl(),
+          toolContext: test_fakes.FakeToolContext(
+            fs: fileSystem,
+            systemClock: SystemClock.fixed(DateTime(2001)),
+          ),
+          analytics: fakeAnalytics,
+        );
+        webDevFS.report = UpdateFSReport(success: true);
+        expect(await runner.run(), 0);
+        expect(fakeHookRunner.runHooksCount, 1);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Pub: ThrowingPub.new,
+        AssetBundleFactory: FakeAssetBundleFactory.new,
+        FlutterHookRunner: _FakeFlutterHookRunner.new,
+      },
+    );
   });
 }
 
@@ -3074,4 +3171,18 @@ class FakeCapturingAssetBundle extends Fake implements AssetBundle {
 class FakeAssetBundleFactory implements AssetBundleFactory {
   @override
   AssetBundle createBundle() => FakeCapturingAssetBundle();
+}
+
+class _FakeFlutterHookRunner implements FlutterHookRunner {
+  int runHooksCount = 0;
+
+  @override
+  Future<FlutterHookResult> runHooks({
+    required TargetPlatform targetPlatform,
+    required Environment environment,
+    Logger? logger,
+  }) async {
+    runHooksCount++;
+    return FlutterHookResult.empty();
+  }
 }

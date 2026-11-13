@@ -721,6 +721,87 @@ DevTools listening on ws://127.0.0.1:12345/devtools/browser/
   );
 
   testWithoutContext(
+    'appends --disable-dev-shm-usage when launching headless Chrome on Linux',
+    () async {
+      final linuxPlatform = FakePlatform(
+        environment: <String, String>{kChromeEnvironment: 'example_chrome'},
+      );
+      final linuxLauncher = ChromiumLauncher(
+        fileSystem: fileSystem,
+        platform: linuxPlatform,
+        processManager: processManager,
+        operatingSystemUtils: operatingSystemUtils,
+        browserFinder: findChromeExecutable,
+        logger: BufferLogger.test(),
+      );
+
+      processManager.addCommand(
+        FakeCommand(
+          command: <String>[
+            'example_chrome',
+            '--user-data-dir=/.tmp_rand0/flutter_tools_chrome_device.rand0',
+            '--remote-debugging-port=0',
+            ...kChromeArgs.where((String arg) => arg != '--use-mock-keychain'),
+            '--no-sandbox',
+            '--headless',
+            '--window-size=1024,1024',
+            '--use-gl=angle',
+            '--use-angle=swiftshader',
+            '--enable-unsafe-swiftshader',
+            '--disable-gpu-sandbox',
+            '--disable-dev-shm-usage',
+            'example_url',
+          ],
+          stderr: kDevtoolsStderr,
+        ),
+      );
+
+      await expectReturnsNormallyLater(
+        linuxLauncher.launch('example_url', skipCheck: true, headless: true),
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    },
+  );
+
+  testWithoutContext(
+    'omits --disable-dev-shm-usage when launching headless Chrome on Windows',
+    () async {
+      final windowsLauncher = ChromiumLauncher(
+        fileSystem: fileSystem,
+        platform: FakePlatform(
+          operatingSystem: 'windows',
+          environment: <String, String>{kChromeEnvironment: 'example_chrome'},
+        ),
+        processManager: processManager,
+        operatingSystemUtils: operatingSystemUtils,
+        browserFinder: findChromeExecutable,
+        logger: BufferLogger.test(),
+      );
+
+      processManager.addCommand(
+        FakeCommand(
+          command: <String>[
+            'example_chrome',
+            '--user-data-dir=/.tmp_rand0/flutter_tools_chrome_device.rand0',
+            '--remote-debugging-port=0',
+            ...kChromeArgs.where((String arg) => arg != '--use-mock-keychain'),
+            '--no-sandbox',
+            '--headless',
+            '--window-size=1024,1024',
+            'example_url',
+          ],
+          stderr: kDevtoolsStderr,
+        ),
+      );
+
+      await expectReturnsNormallyLater(
+        windowsLauncher.launch('example_url', skipCheck: true, headless: true),
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    },
+  );
+
+  testWithoutContext(
     'can seed chrome temp directory with existing session data, excluding Cache folder',
     () async {
       final exitCompleter = Completer<void>.sync();
@@ -809,6 +890,7 @@ DevTools listening on ws://127.0.0.1:12345/devtools/browser/
       '--use-angle=swiftshader',
       '--enable-unsafe-swiftshader',
       '--disable-gpu-sandbox',
+      '--disable-dev-shm-usage',
       'example_url',
     ];
 

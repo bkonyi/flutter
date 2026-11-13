@@ -183,6 +183,13 @@ runFlutterSpecificBuildHooks({
     buildDataAssets: buildDataAssets,
   );
 
+  if (targets.every((AssetBuildTarget target) => target.extensions.isEmpty)) {
+    logger.printTrace(
+      'No supported asset types for ${targetPlatform.getName()}. Skipping build hooks.',
+    );
+    return (results: const <String, Map<String, Object?>>{}, buildResult: DartHooksResult.empty());
+  }
+
   final String targetString = targets
       .map((AssetBuildTarget target) => target.targetString)
       .join(', ');
@@ -326,6 +333,13 @@ Future<DartHooksResult> runFlutterSpecificLinkHooks({
     buildCodeAssets: buildCodeAssets,
     buildDataAssets: buildDataAssets,
   );
+
+  if (targets.every((AssetBuildTarget target) => target.extensions.isEmpty)) {
+    logger.printTrace(
+      'No supported asset types for ${targetPlatform.getName()}. Skipping link hooks.',
+    );
+    return DartHooksResult.empty();
+  }
 
   final String targetString = targets
       .map((AssetBuildTarget target) => target.targetString)

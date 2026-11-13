@@ -24,6 +24,7 @@ import '../runner/flutter_command.dart';
 import '../runner/flutter_command_runner.dart';
 import 'dtd_services.dart';
 import 'dtd_types.dart';
+import 'utils.dart';
 
 export 'preview_cli_commands.dart';
 
@@ -114,9 +115,12 @@ class WidgetPreviewSessionClient {
   Future<T> withSession<T>({
     required Future<T> Function(WidgetPreviewActiveSession session) action,
     required FlutterProject rootProject,
+    bool buildHooks = true,
     String? dtdUrl,
+    List<String> webBrowserFlags = const <String>[],
   }) async {
     final String targetProjectRoot = _normalizeProjectRoot(rootProject.directory);
+    final bool hasExistingScaffold = rootProject.widgetPreviewScaffold.existsSync();
 
     if (dtdUrl != null && dtdUrl.isNotEmpty) {
       final Uri? parsedUri = Uri.tryParse(dtdUrl);
@@ -131,6 +135,7 @@ class WidgetPreviewSessionClient {
             allowSingleServiceFallback: true,
             dtd: dtd,
             dtdUri: parsedUri,
+            hasExistingScaffold: hasExistingScaffold,
             targetProjectRoot: targetProjectRoot,
           );
         } on StateError catch (error) {
@@ -175,6 +180,7 @@ class WidgetPreviewSessionClient {
           allowSingleServiceFallback: false,
           dtd: dtd,
           dtdUri: candidateUri,
+          hasExistingScaffold: hasExistingScaffold,
           targetProjectRoot: targetProjectRoot,
         );
       } on ToolExit {
@@ -205,8 +211,10 @@ class WidgetPreviewSessionClient {
 
     return _withEphemeralHeadlessSession(
       action: action,
+      buildHooks: buildHooks,
       rootProject: rootProject,
       targetProjectRoot: targetProjectRoot,
+      webBrowserFlags: webBrowserFlags,
     );
   }
 
@@ -479,6 +487,7 @@ class WidgetPreviewSessionClient {
     required bool allowSingleServiceFallback,
     required DartToolingDaemon dtd,
     required Uri dtdUri,
+    required bool hasExistingScaffold,
     required String targetProjectRoot,
   }) async {
     final RegisteredServicesResponse registered = await dtd.getRegisteredServices();
@@ -510,7 +519,21 @@ class WidgetPreviewSessionClient {
                 scaffoldStream: parsed.scaffoldStream,
                 webPreviewUri: parsed.webPreviewUri,
               );
-      } on RpcException {
+      } on RpcException catch (error) {
+        if (error.code == RpcErrorCodes.kMethodNotFound) {
+          final RegisteredServicesResponse refreshed = await dtd.getRegisteredServices();
+          final bool stillRegistered = refreshed.clientServices.any(
+            (service) => service.name == serviceName,
+          );
+          if (stillRegistered && (hasExistingScaffold || allowSingleServiceFallback)) {
+            throwToolExit(
+              'An incompatible older widget-preview session (Flutter < 3.50) is active on DTD '
+              'at $dtdUri (service "$serviceName" does not support '
+              '"${WidgetPreviewDtdServices.kGetServiceInfo}"). Stop the existing widget-preview '
+              'session or upgrade Flutter before running headless commands.',
+            );
+          }
+        }
         continue;
       }
       if (_projectRootsMatch(info.projectRoot, targetProjectRoot)) {
@@ -683,8 +706,10 @@ class WidgetPreviewSessionClient {
 
   Future<T> _withEphemeralHeadlessSession<T>({
     required Future<T> Function(WidgetPreviewActiveSession session) action,
+    required bool buildHooks,
     required FlutterProject rootProject,
     required String targetProjectRoot,
+    required List<String> webBrowserFlags,
   }) async {
     final ToolContext(
       :Cache cache,
@@ -707,6 +732,8 @@ class WidgetPreviewSessionClient {
         _kStartSubcommand,
         '--$_kHeadlessFlag',
         '--${FlutterGlobalOptions.kMachineFlag}',
+        if (!buildHooks) '--no-${WidgetPreviewOptions.kBuildHooks}',
+        for (final String flag in webBrowserFlags) '--${FlutterOptions.kWebBrowserFlag}=$flag',
       ], workingDirectory: rootProject.directory.path);
     } on ProcessException catch (error) {
       throwToolExit('Failed to launch headless widget preview session: $error');
@@ -928,19 +955,21 @@ class WidgetPreviewSessionClient {
           final String value when value.isNotEmpty => value,
           _ => null,
         };
-        if (dtdUri == null) {
+        final String? previewService = switch (params[PreviewServiceInfo.kPreviewService]) {
+          final String value when value.isNotEmpty => value,
+          _ => null,
+        };
+        final String? scaffoldService = switch (params[PreviewServiceInfo.kScaffoldService]) {
+          final String value when value.isNotEmpty => value,
+          _ => null,
+        };
+        if (dtdUri == null || previewService == null || scaffoldService == null) {
           fatalError =
-              'Headless widget preview started without a DTD URI in "$_kStartedEventName".';
+              'Headless widget preview started without required DTD metadata '
+              '(dtdUri, previewService, scaffoldService) in "$_kStartedEventName". '
+              'This usually indicates an incompatible Flutter < 3.50 installation.';
           continue;
         }
-        final String previewService = switch (params[PreviewServiceInfo.kPreviewService]) {
-          final String value when value.isNotEmpty => value,
-          _ => WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
-        };
-        final String scaffoldService = switch (params[PreviewServiceInfo.kScaffoldService]) {
-          final String value when value.isNotEmpty => value,
-          _ => WidgetPreviewDtdServices.kWidgetPreviewScaffoldServiceRoot,
-        };
         final String projectRoot = switch (params[PreviewServiceInfo.kProjectRoot]) {
           final String value when value.isNotEmpty => value,
           _ => targetProjectRoot,

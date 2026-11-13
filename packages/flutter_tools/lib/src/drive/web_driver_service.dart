@@ -360,6 +360,7 @@ Map<String, Object?> getDesiredCapabilities(
             '--use-angle=swiftshader',
             '--enable-unsafe-swiftshader',
             '--disable-gpu-sandbox',
+            '--disable-dev-shm-usage',
           ],
         ],
         ...webBrowserFlags,

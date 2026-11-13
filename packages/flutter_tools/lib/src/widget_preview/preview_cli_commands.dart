@@ -14,8 +14,10 @@ import '../context/tool_context.dart';
 import '../convert.dart';
 import '../project.dart';
 import '../runner/flutter_command.dart';
+import '../web/web_options.dart';
 import 'dtd_types.dart';
 import 'preview_session_client.dart';
+import 'utils.dart';
 
 abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
   _WidgetPreviewCliSubCommand({
@@ -104,6 +106,8 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     fileOption,
     dtdUrlOption,
     syncOption,
+    WidgetPreviewOptions.buildHooksOption,
+    WebOptions.webBrowserFlags,
   ];
 
   static const snapshotOptions = <OptionDescriptor<Object?>>[
@@ -117,6 +121,8 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     imageOption,
     syncOption,
     outputOption,
+    WidgetPreviewOptions.buildHooksOption,
+    WebOptions.webBrowserFlags,
   ];
 
   @visibleForTesting
@@ -243,14 +249,18 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
       final String? rawFile = getValue(_WidgetPreviewCliSubCommand.fileOption);
       final String? dtdUrl = getValue(_WidgetPreviewCliSubCommand.dtdUrlOption);
       final bool sync = getValue(_WidgetPreviewCliSubCommand.syncOption);
+      final bool buildHooks = getValue(WidgetPreviewOptions.buildHooksOption);
+      final List<String> webBrowserFlags = getValue(WebOptions.webBrowserFlags);
       final String? fileUri = client.resolveFileFilter(
         rawFile,
         explicitProjectDirectory: explicitProjectDirectory,
       );
 
       final PreviewListResponse response = await client.withSession(
+        buildHooks: buildHooks,
         dtdUrl: dtdUrl,
         rootProject: rootProject,
+        webBrowserFlags: webBrowserFlags,
         action: (WidgetPreviewActiveSession session) =>
             client.listPreviews(session: session, fileUri: fileUri, sync: sync),
       );
@@ -358,6 +368,8 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
       final String? brightness = _WidgetPreviewCliSubCommand._parseBrightnessOption(this);
       final String? dtdUrl = getValue(_WidgetPreviewCliSubCommand.dtdUrlOption);
       final bool sync = getValue(_WidgetPreviewCliSubCommand.syncOption);
+      final bool buildHooks = getValue(WidgetPreviewOptions.buildHooksOption);
+      final List<String> webBrowserFlags = getValue(WebOptions.webBrowserFlags);
       final bool includeImageInStdout = getValue(_WidgetPreviewCliSubCommand.imageOption);
       final String? outputPath = getValue(_WidgetPreviewCliSubCommand.outputOption);
       final bool hasOutputFile = outputPath != null && outputPath.isNotEmpty;
@@ -369,8 +381,10 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
       );
 
       final CapturePreviewResponse response = await client.withSession(
+        buildHooks: buildHooks,
         dtdUrl: dtdUrl,
         rootProject: rootProject,
+        webBrowserFlags: webBrowserFlags,
         action: (WidgetPreviewActiveSession session) => client.capturePreview(
           brightness: brightness,
           height: height,

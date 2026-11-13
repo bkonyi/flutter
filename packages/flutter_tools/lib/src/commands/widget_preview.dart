@@ -9,11 +9,11 @@ import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 import 'package:process/process.dart';
+import 'package:watcher/watcher.dart';
 
 import '../artifacts.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
-import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/platform.dart';
 import '../base/process.dart';
@@ -22,7 +22,6 @@ import '../build_info.dart';
 import '../build_system/build_system.dart';
 import '../build_system/build_targets.dart';
 import '../cache.dart';
-import '../convert.dart';
 import '../dart/analysis.dart';
 import '../devfs.dart';
 import '../device.dart';
@@ -32,22 +31,33 @@ import '../migrations/widget_preview_gitignore_migration.dart';
 import '../project.dart';
 import '../resident_runner.dart';
 import '../runner/flutter_command.dart';
+import '../web/chrome.dart';
 import '../web/web_device.dart';
+import '../web/web_options.dart';
 import '../widget_preview/analytics.dart';
 import '../widget_preview/dependency_graph.dart';
 import '../widget_preview/dtd_services.dart';
 import '../widget_preview/dtd_types.dart';
 import '../widget_preview/lsp_preview_detector.dart';
 import '../widget_preview/preview_code_generator.dart';
-import '../widget_preview/preview_detector.dart';
+import '../widget_preview/preview_detector.dart' hide WatcherBuilder;
+import '../widget_preview/preview_git_exclude.dart';
+import '../widget_preview/preview_machine_logger.dart';
 import '../widget_preview/preview_manifest.dart';
 import '../widget_preview/preview_pubspec_builder.dart';
 import '../widget_preview/preview_session_client.dart';
 import '../widget_preview/utils.dart';
 import 'create_base.dart';
 
+export '../widget_preview/preview_machine_logger.dart' show WidgetPreviewMachineAwareLogger;
 export '../widget_preview/preview_session_client.dart'
     show WidgetPreviewListCommand, WidgetPreviewSnapshotCommand;
+
+typedef FlutterDeviceFactory = Future<FlutterDevice> Function(
+  Device device, {
+  required BuildInfo buildInfo,
+  required String target,
+});
 
 typedef ResidentRunnerFactory = ResidentRunner Function(
   FlutterDevice device, {
@@ -64,7 +74,9 @@ class WidgetPreviewCommand extends FlutterCommand {
     required super.toolContext,
     @visibleForTesting Future<AnalysisServer> Function()? analysisServerFactoryOverride,
     @visibleForTesting WidgetPreviewDtdServices? dtdServicesOverride,
+    @visibleForTesting FlutterDeviceFactory? flutterDeviceFactoryOverride,
     @visibleForTesting ResidentRunnerFactory? residentRunnerFactoryOverride,
+    @visibleForTesting WatcherBuilder? watcherBuilderOverride,
     bool verboseHelp = false,
   }) {
     addSubcommand(
@@ -74,7 +86,9 @@ class WidgetPreviewCommand extends FlutterCommand {
         toolContext: toolContext,
         analysisServerFactoryOverride: analysisServerFactoryOverride,
         dtdServicesOverride: dtdServicesOverride,
+        flutterDeviceFactoryOverride: flutterDeviceFactoryOverride,
         residentRunnerFactoryOverride: residentRunnerFactoryOverride,
+        watcherBuilderOverride: watcherBuilderOverride,
         verbose: verboseHelp,
       ),
     );
@@ -155,18 +169,23 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     required super.toolContext,
     @visibleForTesting Future<AnalysisServer> Function()? analysisServerFactoryOverride,
     @visibleForTesting WidgetPreviewDtdServices? dtdServicesOverride,
+    @visibleForTesting this._flutterDeviceFactoryOverride,
     @visibleForTesting this._residentRunnerFactoryOverride,
+    @visibleForTesting WatcherBuilder? watcherBuilderOverride,
     this.verbose = false,
   }) {
     if (dtdServicesOverride != null) {
       _dtdService = dtdServicesOverride;
     }
     _analysisServerFactoryOverride = analysisServerFactoryOverride;
+    _watcherBuilderOverride = watcherBuilderOverride;
     addPubOptions();
     argParser.addDescriptors(const <OptionDescriptor<Object?>>[
       CommonOptions.machine,
       DebuggingOptionDescriptors.enableDevTools,
       DebuggingOptionDescriptors.devToolsServerAddress,
+      WidgetPreviewOptions.buildHooksOption,
+      WebOptions.webBrowserFlags,
     ], verboseHelp: verbose);
     argParser
       ..addFlag(
@@ -223,6 +242,12 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   static const kBrowserNotFoundErrorMessage =
       'Failed to locate browser. Make sure you are using an up-to-date Chrome or Edge. '
       'Otherwise, consider running with --$kWebServer instead.';
+
+  @visibleForTesting
+  static const kHeadlessBrowserNotFoundErrorMessage =
+      'Failed to locate a headless browser (Google Chrome or Chromium). '
+      'Install Google Chrome or Chromium, or set the $kChromeEnvironment environment variable '
+      'to the browser binary path.';
 
   @visibleForTesting
   static const kHotReloadRejectedMessage = 'Performing hot restart instead...';
@@ -294,9 +319,12 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     toolContext: toolContext,
     analysisServerFactory: _analysisServerFactoryOverride,
     onNonDartFileChangeDetected: _onNonDartFileChangeDetected,
+    watcherBuilder: _watcherBuilderOverride ?? Watcher.new,
   );
 
   late final Future<AnalysisServer> Function()? _analysisServerFactoryOverride;
+  final FlutterDeviceFactory? _flutterDeviceFactoryOverride;
+  late final WatcherBuilder? _watcherBuilderOverride;
   final ResidentRunnerFactory? _residentRunnerFactoryOverride;
 
   late PreviewCodeGenerator _previewCodeGenerator;
@@ -375,7 +403,11 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     previewAnalytics.initializeLaunchStopwatch();
     logger.sendInitializingEvent();
 
-    await WidgetPreviewGitignoreMigration(rootProject, logger).migrate();
+    if (boolArg(kHeadless)) {
+      ensureWidgetPreviewGitExclude(projectDirectory: rootProject.directory, logger: logger);
+    } else {
+      await WidgetPreviewGitignoreMigration(rootProject, logger).migrate();
+    }
 
     final String? customPreviewScaffoldOutput = stringArg(kWidgetPreviewScaffoldOutputDir);
     final Directory widgetPreviewScaffold = customPreviewScaffoldOutput != null
@@ -777,19 +809,22 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       await _reloadMutex.runGuarded(() async {
         // In the rare case that Flutter Web is disabled, the device manager will not return any web
         // devices which will cause us to crash.
-        if (!featureFlags.isWebEnabled) {
+        if (!(runner?.featureFlags ?? featureFlags).isWebEnabled) {
           throwToolExit(
             'Widget Previews requires Flutter Web to be enabled. Please run '
             "'flutter config --enable-web' to enable Flutter Web and try again.",
           );
         }
+        final DeviceManager resolvedDeviceManager = (runner?.deviceManager ?? deviceManager)!;
         final Device device;
         if (boolArg(kWebServer)) {
           final List<Device> devices;
           try {
             // The web-server device is hidden by default, make it visible before trying to look it up.
             WebServerDevice.showWebServerDevice = true;
-            devices = await deviceManager!.getDevicesById(WebServerDevice.kWebServerDeviceId);
+            devices = await resolvedDeviceManager.getDevicesById(
+              WebServerDevice.kWebServerDeviceId,
+            );
           } finally {
             // Reset the flag to false to avoid affecting other commands.
             WebServerDevice.showWebServerDevice = false;
@@ -799,7 +834,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
         } else {
           // Since the only target supported by the widget preview scaffold is the web
           // device, only a single web device should be returned.
-          final List<Device> devices = await deviceManager!.getDevices(
+          final List<Device> devices = await resolvedDeviceManager.getDevices(
             filter: DeviceDiscoveryFilter(
               supportFilter:
                   DeviceDiscoverySupportFilter.excludeDevicesUnsupportedByFlutterOrProject(
@@ -810,7 +845,11 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
           );
 
           if (devices.isEmpty) {
-            throwToolExit(kBrowserNotFoundErrorMessage);
+            throwToolExit(
+              boolArg(kHeadless)
+                  ? kHeadlessBrowserNotFoundErrorMessage
+                  : kBrowserNotFoundErrorMessage,
+            );
           }
           if (devices.length > 1) {
             // Prefer Google Chrome as the target browser.
@@ -840,11 +879,13 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
               widgetPreviewScaffoldProject.packageConfig.uri,
             ),
             trackWidgetCreation: true,
+            buildNativeAssets: boolArg(WidgetPreviewOptions.kBuildHooks),
             // Don't try and download canvaskit from the CDN.
             useLocalCanvasKit: true,
             includeUnsupportedPlatformLibraryStubs: true,
           ),
           webConfig: WebDebugConfig(
+            browserFlags: stringsArg(FlutterOptions.kWebBrowserFlag),
             enableExpressionEvaluation: true,
             runHeadless: boolArg(kHeadless),
           ),
@@ -855,12 +896,18 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             .childFile('main.dart')
             .absolute
             .path;
-        final FlutterDevice flutterDevice = await FlutterDevice.create(
-          device,
-          toolContext: toolContext,
-          buildInfo: debuggingOptions.buildInfo,
-          target: target,
-        );
+        final FlutterDevice flutterDevice = _flutterDeviceFactoryOverride != null
+            ? await _flutterDeviceFactoryOverride(
+                device,
+                buildInfo: debuggingOptions.buildInfo,
+                target: target,
+              )
+            : await FlutterDevice.create(
+                device,
+                toolContext: toolContext,
+                buildInfo: debuggingOptions.buildInfo,
+                target: target,
+              );
 
         if (boolArg(kLaunchPreviewer)) {
           final appStarted = Completer<void>();
@@ -970,200 +1017,5 @@ final class WidgetPreviewCleanCommand extends WidgetPreviewSubCommandBase {
       logger.printStatus('Nothing to clean up.');
     }
     return FlutterCommandResult.success();
-  }
-}
-
-/// A custom logger for the widget-preview commands that disables non-event output to stdio when
-/// machine mode is enabled.
-final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
-  WidgetPreviewMachineAwareLogger(
-    super.delegate, {
-    required this.machine,
-    required this._stdio,
-    required this.verbose,
-  });
-
-  final bool machine;
-  final bool verbose;
-  final Stdio _stdio;
-
-  @override
-  void printError(
-    String message, {
-    StackTrace? stackTrace,
-    bool? emphasis,
-    TerminalColor? color,
-    int? indent,
-    int? hangingIndent,
-    bool? wrap,
-  }) {
-    if (machine) {
-      sendEvent('logMessage', <String, Object?>{
-        'level': 'error',
-        'message': message,
-        'stackTrace': ?stackTrace?.toString(),
-      });
-      return;
-    }
-    super.printError(
-      message,
-      stackTrace: stackTrace,
-      emphasis: emphasis,
-      color: color,
-      indent: indent,
-      hangingIndent: hangingIndent,
-      wrap: wrap,
-    );
-  }
-
-  @override
-  void printWarning(
-    String message, {
-    bool? emphasis,
-    TerminalColor? color,
-    int? indent,
-    int? hangingIndent,
-    bool? wrap,
-    bool fatal = true,
-  }) {
-    if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'warning', 'message': message});
-      return;
-    }
-    super.printWarning(
-      message,
-      emphasis: emphasis,
-      color: color,
-      indent: indent,
-      hangingIndent: hangingIndent,
-      wrap: wrap,
-      fatal: fatal,
-    );
-  }
-
-  @override
-  void printStatus(
-    String message, {
-    bool? emphasis,
-    TerminalColor? color,
-    bool? newline,
-    int? indent,
-    int? hangingIndent,
-    bool? wrap,
-  }) {
-    if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'status', 'message': message});
-      return;
-    }
-    super.printStatus(
-      message,
-      emphasis: emphasis,
-      color: color,
-      newline: newline,
-      indent: indent,
-      hangingIndent: hangingIndent,
-      wrap: wrap,
-    );
-  }
-
-  @override
-  void printBox(String message, {String? title}) {
-    if (machine) {
-      return;
-    }
-    super.printBox(message, title: title);
-  }
-
-  @override
-  void printTrace(String message) {
-    if (!verbose) {
-      return;
-    }
-    if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'trace', 'message': message});
-      return;
-    }
-    super.printTrace(message);
-  }
-
-  static const kInitializingEvent = 'initializing';
-  static const kStartedEvent = 'started';
-  static const kPidKey = 'pid';
-  static const kUrlKey = 'url';
-  static const kDtdUriKey = 'dtdUri';
-  static const kPreviewServiceKey = 'previewService';
-  static const kScaffoldServiceKey = 'scaffoldService';
-  static const kProjectRootKey = 'projectRoot';
-
-  /// Notifies tooling that the widget previewer is initializing.
-  void sendInitializingEvent() {
-    sendEvent(kInitializingEvent, <String, Object?>{kPidKey: pid});
-  }
-
-  /// Notifies tooling that the widget previewer has started and is being
-  /// served at [applicationUrl].
-  void sendStartedEvent({
-    required Uri applicationUrl,
-    Uri? dtdUri,
-    String? previewService,
-    String? projectRoot,
-    String? scaffoldService,
-  }) {
-    sendEvent(kStartedEvent, <String, Object?>{
-      kUrlKey: applicationUrl.toString(),
-      kDtdUriKey: ?dtdUri?.toString(),
-      kPreviewServiceKey: ?previewService,
-      kScaffoldServiceKey: ?scaffoldService,
-      kProjectRootKey: ?projectRoot,
-    });
-  }
-
-  @override
-  void sendEvent(String name, [Map<String, dynamic>? args]) {
-    if (!machine) {
-      return;
-    }
-    // Don't call super.printStatus as it will result in a prefix being printed when --verbose is
-    // provided.
-    _stdio.stdout.writeln(
-      json.encode([
-        {'event': 'widget_preview.$name', 'params': ?args},
-      ]),
-    );
-  }
-
-  @override
-  Status startProgress(
-    String message, {
-    String? progressId,
-    int progressIndicatorPadding = kDefaultStatusPadding,
-  }) {
-    if (machine) {
-      printStatus(message);
-      return SilentStatus(stopwatch: Stopwatch());
-    }
-    return super.startProgress(
-      message,
-      progressId: progressId,
-      progressIndicatorPadding: progressIndicatorPadding,
-    );
-  }
-
-  @override
-  Status startSpinner({
-    VoidCallback? onFinish,
-    Duration? timeout,
-    SlowWarningCallback? slowWarningCallback,
-    TerminalColor? warningColor,
-  }) {
-    if (machine) {
-      return SilentStatus(stopwatch: Stopwatch());
-    }
-    return super.startSpinner(
-      onFinish: onFinish,
-      timeout: timeout,
-      slowWarningCallback: slowWarningCallback,
-      warningColor: warningColor,
-    );
   }
 }

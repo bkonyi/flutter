@@ -39,7 +39,7 @@ class LspPreviewDetector {
     this.analysisServerFactory,
     this.onNonDartFileChangeDetected,
     @visibleForTesting this.onPackageConfigChangeDetected,
-    @visibleForTesting this.watcherBuilder = _defaultWatcherBuilder,
+    this.watcherBuilder = _defaultWatcherBuilder,
   }) : projectRoot = project.directory;
 
   final ToolContext toolContext;
