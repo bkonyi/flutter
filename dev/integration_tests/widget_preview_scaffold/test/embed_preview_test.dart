@@ -238,6 +238,35 @@ void main() {
         parsed.resolveDtdProxyUri(Uri.parse('file:///tmp/index.html')),
         isNull,
       );
+      expect(
+        parsed.resolveDtdProxyUri(Uri.parse('ftp://example.com/')),
+        isNull,
+      );
+
+      // Defaults to relative dtd_ws in embed mode when dtdProxy is omitted.
+      const defaultEmbed = EmbedPreviewParams(isEmbed: true);
+      expect(
+        defaultEmbed.resolveDtdProxyUri(
+          Uri.parse('http://127.0.0.1:5050/?embed=1'),
+        ),
+        Uri.parse('ws://127.0.0.1:5050/dtd_ws'),
+      );
+      expect(
+        defaultEmbed.resolveDtdProxyUri(
+          Uri.parse('https://preview.proxy.example:8443/subpath/'),
+        ),
+        Uri.parse('wss://preview.proxy.example:8443/subpath/dtd_ws'),
+      );
+      expect(
+        defaultEmbed.resolveDtdProxyUri(Uri.parse('file:///tmp/index.html')),
+        isNull,
+      );
+      expect(
+        const EmbedPreviewParams().resolveDtdProxyUri(
+          Uri.parse('http://127.0.0.1:5050/'),
+        ),
+        isNull,
+      );
 
       // Ignores invalid/non-positive dimensions, unknown brightness, and
       // malformed percent-encoding without throwing.

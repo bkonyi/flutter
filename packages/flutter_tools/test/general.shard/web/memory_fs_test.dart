@@ -73,4 +73,29 @@ void main() {
     expect(webMemoryFS.sourcemaps.keys, <String>['good.js.map']);
     expect(webMemoryFS.metadataFiles.keys, <String>['good.js.metadata']);
   });
+
+  testWithoutContext('increments revision on write and incrementRevision', () {
+    final fileSystem = MemoryFileSystem();
+    final File source = fileSystem.file('source')..writeAsStringSync('main() {}');
+    final File sourcemap = fileSystem.file('sourcemap')..writeAsStringSync('{}');
+    final File metadata = fileSystem.file('metadata')..writeAsStringSync('{}');
+    final File manifest = fileSystem.file('manifest')
+      ..writeAsStringSync(
+        json.encode(<String, Object>{
+          '/foo.js': <String, Object>{
+            'code': <int>[0, source.lengthSync()],
+            'sourcemap': <int>[0, 2],
+            'metadata': <int>[0, 2],
+          },
+        }),
+      );
+    final webMemoryFS = WebMemoryFS();
+    expect(webMemoryFS.revision, 0);
+
+    webMemoryFS.write(source, manifest, sourcemap, metadata);
+    expect(webMemoryFS.revision, 1);
+
+    webMemoryFS.incrementRevision();
+    expect(webMemoryFS.revision, 2);
+  });
 }

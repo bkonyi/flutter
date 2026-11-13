@@ -43,6 +43,7 @@ import '../web/web_runner.dart';
 import 'devfs_web.dart';
 import 'mustache_template.dart';
 import 'web_expression_compiler.dart';
+import 'widget_preview_live_server.dart';
 
 /// Injectable factory to create a [ResidentWebRunner].
 class DwdsWebRunnerFactory extends WebRunnerFactory {
@@ -103,6 +104,7 @@ class ResidentWebRunner extends ResidentRunner {
     String? target,
     this._urlTunneller,
     this._webDefines = const <String, String>{},
+    this._widgetPreviewLiveConfig,
   }) : super(
          <FlutterDevice>[device],
          target: target ?? toolContext.fs.path.join('lib', 'main.dart'),
@@ -112,6 +114,7 @@ class ResidentWebRunner extends ResidentRunner {
 
   final UrlTunneller? _urlTunneller;
   final Map<String, String> _webDefines;
+  final WidgetPreviewLiveConfig? _widgetPreviewLiveConfig;
   final Map<String, Object?> platformArgs;
 
   FlutterDevice? get flutterDevice => flutterDevices.first;
@@ -300,6 +303,7 @@ class ResidentWebRunner extends ResidentRunner {
           webCrossOriginIsolation: crossOriginIsolation,
           toolContext: toolContext,
           webDefines: _webDefines,
+          widgetPreviewLiveConfig: _widgetPreviewLiveConfig,
         );
         Uri url = await flutterDevice!.devFS!.create();
         if (serverConfig.https?.certKeyPath != null && serverConfig.https?.certPath != null) {

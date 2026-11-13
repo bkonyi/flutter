@@ -536,7 +536,16 @@ class WidgetPreviewDtdServices {
     if (timeoutMs < 0) {
       throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
     }
+    return listPreviewsJson(fileUri: fileUri, sync: sync, timeoutMs: timeoutMs);
+  }
 
+  /// Returns the current list of previews as a JSON-serializable map matching
+  /// [PreviewListResponse.toJson].
+  Future<Map<String, Object?>> listPreviewsJson({
+    String? fileUri,
+    bool sync = false,
+    int timeoutMs = kDefaultSyncTimeoutMs,
+  }) async {
     SyncPreviewsResponse? syncResponse;
     if (sync) {
       if (onSyncPreviews

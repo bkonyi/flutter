@@ -42,6 +42,7 @@ import '../web_template.dart';
 import 'proxy_middleware.dart';
 import 'release_asset_server.dart';
 import 'web_server_utilities.dart';
+import 'widget_preview_live_server.dart';
 
 // A minimal index for projects that do not yet support web. A meta tag is used
 // to ensure loaded scripts are always parsed as UTF-8.
@@ -218,6 +219,7 @@ class WebAssetServer implements AssetReader {
     DwdsLauncher dwdsLauncher = Dwds.start,
     bool useDwdsWebSocketConnection = false,
     Map<String, String> webDefines = const <String, String>{},
+    WidgetPreviewLiveConfig? widgetPreviewLiveConfig,
   }) async {
     final ToolContext(
       :Cache cache,
@@ -383,11 +385,30 @@ class WebAssetServer implements AssetReader {
       // Use DWDS WebSocket-based connection instead of Chrome-based connection for debugging
       useDwdsWebSocketConnection: useDwdsWebSocketConnection,
     );
+    WidgetPreviewLiveServer? liveServer;
+    if (widgetPreviewLiveConfig != null) {
+      liveServer = WidgetPreviewLiveServer(
+        basePathProvider: () => server.basePath,
+        config: widgetPreviewLiveConfig,
+        configuredHost: cleanHost,
+        isWindows: platform.isWindows,
+        modules: modules,
+        renderFlutterBootstrapJs: () => server._flutterBootstrapJsContent,
+        renderIndexHtml: server._renderIndexHtml,
+        webMemoryFS: server._webMemoryFS,
+      );
+      server._liveServer = liveServer;
+    }
+
     final shelf.Handler dwdsHandler = const shelf.Pipeline()
         .addMiddleware(dwds.middleware)
         .addMiddleware(proxyMiddleware(proxy, logger))
         .addHandler(server.handleRequest);
-    final shelf.Cascade cascade = shelf.Cascade().add(dwds.handler).add(dwdsHandler);
+    var cascade = shelf.Cascade();
+    if (liveServer != null) {
+      cascade = cascade.add(liveServer.handler);
+    }
+    cascade = cascade.add(dwds.handler).add(dwdsHandler);
     final shelf.Handler serverHandler = const shelf.Pipeline()
         .addMiddleware(waitMiddleware)
         .addHandler(cascade.handler);
@@ -413,6 +434,7 @@ class WebAssetServer implements AssetReader {
   late final Dwds dwds;
   late Directory entrypointCacheDirectory;
   var _dwdsInit = false;
+  WidgetPreviewLiveServer? _liveServer;
   WebMemoryFS get webMemoryFS => _webMemoryFS;
 
   @visibleForTesting
@@ -590,6 +612,7 @@ class WebAssetServer implements AssetReader {
     if (!_readyCompleter.isCompleted) {
       _readyCompleter.complete();
     }
+    await _liveServer?.dispose();
     if (_dwdsInit) {
       await dwds.stop();
     }
@@ -603,6 +626,7 @@ class WebAssetServer implements AssetReader {
 
   void writeBytes(String filePath, Uint8List contents) {
     _webMemoryFS.files[filePath] = contents;
+    _webMemoryFS.incrementRevision();
   }
 
   /// Determines what rendering backed to use.
@@ -683,19 +707,24 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
     );
   }
 
+  String _renderIndexHtml() {
+    final ToolContext(:FileSystem fs, :Logger logger) = _toolContext;
+    final WebTemplate indexHtml = getWebTemplate(fs, 'index.html', _kDefaultIndex);
+    return indexHtml.withSubstitutions(
+      baseHref: _baseHref ?? '/',
+      // Currently, we don't support --static-assets-url for the "run" command.
+      staticAssetsUrl: '/',
+      buildConfig: _buildConfigString,
+      flutterJsFile: _flutterJsFile,
+      flutterBootstrapJs: _flutterBootstrapJsContent,
+      logger: logger,
+      webDefines: _webDefines,
+    );
+  }
+
   shelf.Response _serveIndexHtml() {
-    final WebTemplate indexHtml = getWebTemplate(_toolContext.fs, 'index.html', _kDefaultIndex);
     return shelf.Response.ok(
-      indexHtml.withSubstitutions(
-        baseHref: _baseHref ?? '/',
-        // Currently, we don't support --static-assets-url for the "run" command.
-        staticAssetsUrl: '/',
-        buildConfig: _buildConfigString,
-        flutterJsFile: _flutterJsFile,
-        flutterBootstrapJs: _flutterBootstrapJsContent,
-        logger: _toolContext.logger,
-        webDefines: _webDefines,
-      ),
+      _renderIndexHtml(),
       encoding: utf8,
       headers: <String, String>{HttpHeaders.contentTypeHeader: 'text/html'},
     );

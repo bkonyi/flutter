@@ -75,10 +75,12 @@ class EmbedPreviewParams {
   static const kAllPreviewsValue = '*';
   static const kBrightnessParam = 'brightness';
   static const kDarkBrightness = 'dark';
+  static const kDefaultDtdProxyPath = 'dtd_ws';
   static const kDtdProxyParam = 'dtdProxy';
   static const kEmbedEnabledValue = '1';
   static const kEmbedParam = 'embed';
   static const kHeightParam = 'height';
+  static const kHttpScheme = 'http';
   static const kHttpsScheme = 'https';
   static const kLightBrightness = 'light';
   static const kPreviewIdParam = 'previewId';
@@ -99,18 +101,27 @@ class EmbedPreviewParams {
   /// (when [previewId] is omitted, empty, or [kAllPreviewsValue]).
   bool get isAllPreviews => previewId == null || previewId == kAllPreviewsValue;
 
-  /// Resolves [dtdProxy] against [baseUri] using `ws` or `wss`, or returns
-  /// `null` if [dtdProxy] is unset or [baseUri] has no authority.
+  /// Resolves [dtdProxy] (or [kDefaultDtdProxyPath] when [isEmbed] is `true`)
+  /// against [baseUri] using `ws` or `wss`, or returns `null` if [baseUri] has
+  /// no authority, is not HTTP/HTTPS, or [dtdProxy] is unset outside embed
+  /// mode.
   Uri? resolveDtdProxyUri(Uri baseUri) {
-    final String? proxy = dtdProxy;
-    if (proxy == null || proxy.isEmpty || baseUri.authority.isEmpty) {
+    if (baseUri.authority.isEmpty ||
+        (baseUri.scheme != kHttpScheme && baseUri.scheme != kHttpsScheme)) {
       return null;
     }
     final String wsScheme = baseUri.scheme == kHttpsScheme
         ? kWssScheme
         : kWsScheme;
-    final String normalizedPath = proxy.startsWith('/') ? proxy : '/$proxy';
-    return Uri.parse('$wsScheme://${baseUri.authority}$normalizedPath');
+    final String? proxy = dtdProxy;
+    if (proxy != null && proxy.isNotEmpty) {
+      final String normalizedPath = proxy.startsWith('/') ? proxy : '/$proxy';
+      return Uri.parse('$wsScheme://${baseUri.authority}$normalizedPath');
+    }
+    if (!isEmbed) {
+      return null;
+    }
+    return baseUri.resolve(kDefaultDtdProxyPath).replace(scheme: wsScheme);
   }
 
   static Brightness? _parseBrightness(String? value) => switch (value) {

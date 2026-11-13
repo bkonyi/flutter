@@ -21,6 +21,14 @@ class WebMemoryFS {
   String? get mergedMetadata => _mergedMetadata;
   String? _mergedMetadata;
 
+  int get revision => _revision;
+  int _revision = 0;
+
+  /// Increments [revision] when an individual file is written outside [write].
+  void incrementRevision() {
+    _revision++;
+  }
+
   /// Update the filesystem with the provided source and manifest files.
   ///
   /// Returns the list of updated files.
@@ -74,6 +82,7 @@ class WebMemoryFS {
     _mergedMetadata = metadataFiles.values
         .map((Uint8List encoded) => utf8.decode(encoded))
         .join('\n');
+    _revision++;
 
     return modules;
   }

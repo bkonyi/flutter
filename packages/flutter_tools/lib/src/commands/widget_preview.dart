@@ -27,6 +27,7 @@ import '../devfs.dart';
 import '../device.dart';
 import '../features.dart';
 import '../isolated/resident_web_runner.dart';
+import '../isolated/widget_preview_live_server.dart';
 import '../migrations/widget_preview_gitignore_migration.dart';
 import '../project.dart';
 import '../resident_runner.dart';
@@ -225,6 +226,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             'Enables the legacy preview detection mechanism that uses '
             'package:analyzer instead of LSP.',
         hide: !verbose,
+      )
+      ..addMultiOption(
+        kWebAllowOrigin,
+        help:
+            'Additional Origin values allowed for fetch and WebSocket requests to the widget '
+            'preview live server (classic <script> loads omit Origin and require Host to be '
+            'loopback or the configured hostname).',
+        hide: !verbose,
       );
   }
 
@@ -234,6 +243,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   static const kLaunchPreviewer = 'launch-previewer';
   static const kHeadless = 'headless';
   static const kWebServer = 'web-server';
+  static const kWebAllowOrigin = 'web-allow-origin';
   static const kWidgetPreviewScaffoldOutputDir = 'scaffold-output-dir';
   static const kDisableDtdServiceUuid = 'disable-dtd-service-uuid';
   static const kLegacyPreviewDetection = 'legacy-preview-detection';
@@ -956,6 +966,10 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
                   // TODO(bkonyi): consider removing if we stop placing the scaffold in $TMP.
                   // See https://github.com/flutter/flutter/issues/179036
                   projectRootPath: widgetPreviewScaffoldProject.directory.absolute.path,
+                  widgetPreviewLiveConfig: WidgetPreviewLiveConfig(
+                    dtdServices: _dtdService,
+                    allowedOrigins: stringsArg(kWebAllowOrigin),
+                  ),
                 );
           unawaited(
             _widgetPreviewApp!.run(
