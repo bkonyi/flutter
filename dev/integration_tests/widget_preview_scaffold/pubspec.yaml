@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  cupertino_ui: ^1.0.0
   dtd: any
   file: any
   google_fonts: any
@@ -22,7 +23,6 @@ dependencies:
   webview_flutter: any
 
 dev_dependencies:
-  cupertino_ui: ^1.0.0
   flutter_tools:
     path: ../../../packages/flutter_tools/
   test: any

@@ -41,6 +41,7 @@ class WidgetPreview {
     required this.packageName,
     required this.previewData,
     required this.scriptUri,
+    this.defaultLocalizations,
     this.errorMessage,
     this.hasError = false,
     this.multiPreviewIndex,
@@ -51,6 +52,7 @@ class WidgetPreview {
     required this.builder,
     required this.previewData,
     this.column = -1,
+    this.defaultLocalizations,
     this.errorMessage,
     this.functionName = '',
     this.hasError = false,
@@ -151,10 +153,19 @@ class WidgetPreview {
   /// A callback to return a localization configuration to be applied to the
   /// previewed [Widget].
   ///
+  /// Generated previews fall back to an `en_US` default localization
+  /// configuration rather than inheriting the host `WidgetsApp` locale, so this
+  /// getter is non-null for those previews and [debugFillProperties] will
+  /// report those synthesized defaults.
+  ///
   /// Note: this must be a reference to a static, public function defined as
   /// either a top-level function or static member in a class.
   PreviewLocalizationsData? get localizations =>
-      previewData.localizations?.call();
+      (previewData.localizations ?? defaultLocalizations)?.call();
+
+  /// Fallback localization callback used when [previewData.localizations] is
+  /// `null`.
+  final PreviewLocalizationsData Function()? defaultLocalizations;
 
   final Preview previewData;
 

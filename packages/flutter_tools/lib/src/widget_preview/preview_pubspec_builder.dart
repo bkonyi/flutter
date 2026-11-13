@@ -49,6 +49,7 @@ class PreviewPubspecBuilder {
   ///   - web, which is used to access query parameters provided by the IDE.
   ///   - webview_flutter, webview_flutter_web, which is used to embed DevTools in the previewer.
   static const _kWidgetPreviewScaffoldDeps = <String>[
+    'cupertino_ui',
     'dtd',
     'flutter_lints',
     'google_fonts',
