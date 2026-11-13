@@ -11,7 +11,19 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:collection/collection.dart';
 
+import '../runner/flutter_command.dart';
 import 'dependency_graph.dart';
+
+/// Shared CLI options for widget preview subcommands.
+abstract final class WidgetPreviewOptions {
+  static const kBuildHooks = 'build-hooks';
+  static const buildHooksOption = FlagOptionDescriptor(
+    name: kBuildHooks,
+    defaultsTo: true,
+    help: 'Whether to run Dart build hooks when building the widget preview scaffold.',
+    verboseOnly: true,
+  );
+}
 
 extension TokenExtension on Token {
   /// Convenience getter to identify tokens for private fields and functions.

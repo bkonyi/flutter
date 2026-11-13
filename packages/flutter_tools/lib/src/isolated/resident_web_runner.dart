@@ -737,11 +737,13 @@ class ResidentWebRunner extends ResidentRunner {
     if (rebuildBundle) {
       logger.printTrace('Updating assets');
       final int result = await assetBundle.build(
-        flutterHookResult: await dartBuilder?.runHooks(
-          targetPlatform: TargetPlatform.web_javascript,
-          environment: environment,
-          logger: logger,
-        ),
+        flutterHookResult: debuggingOptions.buildInfo.buildNativeAssets
+            ? await dartBuilder?.runHooks(
+                targetPlatform: TargetPlatform.web_javascript,
+                environment: environment,
+                logger: logger,
+              )
+            : null,
         manifestPath: flutterProject.pubspecFile.path,
         packageConfigPath: debuggingOptions.buildInfo.packageConfigPath,
         targetPlatform: TargetPlatform.web_javascript,

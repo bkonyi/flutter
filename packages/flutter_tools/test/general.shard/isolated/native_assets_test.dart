@@ -882,6 +882,78 @@ environment:
       },
     );
   });
+
+  testUsingContext(
+    'runFlutterSpecificBuildHooks skips buildRunner.build when all target extensions are empty',
+    () async {
+      final File packageConfig = environment.projectDir.childFile('.dart_tool/package_config.json');
+      await packageConfig.parent.create(recursive: true);
+      await packageConfig.create();
+
+      final buildRunner = FakeFlutterNativeAssetsBuildRunner(
+        packagesWithNativeAssetsResult: <String>['bar'],
+      );
+      final (
+        :Map<String, Map<String, Object?>> results,
+        :DartHooksResult buildResult,
+      ) = await runFlutterSpecificBuildHooks(
+        environmentDefines: <String, String>{kBuildMode: BuildMode.debug.cliName},
+        buildRunner: buildRunner,
+        targetPlatform: TargetPlatform.web_javascript,
+        projectUri: projectUri,
+        fileSystem: fileSystem,
+        logger: logger,
+        buildCodeAssets: null,
+        buildDataAssets: true,
+      );
+
+      expect(results, isEmpty);
+      expect(buildResult.codeAssets, isEmpty);
+      expect(buildResult.dataAssets, isEmpty);
+      expect(buildResult.dependencies, isEmpty);
+      expect(buildRunner.buildInvocations, 0);
+      expect(
+        logger.traceText,
+        contains('No supported asset types for web-javascript. Skipping build hooks.'),
+      );
+    },
+    overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true)},
+  );
+
+  testUsingContext(
+    'runFlutterSpecificLinkHooks skips buildRunner.link when all target extensions are empty',
+    () async {
+      final File packageConfig = environment.projectDir.childFile('.dart_tool/package_config.json');
+      await packageConfig.parent.create(recursive: true);
+      await packageConfig.create();
+
+      final buildRunner = FakeFlutterNativeAssetsBuildRunner(
+        packagesWithNativeAssetsResult: <String>['bar'],
+      );
+      final DartHooksResult linkResult = await runFlutterSpecificLinkHooks(
+        environmentDefines: <String, String>{kBuildMode: BuildMode.release.cliName},
+        buildRunner: buildRunner,
+        targetPlatform: TargetPlatform.web_javascript,
+        projectUri: projectUri,
+        fileSystem: fileSystem,
+        logger: logger,
+        buildCodeAssets: null,
+        buildDataAssets: true,
+        buildResults: const <String, Map<String, Object?>>{'web_javascript': <String, Object?>{}},
+        recordedUsesFile: null,
+      );
+
+      expect(linkResult.codeAssets, isEmpty);
+      expect(linkResult.dataAssets, isEmpty);
+      expect(linkResult.dependencies, isEmpty);
+      expect(buildRunner.linkInvocations, 0);
+      expect(
+        logger.traceText,
+        contains('No supported asset types for web-javascript. Skipping link hooks.'),
+      );
+    },
+    overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true)},
+  );
 }
 
 class _SetCCompilerConfigTarget extends FakeFlutterNativeAssetsBuildRunner {

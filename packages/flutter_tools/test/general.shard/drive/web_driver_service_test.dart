@@ -73,6 +73,7 @@ void main() {
             '--use-angle=swiftshader',
             '--enable-unsafe-swiftshader',
             '--disable-gpu-sandbox',
+            '--disable-dev-shm-usage',
           ],
         ],
         'perfLoggingPrefs': <String, String>{

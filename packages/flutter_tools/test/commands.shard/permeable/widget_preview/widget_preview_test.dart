@@ -753,13 +753,20 @@ import 'package:material_ui/material_ui.dart';
 Widget preview() => Text('Foo');''';
 
     const expectedGeneratedFileContents = '''
-// ignore_for_file: implementation_imports
+// ignore_for_file: deprecated_member_use, implementation_imports
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'widget_preview.dart' as _i1;
 import 'utils.dart' as _i2;
 import 'package:flutter_project/foo.dart' as _i3;
 import 'package:flutter/src/widget_previews/widget_previews.dart' as _i4;
+import 'package:flutter/widget_previews.dart' as _i5;
+import 'dart:ui' as _i6;
+import 'package:flutter/widgets.dart' as _i7;
+import 'package:material_ui/material_ui.dart' as _i8;
+import 'package:cupertino_ui/cupertino_ui.dart' as _i9;
+import 'package:flutter/material.dart' as _i10;
+import 'package:flutter/cupertino.dart' as _i11;
 
 List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
@@ -769,10 +776,22 @@ List<_i1.WidgetPreview> previews() => [
     functionName: 'preview',
     line: 4,
     column: 1,
+    defaultLocalizations: _defaultPreviewLocalizations,
     previewFunction: () => _i3.preview(),
     transformedPreview: const _i4.Preview(name: 'preview').transform(),
   ),
 ];
+_i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
+    const _i5.PreviewLocalizationsData(
+      locale: _i6.Locale('en', 'US'),
+      localizationsDelegates: <_i7.LocalizationsDelegate<Object?>>[
+        _i8.DefaultMaterialLocalizations.delegate,
+        _i9.DefaultCupertinoLocalizations.delegate,
+        _i7.DefaultWidgetsLocalizations.delegate,
+        _i10.DefaultMaterialLocalizations.delegate,
+        _i11.DefaultCupertinoLocalizations.delegate,
+      ],
+    );
 ''';
 
     group('LSP-based preview detection', () {
