@@ -600,6 +600,23 @@ window.\$dartLoader.loader.nextAttempt();''');
         cleanParams = <String, Object?>{
           if (fileUri is String && fileUri.isNotEmpty) WidgetPreviewDtdServices.kFileUri: fileUri,
         };
+      } else if (method ==
+          '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kGetServiceInfo}') {
+        _sendRpcResult(
+          clientChannel,
+          id: rpcId,
+          result: <String, Object?>{
+            PreviewServiceInfo.kType: PreviewServiceInfo.kTypeName,
+            PreviewServiceInfo.kPreviewService: dtdServices.widgetPreviewService,
+            PreviewServiceInfo.kScaffoldService: dtdServices.widgetPreviewScaffoldService,
+            PreviewServiceInfo.kScaffoldStream: dtdServices.widgetPreviewScaffoldStream,
+            PreviewServiceInfo.kWebPreviewUri: dtdServices.webPreviewUriProvider
+                ?.call()
+                ?.toString(),
+            PreviewServiceInfo.kScaffoldConnected: dtdServices.scaffoldConnected,
+          },
+        );
+        return null;
       } else {
         _sendRpcError(
           clientChannel,
@@ -633,6 +650,14 @@ window.\$dartLoader.loader.nextAttempt();''');
     } on Object {
       // Ignore errors when closing an already-terminated WebSocket sink.
     }
+  }
+
+  static void _sendRpcResult(
+    WebSocketChannel channel, {
+    required Object? id,
+    required Map<String, Object?> result,
+  }) {
+    channel.sink.add(jsonEncode(<String, Object?>{'jsonrpc': '2.0', 'id': id, 'result': result}));
   }
 
   static void _sendRpcError(

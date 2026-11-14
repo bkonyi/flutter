@@ -536,12 +536,30 @@ void main() {
           'method': '${dtdServices.widgetPreviewScaffoldService}.getPreviews',
         });
         expect(getPreviewsResp['result'], <String, Object?>{'ok': true});
+
+        // Allowed: getServiceInfo (answered locally with redacted fields, never
+        // forwarded upstream and never exposing dtdUri or projectRoot).
+        final Map<String, Object?> getServiceInfoResp = await sendRpc(<String, Object?>{
+          'jsonrpc': '2.0',
+          'id': 2,
+          'method': '${dtdServices.widgetPreviewService}.getServiceInfo',
+          'params': <String, Object?>{'unexpected': true},
+        });
+        final serviceInfoResult = getServiceInfoResp['result']! as Map<String, Object?>;
+        expect(serviceInfoResult, <String, Object?>{
+          'type': 'PreviewServiceInfo',
+          'previewService': dtdServices.widgetPreviewService,
+          'scaffoldService': dtdServices.widgetPreviewScaffoldService,
+          'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
+          'webPreviewUri': dtdServices.webPreviewUriProvider?.call()?.toString(),
+          'scaffoldConnected': dtdServices.scaffoldConnected,
+        });
+        expect(serviceInfoResult.containsKey('dtdUri'), isFalse);
+        expect(serviceInfoResult.containsKey('projectRoot'), isFalse);
         expect(forwardedToUpstream, hasLength(3));
 
-        // Disallowed methods (including getServiceInfo which exposes dtdUri) must
-        // be rejected with -32601 without forwarding.
+        // Disallowed methods must be rejected with -32601 without forwarding.
         for (final (int id, String method) in <(int, String)>[
-          (2, '${dtdServices.widgetPreviewService}.getServiceInfo'),
           (5, 'FileSystem.readFileAsString'),
           (6, 'registerService'),
           (7, 'postEvent'),
