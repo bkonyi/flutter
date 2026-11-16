@@ -404,7 +404,7 @@ void main() {
     });
 
     testWithoutContext(
-      'serves /live, /__api/status, /__api/capabilities, and POST /__api/sync',
+      'serves /live, /__api/status, and POST /__api/sync while returning 404 for removed endpoints',
       () async {
         final shelf.Response live = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/live')),
@@ -422,24 +422,10 @@ void main() {
         final String liveSlashHtml = await liveSlash.readAsString();
         expect(liveSlashHtml, contains('__embed_flutter_bootstrap.js'));
 
-        final shelf.Response capabilities = await server.handler(
+        final shelf.Response removedCapabilities = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/__api/capabilities')),
         );
-        expect(capabilities.statusCode, io.HttpStatus.ok);
-        expect(capabilities.headers['cache-control'], 'no-store');
-        final capabilitiesJson =
-            jsonDecode(await capabilities.readAsString()) as Map<String, Object?>;
-        expect(capabilitiesJson['canSendToChat'], isFalse);
-        expect(capabilitiesJson['projectRoot'], '/tmp/my_app');
-
-        final shelf.Response crossOriginCapabilities = await server.handler(
-          shelf.Request(
-            'GET',
-            Uri.parse('http://localhost:8080/__api/capabilities'),
-            headers: <String, String>{'host': 'localhost:8080', 'origin': 'https://evil.example'},
-          ),
-        );
-        expect(crossOriginCapabilities.statusCode, io.HttpStatus.forbidden);
+        expect(removedCapabilities.statusCode, io.HttpStatus.notFound);
 
         final shelf.Response status = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/__api/status')),

@@ -11,7 +11,6 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'url.dart';
 
-typedef LiveCapabilitiesResult = ({bool canSendToChat, String? projectRoot});
 typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
 typedef LiveSendSelectionHandler =
     Future<void> Function({
@@ -20,7 +19,6 @@ typedef LiveSendSelectionHandler =
       String? brightness,
       String? previewId,
       String? previewName,
-      String? projectRoot,
       String? textScale,
       String? viewport,
       String? zoom,
@@ -33,7 +31,6 @@ final _debugFragmentChangeController = StreamController<String>.broadcast(
 );
 var _debugReloadCount = 0;
 VoidCallback? _debugOnReloadCallback;
-Future<LiveCapabilitiesResult> Function()? _debugProbeCapabilitiesHandler;
 Future<LiveSyncResult> Function()? _debugTriggerSyncHandler;
 LiveSendSelectionHandler? _debugSendSelectionHandler;
 
@@ -93,13 +90,8 @@ void notifyEmbedZoomChanged(double zoom) {
   }
 }
 
-/// Probes `__api/capabilities` on the live server (stub returns read-only).
-Future<LiveCapabilitiesResult> probeLiveCapabilities() async {
-  if (_debugProbeCapabilitiesHandler case final handler?) {
-    return handler();
-  }
-  return (canSendToChat: false, projectRoot: null);
-}
+/// Whether a host selection handler is registered.
+bool get canSendLiveSelection => _debugSendSelectionHandler != null;
 
 /// Triggers a preview sync/reload via `POST __api/sync` (stub succeeds).
 Future<LiveSyncResult> triggerLiveSync() async {
@@ -109,14 +101,13 @@ Future<LiveSyncResult> triggerLiveSync() async {
   return (compileSuccess: true, errorMessage: null);
 }
 
-/// Sends the active [selections] and user [message] to the host chat.
-Future<void> sendLiveSelectionToChat({
+/// Sends the active [selections] and user [message] to the host.
+Future<void> sendLiveSelectionToHost({
   required String message,
   required List<Map<String, Object?>> selections,
   String? brightness,
   String? previewId,
   String? previewName,
-  String? projectRoot,
   String? textScale,
   String? viewport,
   String? zoom,
@@ -128,14 +119,13 @@ Future<void> sendLiveSelectionToChat({
       brightness: brightness,
       previewId: previewId,
       previewName: previewName,
-      projectRoot: projectRoot,
       textScale: textScale,
       viewport: viewport,
       zoom: zoom,
     );
     return;
   }
-  throw StateError('sendLiveSelectionToChat is only supported on web.');
+  throw StateError('Host selection handler is not available.');
 }
 
 /// Number of times [reloadWindow] has been invoked in tests.
@@ -159,21 +149,13 @@ void debugSetReloadHandler(VoidCallback? onReload) {
   _debugOnReloadCallback = onReload;
 }
 
-/// Registers an optional test handler for [probeLiveCapabilities].
-@visibleForTesting
-void debugSetProbeCapabilitiesHandler(
-  Future<LiveCapabilitiesResult> Function()? handler,
-) {
-  _debugProbeCapabilitiesHandler = handler;
-}
-
 /// Registers an optional test handler for [triggerLiveSync].
 @visibleForTesting
 void debugSetTriggerSyncHandler(Future<LiveSyncResult> Function()? handler) {
   _debugTriggerSyncHandler = handler;
 }
 
-/// Registers an optional test handler for [sendLiveSelectionToChat].
+/// Registers an optional test handler for [sendLiveSelectionToHost].
 @visibleForTesting
 void debugSetSendSelectionHandler(LiveSendSelectionHandler? handler) {
   _debugSendSelectionHandler = handler;
@@ -186,7 +168,6 @@ void debugResetUrlTestState() {
   _debugBaseUriOverride = null;
   _debugReloadCount = 0;
   _debugOnReloadCallback = null;
-  _debugProbeCapabilitiesHandler = null;
   _debugTriggerSyncHandler = null;
   _debugSendSelectionHandler = null;
 }

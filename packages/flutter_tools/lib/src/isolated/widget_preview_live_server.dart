@@ -64,7 +64,6 @@ class WidgetPreviewLiveServer {
     required this.webMemoryFS,
   });
 
-  static const _kApiCapabilitiesPath = '__api/capabilities';
   static const _kApiStatusPath = '__api/status';
   static const _kApiSyncPath = '__api/sync';
   static const _kCorpHeader = 'cross-origin-resource-policy';
@@ -138,7 +137,6 @@ class WidgetPreviewLiveServer {
       _kEmbedMainDartJsPath ||
       _kEmbedMainModuleBootstrapPath ||
       _kDdcBundlePath ||
-      _kApiCapabilitiesPath ||
       _kApiStatusPath ||
       _kApiSyncPath ||
       _kDtdWsPath => true,
@@ -160,7 +158,6 @@ class WidgetPreviewLiveServer {
       ('GET', _kEmbedMainDartJsPath) => _serveEmbedMainDartJs(),
       ('GET', _kEmbedMainModuleBootstrapPath) => _serveEmbedMainModuleBootstrapJs(),
       ('GET', _kDdcBundlePath) => _serveDdcBundle(request),
-      ('GET', _kApiCapabilitiesPath) => _serveApiCapabilities(),
       ('GET', _kApiStatusPath) => _serveApiStatus(),
       ('POST', _kApiSyncPath) => _serveApiSync(),
       ('GET', _kDtdWsPath) => _serveDtdWebSocket(request),
@@ -382,22 +379,6 @@ window.\$dartLoader.loader.nextAttempt();''');
       return true;
     }
     return ifNoneMatch.split(',').any((String part) => part.trim() == etag);
-  }
-
-  shelf.Response _serveApiCapabilities() {
-    final WidgetPreviewDtdServices dtdServices = config.dtdServices;
-    final payload = <String, Object?>{
-      'canSendToChat': false,
-      'projectRoot': dtdServices.projectRootPath ?? dtdServices.project.directory.path,
-    };
-    return shelf.Response.ok(
-      jsonEncode(payload),
-      encoding: utf8,
-      headers: _securityHeaders(
-        contentType: 'application/json; charset=utf-8',
-        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
-      ),
-    );
   }
 
   shelf.Response _serveApiStatus() {

@@ -61,10 +61,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   late final _selectionController = EmbedSelectionController(
     initialParams: widget.params,
   );
-  var _canSendToChat = false;
-  var _hasProbedCapabilities = false;
   var _isSyncing = false;
-  String? _projectRoot;
   String? _syncErrorMessage;
 
   EmbedPreviewParams get _params => widget.params;
@@ -72,36 +69,11 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   double get _zoom => _params.zoom ?? EmbedPreviewParams.kDefaultZoom;
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.params.showControls) {
-      _hasProbedCapabilities = true;
-      unawaited(_probeCapabilities());
-    }
-  }
-
-  @override
   void didUpdateWidget(EmbedPreviewScaffold oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.params != widget.params) {
       _selectionController.syncFromParams(widget.params);
     }
-    if (widget.params.showControls && !_hasProbedCapabilities) {
-      _hasProbedCapabilities = true;
-      unawaited(_probeCapabilities());
-    }
-  }
-
-  Future<void> _probeCapabilities() async {
-    final (:bool canSendToChat, :String? projectRoot) =
-        await probeLiveCapabilities();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _canSendToChat = canSendToChat;
-      _projectRoot = projectRoot;
-    });
   }
 
   void _handleParamsChanged(EmbedPreviewParams nextParams) {
@@ -346,9 +318,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                 ),
                                 Expanded(child: previewStage),
                                 EmbedLiveSelectionBar(
-                                  canSendToChat: _canSendToChat,
                                   params: params,
-                                  projectRoot: _projectRoot,
                                   selectionController: _selectionController,
                                 ),
                               ],

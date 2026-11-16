@@ -1416,7 +1416,7 @@ void main() {
 
   group('/live native controls', () {
     test(
-      'resolveLiveRootUri and EmbedPreviewParams handle /live and theme fallback',
+      'resolveLiveRootUri and EmbedPreviewParams handle /live and brightness',
       () {
         expect(
           resolveLiveRootUri(
@@ -1427,8 +1427,8 @@ void main() {
         expect(
           resolveLiveRootUri(
             Uri.parse('http://localhost:8080/sub/live/'),
-          ).resolve('__api/capabilities').toString(),
-          'http://localhost:8080/sub/__api/capabilities',
+          ).resolve('__api/sync').toString(),
+          'http://localhost:8080/sub/__api/sync',
         );
         expect(
           EmbedPreviewParams.isLiveUriPath(
@@ -1449,7 +1449,7 @@ void main() {
 
         final EmbedPreviewParams fromLivePath = EmbedPreviewParams.fromFragment(
           '',
-          baseUri: Uri.parse('http://localhost:8080/live?theme=dark'),
+          baseUri: Uri.parse('http://localhost:8080/live?brightness=dark'),
         );
         expect(fromLivePath.showControls, isTrue);
         expect(fromLivePath.isEmbed, isTrue);
@@ -1492,10 +1492,7 @@ void main() {
         expect(find.byType(EmbedLiveTopBar), findsNothing);
         expect(find.byType(EmbedLiveSelectionBar), findsNothing);
 
-        // Switch to /live with canSendToChat: false.
-        debugSetProbeCapabilitiesHandler(
-          () async => (canSendToChat: false, projectRoot: '/tmp/my_app'),
-        );
+        // Switch to /live without a host selection handler.
         debugSetTriggerSyncHandler(
           () async => (
             compileSuccess: false,
@@ -1569,7 +1566,7 @@ void main() {
           find.byKey(const Key('embed-live-clear-button')),
           findsOneWidget,
         );
-        // canSendToChat is false so Send button is hidden.
+        // canSendLiveSelection is false so Send button is hidden.
         expect(find.byKey(const Key('embed-live-send-button')), findsNothing);
 
         // Clear removes selection bar content.
@@ -1580,20 +1577,16 @@ void main() {
     );
 
     testWidgets(
-      'canSendToChat: true disables Send when note is empty, sends on submit, and ignores +-0 zoom keys in note TextField',
+      'canSendLiveSelection disables Send when note is empty, sends on submit, and ignores +-0 zoom keys in note TextField',
       (WidgetTester tester) async {
         String? sentMessage;
         List<Map<String, Object?>>? sentSelections;
-        debugSetProbeCapabilitiesHandler(
-          () async => (canSendToChat: true, projectRoot: '/tmp/my_app'),
-        );
         debugSetSendSelectionHandler(({
           required String message,
           required List<Map<String, Object?>> selections,
           String? brightness,
           String? previewId,
           String? previewName,
-          String? projectRoot,
           String? textScale,
           String? viewport,
           String? zoom,

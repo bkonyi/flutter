@@ -127,9 +127,7 @@ class EmbedPreviewParams {
         params[kLiveParam]?.toLowerCase() == _kTrueValue ||
         (baseUri != null && isLiveUriPath(baseUri));
     return EmbedPreviewParams(
-      brightness: _parseBrightness(
-        params[kBrightnessParam] ?? params[_kThemeParam],
-      ),
+      brightness: _parseBrightness(params[kBrightnessParam]),
       dtdProxy: dtdProxy,
       height: _parsePositiveFiniteDouble(params[kHeightParam]),
       isEmbed: params[kEmbedParam] == kEmbedEnabledValue || showControls,
@@ -170,7 +168,6 @@ class EmbedPreviewParams {
   static const kZoomStep = 0.25;
   static const _kLivePathSegment = '/live';
   static const _kLivePathTrailingSlash = '/live/';
-  static const _kThemeParam = 'theme';
   static const _kTrueValue = 'true';
 
   /// Returns `true` when [uri] points to the `/live` interactive viewer route.

@@ -317,16 +317,12 @@ class EmbedLiveTopBar extends StatelessWidget {
 /// one selection is active.
 class EmbedLiveSelectionBar extends StatefulWidget {
   const EmbedLiveSelectionBar({
-    required this.canSendToChat,
     required this.params,
     required this.selectionController,
-    this.projectRoot,
     super.key,
   });
 
-  final bool canSendToChat;
   final EmbedPreviewParams params;
-  final String? projectRoot;
   final EmbedSelectionController selectionController;
 
   @override
@@ -364,10 +360,7 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
   }
 
   Future<void> _copyContext(List<EmbedSelectionEntry> selections) async {
-    final String text = formatEmbedSelectionContext(
-      selections: selections,
-      projectRoot: widget.projectRoot,
-    );
+    final String text = formatEmbedSelectionContext(selections: selections);
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) {
       return;
@@ -400,7 +393,7 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
           ? '${params.width?.round() ?? 'auto'}'
                 'x${params.height?.round() ?? 'auto'}'
           : null;
-      await sendLiveSelectionToChat(
+      await sendLiveSelectionToHost(
         message: message,
         selections: widget.selectionController.selectionsJson,
         brightness: params.brightness?.name,
@@ -408,7 +401,6 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
         previewName: selections.isNotEmpty
             ? selections.first.previewName
             : null,
-        projectRoot: widget.projectRoot,
         textScale: params.textScale != null
             ? formatEmbedZoom(params.textScale!)
             : null,
@@ -495,7 +487,7 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
                       ),
                     ],
                   ),
-                  if (widget.canSendToChat) ...<Widget>[
+                  if (canSendLiveSelection) ...<Widget>[
                     const SizedBox(height: 6),
                     Row(
                       children: <Widget>[
