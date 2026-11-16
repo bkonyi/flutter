@@ -7,6 +7,7 @@ import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:json_rpc_2/error_code.dart' as rpc_error_code;
 import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
 import 'package:meta/meta.dart';
 import 'package:shelf/shelf.dart' as shelf;
@@ -19,6 +20,7 @@ import '../web/bootstrap.dart';
 import '../web/memory_fs.dart';
 import '../widget_preview/dtd_services.dart';
 import '../widget_preview/dtd_types.dart';
+import '../widget_preview/preview_selection_store.dart';
 import 'web_server_utilities.dart';
 import 'widget_preview_live_shell.dart';
 
@@ -52,7 +54,7 @@ class _CachedDdcBundle {
 }
 
 /// Serves DWDS-free widget preview embed assets, the `/live` interactive shell,
-/// `/__api/*` HTTP endpoints, and the scoped read-only `/dtd_ws` JSON-RPC bridge.
+/// `/__api/*` HTTP endpoints, and the scoped `/dtd_ws` JSON-RPC bridge.
 class WidgetPreviewLiveServer {
   WidgetPreviewLiveServer({
     required this.basePathProvider,
@@ -66,6 +68,7 @@ class WidgetPreviewLiveServer {
   });
 
   static const _kApiPreviewsPath = '__api/previews';
+  static const _kApiSelectionPath = '__api/selection';
   static const _kApiStatusPath = '__api/status';
   static const _kApiSyncPath = '__api/sync';
   static const _kCorpHeader = 'cross-origin-resource-policy';
@@ -140,6 +143,7 @@ class WidgetPreviewLiveServer {
       _kDdcBundlePath ||
       _kApiStatusPath ||
       _kApiPreviewsPath ||
+      _kApiSelectionPath ||
       _kApiSyncPath ||
       _kDtdWsPath => true,
       _ => false,
@@ -162,6 +166,8 @@ class WidgetPreviewLiveServer {
       ('GET', _kDdcBundlePath) => _serveDdcBundle(request),
       ('GET', _kApiStatusPath) => _serveApiStatus(),
       ('GET', _kApiPreviewsPath) => _serveApiPreviews(request),
+      ('GET', _kApiSelectionPath) => _serveApiGetSelection(),
+      ('POST', _kApiSelectionPath) => _serveApiPostSelection(request),
       ('POST', _kApiSyncPath) => _serveApiSync(),
       ('GET', _kDtdWsPath) => _serveDtdWebSocket(request),
       _ => shelf.Response.notFound(''),
@@ -442,6 +448,78 @@ window.\$dartLoader.loader.nextAttempt();''');
     }
   }
 
+  shelf.Response _serveApiGetSelection() {
+    return shelf.Response.ok(
+      jsonEncode(config.dtdServices.getSelectionJson()),
+      encoding: utf8,
+      headers: _securityHeaders(
+        contentType: 'application/json; charset=utf-8',
+        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
+      ),
+    );
+  }
+
+  Future<shelf.Response> _serveApiPostSelection(shelf.Request request) async {
+    final (:String? body, :String? errorMessage) = await _readBoundedUtf8Body(
+      request,
+      maxBytes: PreviewSelectionStore.kMaxSelectionBodyBytes,
+    );
+    if (body == null) {
+      return _jsonErrorResponse(HttpStatus.badRequest, errorMessage!);
+    }
+    final Object? decoded;
+    try {
+      decoded = json.decode(body);
+    } on FormatException {
+      return _jsonErrorResponse(HttpStatus.badRequest, 'Request body must be valid JSON.');
+    }
+    if (decoded is! Map<String, Object?>) {
+      return _jsonErrorResponse(HttpStatus.badRequest, 'Request body must be a JSON object.');
+    }
+    try {
+      final Map<String, Object?> result = await config.dtdServices.updateSelection(
+        decoded[WidgetPreviewSelection.kSelections],
+      );
+      return shelf.Response.ok(
+        jsonEncode(result),
+        encoding: utf8,
+        headers: _securityHeaders(
+          contentType: 'application/json; charset=utf-8',
+          extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
+        ),
+      );
+    } on RpcException catch (e) {
+      final int statusCode = e.code == rpc_error_code.INVALID_PARAMS
+          ? HttpStatus.badRequest
+          : HttpStatus.serviceUnavailable;
+      return _jsonErrorResponse(statusCode, e.message);
+    }
+  }
+
+  static Future<({String? body, String? errorMessage})> _readBoundedUtf8Body(
+    shelf.Request request, {
+    required int maxBytes,
+  }) async {
+    final int? declaredLength = request.contentLength;
+    if (declaredLength != null && declaredLength > maxBytes) {
+      return (body: null, errorMessage: 'Request body exceeds maximum size of $maxBytes bytes.');
+    }
+    final builder = BytesBuilder(copy: false);
+    var totalBytes = 0;
+    await for (final List<int> chunk in request.read()) {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        return (body: null, errorMessage: 'Request body exceeds maximum size of $maxBytes bytes.');
+      }
+      builder.add(chunk);
+    }
+    try {
+      return (body: utf8.decode(builder.takeBytes()), errorMessage: null);
+    } on FormatException {
+      return (body: null, errorMessage: 'Request body must be valid UTF-8.');
+    }
+  }
+
   Future<shelf.Response> _serveApiSync() async {
     final Future<SyncPreviewsResponse> Function({required Duration timeout})? onSyncPreviews =
         config.dtdServices.onSyncPreviews;
@@ -539,6 +617,17 @@ window.\$dartLoader.loader.nextAttempt();''');
       );
       return null;
     }
+    if (message.length > PreviewSelectionStore.kMaxSelectionBodyBytes ||
+        (message.length * 3 > PreviewSelectionStore.kMaxSelectionBodyBytes &&
+            utf8.encode(message).length > PreviewSelectionStore.kMaxSelectionBodyBytes)) {
+      _sendRpcError(
+        clientChannel,
+        id: null,
+        code: _kJsonRpcInvalidRequest,
+        message: 'JSON-RPC request exceeds maximum frame size.',
+      );
+      return null;
+    }
 
     final Object? decoded;
     try {
@@ -600,6 +689,21 @@ window.\$dartLoader.loader.nextAttempt();''');
         cleanParams = <String, Object?>{
           if (fileUri is String && fileUri.isNotEmpty) WidgetPreviewDtdServices.kFileUri: fileUri,
         };
+      } else if (method ==
+          '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kGetSelection}') {
+        cleanParams = const <String, Object?>{};
+      } else if (method ==
+          '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kSetSelection}') {
+        try {
+          cleanParams = <String, Object?>{
+            WidgetPreviewSelection.kSelections: PreviewSelectionStore.parseSelectionsToJson(
+              params?[WidgetPreviewSelection.kSelections],
+            ),
+          };
+        } on RpcException catch (e) {
+          _sendRpcError(clientChannel, id: rpcId, code: _kJsonRpcInvalidParams, message: e.message);
+          return null;
+        }
       } else if (method ==
           '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kGetServiceInfo}') {
         _sendRpcResult(

@@ -9,10 +9,12 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/base/time.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
+import 'package:flutter_tools/src/widget_preview/preview_selection_store.dart';
 import 'package:json_rpc_2/error_code.dart' as error_code;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:test/fake.dart';
@@ -556,6 +558,8 @@ void main() {
           WidgetPreviewDtdServices.kGetServiceInfo,
           WidgetPreviewDtdServices.kSyncPreviews,
           WidgetPreviewDtdServices.kListPreviews,
+          WidgetPreviewDtdServices.kSetSelection,
+          WidgetPreviewDtdServices.kGetSelection,
         }),
       );
     });
@@ -1385,6 +1389,176 @@ void main() {
         ),
       );
       expect(fakeDtd.hasListener(WidgetPreviewDtdServices.kLspStream), isFalse);
+    });
+
+    testWithoutContext('setSelection and getSelection update store and broadcast SelectionUpdated on scaffold stream', () async {
+      fakeDtd.registeredServicesResponse = RegisteredServicesResponse.fromDTDResponse(
+        DTDResponse('1', RegisteredServicesResponse.type, <String, Object?>{
+          'type': RegisteredServicesResponse.type,
+          'dtdServices': <String>[],
+          'clientServices': <Map<String, Object?>>[],
+        }),
+      );
+      await dtdServices.connect(dtdWsUri: Uri.parse('ws://127.0.0.1:12345/ws'));
+
+      final Map<String, DTDServiceCallback> methods =
+          fakeDtd.registeredMethods[dtdServices.widgetPreviewService]!;
+      final DTDServiceCallback getSelection = methods[WidgetPreviewDtdServices.kGetSelection]!;
+      final DTDServiceCallback setSelection = methods[WidgetPreviewDtdServices.kSetSelection]!;
+
+      final Map<String, Object?> initial = await getSelection(
+        Parameters(WidgetPreviewDtdServices.kGetSelection, <String, Object?>{}),
+      );
+      expect(initial, <String, Object?>{
+        'type': 'WidgetPreviewSelection',
+        'selections': <Object?>[],
+        'count': 0,
+        'updatedAt': null,
+      });
+
+      final selectionEntry = <String, Object?>{
+        'id': 'sel-1',
+        'index': 1,
+        'kind': 'region',
+        'previewId': 'package:foo/main.dart::myPreview',
+        'x': 24,
+        'y': 16,
+        'width': 180,
+        'height': 64,
+      };
+      final Map<String, Object?> setResult = await setSelection(
+        Parameters(WidgetPreviewDtdServices.kSetSelection, <String, Object?>{
+          'selections': <Map<String, Object?>>[selectionEntry],
+        }),
+      );
+      expect(setResult['type'], 'Success');
+      expect(setResult['count'], 1);
+      expect(setResult['updatedAt'], isA<String>());
+
+      expect(fakeDtd.postedEvents, hasLength(1));
+      final ({Map<String, Object?> eventData, String eventKind, String streamId}) posted =
+          fakeDtd.postedEvents.single;
+      expect(posted.streamId, dtdServices.widgetPreviewScaffoldStream);
+      expect(posted.eventKind, WidgetPreviewDtdServices.kSelectionUpdatedEvent);
+      expect(posted.eventData, <String, Object?>{
+        'selections': <Object?>[selectionEntry],
+        'count': 1,
+        'updatedAt': setResult['updatedAt'],
+      });
+
+      final Map<String, Object?> fetched = await getSelection(
+        Parameters(WidgetPreviewDtdServices.kGetSelection, <String, Object?>{}),
+      );
+      expect(fetched, <String, Object?>{
+        'type': 'WidgetPreviewSelection',
+        'selections': <Object?>[selectionEntry],
+        'count': 1,
+        'updatedAt': setResult['updatedAt'],
+      });
+    });
+
+    testWithoutContext('PreviewSelectionStore uses injected SystemClock, validates typed schema, and clears on reload or disconnect', () async {
+      final fixedTime = DateTime.utc(2026, 11, 16, 19, 45, 30);
+      final clockedStore = PreviewSelectionStore(clock: SystemClock.fixed(fixedTime));
+      final clockedServices = WidgetPreviewDtdServices(
+        addUuidToServiceName: false,
+        dtd: fakeDtd,
+        dtdLauncher: FakeDtdLauncher(),
+        fs: fs,
+        logger: logger,
+        onHotRestartPreviewerRequest: () {},
+        previewAnalytics: FakeWidgetPreviewAnalytics(),
+        project: project,
+        selectionStore: clockedStore,
+        shutdownHooks: shutdownHooks,
+      );
+
+      // Reload or disconnect when untouched leaves updatedAt null and emits no SelectionUpdated.
+      clockedServices.markScaffoldDisconnected();
+      expect(clockedStore.updatedAt, isNull);
+      expect(fakeDtd.postedEvents, isEmpty);
+
+      await clockedServices.postPreviewReloaded(fullRestart: false);
+      expect(clockedStore.updatedAt, isNull);
+      expect(fakeDtd.postedEvents, hasLength(1));
+      expect(fakeDtd.postedEvents.single.eventKind, WidgetPreviewDtdServices.kPreviewReloadedEvent);
+      fakeDtd.postedEvents.clear();
+
+      // Store a valid selection and verify deterministic timestamp.
+      final Map<String, Object?> ack = await clockedServices.updateSelection(<Object?>[
+        <String, Object?>{
+          'id': 'sel-1',
+          'index': 1,
+          'kind': 'region',
+          'x': 10,
+          'y': 20,
+          'width': 100,
+          'height': 50,
+        },
+      ]);
+      expect(ack['updatedAt'], '2026-11-16T19:45:30.000Z');
+      expect(clockedStore.count, 1);
+      fakeDtd.postedEvents.clear();
+
+      // postPreviewReloaded clears active selections and broadcasts SelectionUpdated before PreviewReloaded.
+      await clockedServices.postPreviewReloaded(fullRestart: false);
+      expect(clockedStore.count, 0);
+      expect(clockedStore.selections, isEmpty);
+      expect(clockedStore.updatedAt, '2026-11-16T19:45:30.000Z');
+      expect(fakeDtd.postedEvents, hasLength(2));
+      expect(fakeDtd.postedEvents[0].streamId, clockedServices.widgetPreviewScaffoldStream);
+      expect(fakeDtd.postedEvents[0].eventKind, WidgetPreviewDtdServices.kSelectionUpdatedEvent);
+      expect(fakeDtd.postedEvents[0].eventData, <String, Object?>{
+        'selections': const <Object?>[],
+        'count': 0,
+        'updatedAt': '2026-11-16T19:45:30.000Z',
+      });
+      expect(fakeDtd.postedEvents[1].eventKind, WidgetPreviewDtdServices.kPreviewReloadedEvent);
+      fakeDtd.postedEvents.clear();
+
+      // markScaffoldDisconnected also clears active selections and broadcasts SelectionUpdated.
+      await clockedServices.updateSelection(<Object?>[
+        <String, Object?>{'kind': 'point', 'x': 5, 'y': 8},
+      ]);
+      expect(clockedStore.entries.single.id, 'sel-1');
+      expect(clockedStore.entries.single.index, 1);
+      fakeDtd.postedEvents.clear();
+
+      clockedServices.markScaffoldDisconnected();
+      await pumpEventQueue();
+      expect(clockedStore.count, 0);
+      expect(fakeDtd.postedEvents, hasLength(1));
+      expect(
+        fakeDtd.postedEvents.single.eventKind,
+        WidgetPreviewDtdServices.kSelectionUpdatedEvent,
+      );
+
+      // Rejects unknown fields, missing region dimensions, and > 32 selection entries.
+      await expectLater(
+        clockedServices.updateSelection(<Object?>[
+          <String, Object?>{'kind': 'point', 'x': 1, 'y': 2, 'nested': <String, Object?>{}},
+        ]),
+        throwsA(
+          isA<RpcException>().having((RpcException e) => e.code, 'code', error_code.INVALID_PARAMS),
+        ),
+      );
+      await expectLater(
+        clockedServices.updateSelection(<Object?>[
+          <String, Object?>{'kind': 'region', 'x': 1, 'y': 2},
+        ]),
+        throwsA(
+          isA<RpcException>().having((RpcException e) => e.code, 'code', error_code.INVALID_PARAMS),
+        ),
+      );
+      await expectLater(
+        clockedServices.updateSelection(<Object?>[
+          for (var i = 0; i < PreviewSelectionStore.kMaxSelections + 1; i++)
+            <String, Object?>{'kind': 'point', 'x': i, 'y': i},
+        ]),
+        throwsA(
+          isA<RpcException>().having((RpcException e) => e.code, 'code', error_code.INVALID_PARAMS),
+        ),
+      );
     });
   });
 }

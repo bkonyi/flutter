@@ -5,6 +5,7 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
+import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
@@ -12,7 +13,7 @@ import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
 
 /// Chromeless single-preview or all-previews gallery canvas for `#embed=1` mode.
-class EmbedPreviewScaffold extends StatelessWidget {
+class EmbedPreviewScaffold extends StatefulWidget {
   const EmbedPreviewScaffold({
     required this.controller,
     required this.currentZoom,
@@ -22,6 +23,17 @@ class EmbedPreviewScaffold extends StatelessWidget {
     super.key,
   });
 
+  final WidgetPreviewScaffoldController controller;
+  final ValueGetter<double> currentZoom;
+  final IdeTheme ideTheme;
+  final ValueChanged<double> onZoomChanged;
+  final EmbedPreviewParams params;
+
+  @override
+  State<EmbedPreviewScaffold> createState() => _EmbedPreviewScaffoldState();
+}
+
+class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   static const _kBadgeBorderRadius = 4.0;
   static const _kBadgeHorizontalPadding = 6.0;
   static const _kBadgeVerticalPadding = 2.0;
@@ -40,13 +52,27 @@ class EmbedPreviewScaffold extends StatelessWidget {
   static const _kStatusCardPadding = 16.0;
   static const _kStatusSectionSpacing = 8.0;
 
-  final WidgetPreviewScaffoldController controller;
-  final ValueGetter<double> currentZoom;
-  final IdeTheme ideTheme;
-  final ValueChanged<double> onZoomChanged;
-  final EmbedPreviewParams params;
+  late final _selectionController = EmbedSelectionController(
+    initialParams: widget.params,
+  );
 
-  double get _zoom => params.zoom ?? EmbedPreviewParams.kDefaultZoom;
+  EmbedPreviewParams get _params => widget.params;
+
+  double get _zoom => _params.zoom ?? EmbedPreviewParams.kDefaultZoom;
+
+  @override
+  void didUpdateWidget(EmbedPreviewScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.params != widget.params) {
+      _selectionController.syncFromParams(widget.params);
+    }
+  }
+
+  @override
+  void dispose() {
+    _selectionController.dispose();
+    super.dispose();
+  }
 
   bool _isEditableTextFocused() {
     final BuildContext? focusContext =
@@ -64,22 +90,36 @@ class EmbedPreviewScaffold extends StatelessWidget {
 
   void _emitZoom(double targetZoom) {
     final double clamped = targetZoom.clamp(kMinPreviewZoom, kMaxPreviewZoom);
-    if ((clamped - currentZoom()).abs() <= kPreviewZoomEpsilon) {
+    if ((clamped - widget.currentZoom()).abs() <= kPreviewZoomEpsilon) {
       return;
     }
-    onZoomChanged(clamped);
+    widget.onZoomChanged(clamped);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
-    if (HardwareKeyboard.instance.isAltPressed || _isEditableTextFocused()) {
-      return KeyEventResult.ignored;
-    }
+    final bool isAltPressed = HardwareKeyboard.instance.isAltPressed;
     final bool isCtrlOrMeta =
         HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
+    final LogicalKeyboardKey key = event.logicalKey;
+    if (event is KeyDownEvent &&
+        key == LogicalKeyboardKey.escape &&
+        !isAltPressed &&
+        !isCtrlOrMeta) {
+      if (_selectionController.selectMode ||
+          (!_isEditableTextFocused() &&
+              _selectionController.selections.isNotEmpty)) {
+        if (_selectionController.handleEscapeKey()) {
+          return KeyEventResult.handled;
+        }
+      }
+    }
+    if (isAltPressed || _isEditableTextFocused()) {
+      return KeyEventResult.ignored;
+    }
     final FocusNode? primaryFocus = FocusManager.instance.primaryFocus;
     final bool isScopeIdle =
         primaryFocus == null || primaryFocus is FocusScopeNode;
@@ -89,17 +129,16 @@ class EmbedPreviewScaffold extends StatelessWidget {
       return KeyEventResult.ignored;
     }
     final bool isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
-    final LogicalKeyboardKey key = event.logicalKey;
     if (key == LogicalKeyboardKey.equal ||
         key == LogicalKeyboardKey.add ||
         key == LogicalKeyboardKey.numpadAdd) {
-      _emitZoom(currentZoom() + kPreviewZoomStep);
+      _emitZoom(widget.currentZoom() + kPreviewZoomStep);
       return KeyEventResult.handled;
     }
     if (!isShiftPressed &&
         (key == LogicalKeyboardKey.minus ||
             key == LogicalKeyboardKey.numpadSubtract)) {
-      _emitZoom(currentZoom() - kPreviewZoomStep);
+      _emitZoom(widget.currentZoom() - kPreviewZoomStep);
       return KeyEventResult.handled;
     }
     if (!isShiftPressed &&
@@ -113,6 +152,11 @@ class EmbedPreviewScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final EmbedPreviewScaffold(
+      :WidgetPreviewScaffoldController controller,
+      :IdeTheme ideTheme,
+      :EmbedPreviewParams params,
+    ) = widget;
     return Focus(
       canRequestFocus: false,
       onKeyEvent: _handleKeyEvent,
@@ -219,6 +263,7 @@ class EmbedPreviewScaffold extends StatelessWidget {
     double? resolvedWidth,
   })
   _resolvePreviewSettings(BuildContext context, WidgetPreview preview) {
+    final EmbedPreviewParams params = _params;
     final double? previewWidth = switch (preview.size?.width) {
       final double w when w.isFinite => w,
       _ => null,
@@ -295,6 +340,8 @@ class EmbedPreviewScaffold extends StatelessWidget {
     final ThemeData baseTheme = resolvedBrightness == Brightness.dark
         ? ThemeData.dark()
         : ThemeData.light();
+    final double appliedTextScale =
+        resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0);
 
     return WidgetPreviewerWindowConstraints(
       constraints: windowConstraints,
@@ -306,11 +353,14 @@ class EmbedPreviewScaffold extends StatelessWidget {
             data: baseTheme,
             child: _EmbedPreviewContent(
               key: ValueKey<String>(preview.id),
-              controller: controller,
+              brightness: resolvedBrightness,
+              controller: widget.controller,
               preview: preview,
               previewerConstraints: windowConstraints,
               resolvedHeight: resolvedHeight,
               resolvedWidth: resolvedWidth,
+              selectionController: _selectionController,
+              textScale: appliedTextScale,
               viewportConstraints: viewportConstraints,
               zoom: _zoom,
             ),
@@ -545,9 +595,12 @@ class EmbedPreviewScaffold extends StatelessWidget {
 
 class _EmbedPreviewContent extends StatefulWidget {
   const _EmbedPreviewContent({
+    required this.brightness,
     required this.controller,
     required this.preview,
     required this.previewerConstraints,
+    required this.selectionController,
+    required this.textScale,
     required this.viewportConstraints,
     required this.zoom,
     this.resolvedHeight,
@@ -555,11 +608,14 @@ class _EmbedPreviewContent extends StatefulWidget {
     super.key,
   });
 
+  final Brightness brightness;
   final WidgetPreviewScaffoldController controller;
   final WidgetPreview preview;
   final BoxConstraints previewerConstraints;
   final double? resolvedHeight;
   final double? resolvedWidth;
+  final EmbedSelectionController selectionController;
+  final double textScale;
   final BoxConstraints viewportConstraints;
   final double zoom;
 
@@ -568,6 +624,7 @@ class _EmbedPreviewContent extends StatefulWidget {
 }
 
 class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
+  final _previewContentKey = GlobalKey();
   ({Object error, StackTrace stackTrace})? _layoutError;
 
   @override
@@ -601,9 +658,13 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
 
   Widget _buildSizedPreviewFrame(Widget child) {
     final _EmbedPreviewContent(
+      :Brightness brightness,
+      :WidgetPreview preview,
       :BoxConstraints previewerConstraints,
       :double? resolvedHeight,
       :double? resolvedWidth,
+      :EmbedSelectionController selectionController,
+      :double textScale,
       :BoxConstraints viewportConstraints,
       :double zoom,
     ) = widget;
@@ -631,7 +692,17 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       ),
       child: wrapped,
     );
-    final scaled = ScaledPreviewLayout(scale: zoom, child: constrained);
+    final selectable = EmbedSelectablePreviewSurface(
+      brightness: brightness,
+      previewContentKey: _previewContentKey,
+      previewId: preview.id,
+      previewName: preview.name,
+      selectionController: selectionController,
+      textScale: textScale,
+      zoom: zoom,
+      child: constrained,
+    );
+    final scaled = ScaledPreviewLayout(scale: zoom, child: selectable);
     if (viewportConstraints.hasBoundedHeight) {
       return SingleChildScrollView(
         scrollDirection: Axis.vertical,
@@ -682,7 +753,13 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
     }
     try {
       final previewWidget = EnableWidgetInspectorScope(
-        child: PreviewWidget(preview: preview, child: preview.previewBuilder()),
+        child: PreviewWidget(
+          preview: preview,
+          child: KeyedSubtree(
+            key: _previewContentKey,
+            child: preview.previewBuilder(),
+          ),
+        ),
       );
       return WidgetPreviewTheming(
         theme: preview.theme,

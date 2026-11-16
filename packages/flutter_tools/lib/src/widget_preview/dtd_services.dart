@@ -22,6 +22,7 @@ import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/platform.dart';
 import '../base/process.dart';
+import '../base/time.dart';
 import '../base/utils.dart';
 import '../convert.dart';
 import '../dart/analysis.dart';
@@ -30,6 +31,7 @@ import '../project.dart';
 import 'analytics.dart';
 import 'dtd_types.dart';
 import 'persistent_preferences.dart';
+import 'preview_selection_store.dart';
 
 typedef DtdService = (String, DTDServiceCallback);
 
@@ -49,8 +51,9 @@ class WidgetPreviewDtdServices {
     this.onHotReloadPreviewer,
     this.onSyncPreviews,
     this.projectRootPath,
+    PreviewSelectionStore? selectionStore,
     this.webPreviewUriProvider,
-  }) {
+  }) : selectionStore = selectionStore ?? PreviewSelectionStore(clock: const SystemClock()) {
     shutdownHooks.addShutdownHook(() async {
       await _dtd?.close();
       await dtdLauncher.dispose();
@@ -131,9 +134,12 @@ class WidgetPreviewDtdServices {
   static const kListPreviews = 'listPreviews';
   static const kGetPreviews = 'getPreviews';
   static const kCapturePreview = 'capturePreview';
+  static const kSetSelection = 'setSelection';
+  static const kGetSelection = 'getSelection';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
   static const kPreviewReloadedEvent = 'PreviewReloaded';
+  static const kSelectionUpdatedEvent = 'SelectionUpdated';
   static const kFullRestart = 'fullRestart';
 
   /// Error code for [RpcException] thrown when a requested preview ID or name
@@ -162,6 +168,8 @@ class WidgetPreviewDtdServices {
     (kGetServiceInfo, _getServiceInfo),
     (kSyncPreviews, _syncPreviews),
     (kListPreviews, _listPreviews),
+    (kSetSelection, _setSelection),
+    (kGetSelection, _getSelection),
   ];
 
   // END KEEP SYNCED
@@ -175,6 +183,9 @@ class WidgetPreviewDtdServices {
 
   @visibleForTesting
   late final preferences = PersistentPreferences(fs: fs);
+
+  /// Store tracking the active preview selection regions across DTD and HTTP.
+  final PreviewSelectionStore selectionStore;
 
   final WidgetPreviewAnalytics previewAnalytics;
   final FileSystem fs;
@@ -212,10 +223,14 @@ class WidgetPreviewDtdServices {
   bool _scaffoldConnected = false;
   Completer<void>? _scaffoldConnectedCompleter;
 
-  /// Resets [scaffoldConnected] to `false` before a full restart so callers
-  /// awaiting [waitForScaffoldConnected] wait for the fresh connection event.
+  /// Resets [scaffoldConnected] to `false` and clears stale selections before a
+  /// full restart so callers awaiting [waitForScaffoldConnected] wait for the
+  /// fresh connection event.
   void markScaffoldDisconnected() {
     _scaffoldConnected = false;
+    if (selectionStore.clear()) {
+      unawaited(_postScaffoldEvent(kSelectionUpdatedEvent, selectionStore.toEventPayload()));
+    }
   }
 
   /// Marks [scaffoldConnected] as `true` and completes any pending
@@ -229,21 +244,26 @@ class WidgetPreviewDtdServices {
     _scaffoldConnectedCompleter = null;
   }
 
-  /// Posts [kPreviewReloadedEvent] on [widgetPreviewScaffoldStream] once a
-  /// reload or hot restart succeeds.
+  /// Clears any stale selections and posts [kPreviewReloadedEvent] on
+  /// [widgetPreviewScaffoldStream] once a reload or hot restart succeeds.
   Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    if (selectionStore.clear()) {
+      await _postScaffoldEvent(kSelectionUpdatedEvent, selectionStore.toEventPayload());
+    }
+    await _postScaffoldEvent(kPreviewReloadedEvent, <String, Object?>{kFullRestart: fullRestart});
+  }
+
+  Future<void> _postScaffoldEvent(String eventKind, Map<String, Object?> eventData) async {
     final DartToolingDaemon? dtd = _dtd;
     if (dtd == null) {
       return;
     }
     try {
-      await dtd.postEvent(widgetPreviewScaffoldStream, kPreviewReloadedEvent, <String, Object?>{
-        kFullRestart: fullRestart,
-      });
+      await dtd.postEvent(widgetPreviewScaffoldStream, eventKind, eventData);
     } on RpcException catch (e) {
-      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+      logger.printTrace('Failed to post $eventKind event: $e');
     } on StateError catch (e) {
-      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+      logger.printTrace('Failed to post $eventKind event: $e');
     }
   }
 
@@ -537,6 +557,26 @@ class WidgetPreviewDtdServices {
       throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
     }
     return listPreviewsJson(fileUri: fileUri, sync: sync, timeoutMs: timeoutMs);
+  }
+
+  /// Returns the current widget preview selection state as a JSON map.
+  Map<String, Object?> getSelectionJson() => selectionStore.toResponseJson();
+
+  /// Updates [selectionStore] from [rawSelections], broadcasts
+  /// [kSelectionUpdatedEvent] on [widgetPreviewScaffoldStream], and returns a
+  /// `Success` response map containing `count` and `updatedAt`.
+  Future<Map<String, Object?>> updateSelection(Object? rawSelections) async {
+    selectionStore.updateSelections(rawSelections);
+    await _postScaffoldEvent(kSelectionUpdatedEvent, selectionStore.toEventPayload());
+    return selectionStore.toMutationSuccessJson();
+  }
+
+  Future<Map<String, Object?>> _setSelection(Parameters params) {
+    return updateSelection(params.asMap[WidgetPreviewSelection.kSelections]);
+  }
+
+  Future<Map<String, Object?>> _getSelection(Parameters _) async {
+    return getSelectionJson();
   }
 
   /// Returns the current list of previews as a JSON-serializable map matching
