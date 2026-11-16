@@ -69,6 +69,9 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
     }
     .toolbar button:disabled {
       opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #sync-btn:disabled {
       cursor: wait;
     }
     .spacer {
@@ -123,6 +126,9 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
     <button class="width-btn active" data-width="" type="button">Responsive</button>
     <button class="width-btn" data-width="375" type="button">375px</button>
     <button class="width-btn" data-width="768" type="button">768px</button>
+    <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">-</button>
+    <button id="zoom-reset" type="button" title="Reset zoom" aria-label="Reset zoom">100%</button>
+    <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
     <button id="sync-btn" type="button">Sync Reload</button>
     <span class="spacer"></span>
     <span id="status-text" class="status">Connecting...</span>
@@ -137,11 +143,32 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
       const previewSelect = document.getElementById('preview-select');
       const themeToggle = document.getElementById('theme-toggle');
       const widthButtons = Array.from(document.querySelectorAll('.width-btn'));
+      const zoomOut = document.getElementById('zoom-out');
+      const zoomReset = document.getElementById('zoom-reset');
+      const zoomIn = document.getElementById('zoom-in');
       const syncBtn = document.getElementById('sync-btn');
       const statusText = document.getElementById('status-text');
       const errorBanner = document.getElementById('error-banner');
       const stage = document.getElementById('stage');
       const frame = document.getElementById('preview-frame');
+
+      const MIN_ZOOM = 0.25;
+      const MAX_ZOOM = 4;
+      const DEFAULT_ZOOM = 1;
+      const ZOOM_STEP = 0.25;
+      const ZOOM_EPSILON = 1e-6;
+      const WHEEL_DELTA_THRESHOLD = 40;
+
+      const roundZoom = (zoom) => Math.round(zoom * 10000) / 10000;
+
+      const parseZoom = (raw) => {
+        if (!raw) return DEFAULT_ZOOM;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ZOOM;
+        return roundZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, parsed)));
+      };
+
+      const formatZoom = (zoom) => String(roundZoom(zoom));
 
       const parseParams = (raw) => {
         const cleaned = (raw || '').replace(/^[#/?]+/, '');
@@ -161,6 +188,7 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
         width: readInitial('width', ''),
         height: readInitial('height', ''),
         textScale: readInitial('textScale', ''),
+        zoom: parseZoom(readInitial('zoom', '')),
       };
 
       const buildFragment = () => {
@@ -171,6 +199,9 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
         if (state.width) params.set('width', state.width);
         if (state.height) params.set('height', state.height);
         if (state.textScale) params.set('textScale', state.textScale);
+        if (Math.abs(state.zoom - DEFAULT_ZOOM) > ZOOM_EPSILON) {
+          params.set('zoom', formatZoom(state.zoom));
+        }
         return params.toString();
       };
 
@@ -191,6 +222,10 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
         for (const btn of widthButtons) {
           btn.classList.toggle('active', (btn.dataset.width || '') === state.width);
         }
+        zoomReset.textContent = Math.round(state.zoom * 100) + '%';
+        zoomReset.classList.toggle('active', Math.abs(state.zoom - DEFAULT_ZOOM) > ZOOM_EPSILON);
+        zoomOut.disabled = state.zoom <= MIN_ZOOM + ZOOM_EPSILON;
+        zoomIn.disabled = state.zoom >= MAX_ZOOM - ZOOM_EPSILON;
         applyFrameViewport();
         const fragment = buildFragment();
         if (updateHash) {
@@ -203,6 +238,18 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
           } catch (_) {
             frame.src = rootPrefix + '?embed=1#' + fragment;
           }
+          if (window.location.hash !== '#' + fragment) {
+            history.replaceState(null, '', '#' + fragment);
+          }
+        }
+      };
+
+      const setZoom = (nextZoom, updateIframe = true) => {
+        const clamped = roundZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom)));
+        state.zoom = clamped;
+        syncUi(updateIframe);
+        if (!updateIframe) {
+          const fragment = buildFragment();
           if (window.location.hash !== '#' + fragment) {
             history.replaceState(null, '', '#' + fragment);
           }
@@ -268,6 +315,63 @@ String buildWidgetPreviewLiveShellHtml({required String projectRoot}) {
           syncUi(true);
         });
       }
+
+      zoomOut.addEventListener('click', () => setZoom(state.zoom - ZOOM_STEP, true));
+      zoomReset.addEventListener('click', () => setZoom(DEFAULT_ZOOM, true));
+      zoomIn.addEventListener('click', () => setZoom(state.zoom + ZOOM_STEP, true));
+
+      const isEditableElement = (target) => {
+        if (!(target instanceof HTMLElement)) return false;
+        const tag = target.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+      };
+
+      let wheelDeltaAccum = 0;
+      window.addEventListener('wheel', (event) => {
+        if (!(event.ctrlKey || event.metaKey)) {
+          wheelDeltaAccum = 0;
+          return;
+        }
+        event.preventDefault();
+        if (event.deltaY === 0) return;
+        if (event.deltaY * wheelDeltaAccum < 0) {
+          wheelDeltaAccum = 0;
+        }
+        let step = 0;
+        if (event.deltaMode !== 0 || Math.abs(event.deltaY) >= WHEEL_DELTA_THRESHOLD) {
+          wheelDeltaAccum = 0;
+          step = event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+        } else {
+          wheelDeltaAccum += event.deltaY;
+          if (Math.abs(wheelDeltaAccum) < WHEEL_DELTA_THRESHOLD) return;
+          step = wheelDeltaAccum < 0 ? ZOOM_STEP : -ZOOM_STEP;
+          wheelDeltaAccum %= WHEEL_DELTA_THRESHOLD;
+        }
+        setZoom(state.zoom + step, true);
+      }, { passive: false });
+
+      window.addEventListener('keydown', (event) => {
+        if (event.altKey || isEditableElement(event.target)) return;
+        if (event.key === '+' || event.key === '=') {
+          event.preventDefault();
+          setZoom(state.zoom + ZOOM_STEP, true);
+        } else if (event.key === '-') {
+          event.preventDefault();
+          setZoom(state.zoom - ZOOM_STEP, true);
+        } else if (event.key === '0' && !event.shiftKey) {
+          event.preventDefault();
+          setZoom(DEFAULT_ZOOM, true);
+        }
+      });
+
+      window.addEventListener('message', (event) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.type !== 'flutter-widget-preview-zoom') return;
+        const nextZoom = Number(event.data.zoom);
+        if (!Number.isFinite(nextZoom) || nextZoom <= 0) return;
+        setZoom(nextZoom, false);
+      });
 
       syncBtn.addEventListener('click', async () => {
         syncBtn.disabled = true;

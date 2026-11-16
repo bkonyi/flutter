@@ -3,9 +3,13 @@
 // found in the LICENSE file.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'theme/theme.dart';
+import 'utils/url/url.dart';
 import 'widget_preview_scaffold_controller.dart';
 
 enum _PreviewSearchFilter {
@@ -81,13 +85,175 @@ class _ContainingPackageSearchFilter extends _SearchFilterConfig {
   bool onToggle() => _controller.toggleSearchByContainingPackage();
 }
 
+/// Minimum supported preview zoom scale (`25%`).
+const kMinPreviewZoom = EmbedPreviewParams.kMinZoom;
+
+/// Maximum supported preview zoom scale (`400%`).
+const kMaxPreviewZoom = EmbedPreviewParams.kMaxZoom;
+
+/// Default preview zoom scale (`100%`).
+const kDefaultPreviewZoom = EmbedPreviewParams.kDefaultZoom;
+
+/// Linear step increment for preview zoom controls and shortcuts (`25%`).
+const kPreviewZoomStep = EmbedPreviewParams.kZoomStep;
+
+/// Floating-point tolerance when comparing zoom levels against defaults/bounds.
+const kPreviewZoomEpsilon = EmbedPreviewParams.kZoomEpsilon;
+
+/// Intercepts `Ctrl`/`Cmd` + scroll-wheel pointer signals via
+/// [PointerSignalResolver], accumulating fractional trackpad deltas before
+/// stepping [zoom] by [kPreviewZoomStep].
+class PreviewPointerScrollZoom extends StatefulWidget {
+  const PreviewPointerScrollZoom({
+    required this.child,
+    required this.onZoomChanged,
+    required this.zoom,
+    super.key,
+  });
+
+  /// Scroll delta threshold (in logical pixels) per discrete [kPreviewZoomStep].
+  static const kScrollDeltaPerZoomStep = 20.0;
+
+  final Widget child;
+  final ValueChanged<double> onZoomChanged;
+  final double zoom;
+
+  @override
+  State<PreviewPointerScrollZoom> createState() =>
+      _PreviewPointerScrollZoomState();
+}
+
+class _PreviewPointerScrollZoomState extends State<PreviewPointerScrollZoom> {
+  double _accumulatedScrollDy = 0.0;
+  late double _currentZoom = widget.zoom;
+
+  @override
+  void didUpdateWidget(PreviewPointerScrollZoom oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.zoom != widget.zoom) {
+      _currentZoom = widget.zoom;
+    }
+  }
+
+  void _handlePointerScroll(PointerScrollEvent event) {
+    final double dy = event.scrollDelta.dy;
+    if (dy == 0) {
+      return;
+    }
+    if (!HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed) {
+      _accumulatedScrollDy = 0.0;
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(
+      event,
+      _handleResolvedScroll,
+    );
+  }
+
+  void _handleResolvedScroll(PointerSignalEvent resolvedEvent) {
+    if (!mounted || resolvedEvent is! PointerScrollEvent) {
+      return;
+    }
+    final double dy = resolvedEvent.scrollDelta.dy;
+    if (dy * _accumulatedScrollDy < 0) {
+      _accumulatedScrollDy = 0.0;
+    }
+    const double threshold = PreviewPointerScrollZoom.kScrollDeltaPerZoomStep;
+    final double stepDelta;
+    if (dy.abs() >= threshold) {
+      _accumulatedScrollDy = 0.0;
+      stepDelta = dy < 0 ? kPreviewZoomStep : -kPreviewZoomStep;
+    } else {
+      _accumulatedScrollDy += dy;
+      if (_accumulatedScrollDy.abs() < threshold) {
+        return;
+      }
+      stepDelta = _accumulatedScrollDy < 0
+          ? kPreviewZoomStep
+          : -kPreviewZoomStep;
+      _accumulatedScrollDy = _accumulatedScrollDy.remainder(threshold);
+    }
+    final double nextZoom = (_currentZoom + stepDelta).clamp(
+      kMinPreviewZoom,
+      kMaxPreviewZoom,
+    );
+    if ((nextZoom - _currentZoom).abs() > kPreviewZoomEpsilon) {
+      _currentZoom = nextZoom;
+      widget.onZoomChanged(nextZoom);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _PointerScrollZoomCatcher(
+      onPointerScroll: _handlePointerScroll,
+      child: widget.child,
+    );
+  }
+}
+
+class _PointerScrollZoomCatcher extends SingleChildRenderObjectWidget {
+  const _PointerScrollZoomCatcher({required this.onPointerScroll, super.child});
+
+  final ValueChanged<PointerScrollEvent> onPointerScroll;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderPointerScrollZoomCatcher(onPointerScroll: onPointerScroll);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderPointerScrollZoomCatcher renderObject,
+  ) {
+    renderObject.onPointerScroll = onPointerScroll;
+  }
+}
+
+class _RenderPointerScrollZoomCatcher extends RenderProxyBox {
+  _RenderPointerScrollZoomCatcher({required this.onPointerScroll});
+
+  ValueChanged<PointerScrollEvent> onPointerScroll;
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    if (!size.contains(position)) {
+      return false;
+    }
+    final bool isZoomModifierPressed =
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (isZoomModifierPressed) {
+      // Prepend before hitTestChildren so this box registers first with
+      // PointerSignalResolver ahead of both outer and preview-internal Scrollables.
+      result.add(BoxHitTestEntry(this, position));
+      hitTestChildren(result, position: position);
+      return true;
+    }
+    if (hitTestChildren(result, position: position) || hitTestSelf(position)) {
+      result.add(BoxHitTestEntry(this, position));
+      return true;
+    }
+    return false;
+  }
+
+  @override
+  void handleEvent(PointerEvent event, HitTestEntry entry) {
+    if (event is PointerScrollEvent) {
+      onPointerScroll(event);
+    }
+  }
+}
+
 /// Provides controls to change the zoom level of a [WidgetPreview].
 class ZoomControls extends StatelessWidget {
   /// Provides controls to change the zoom level of a [WidgetPreview].
   const ZoomControls({super.key, required this._transformationController});
 
-  static const double _minScale = 1.0;
-  static const double _maxScale = 4.0;
+  static const double _minScale = kMinPreviewZoom;
+  static const double _maxScale = kMaxPreviewZoom;
 
   final TransformationController _transformationController;
 
@@ -106,7 +272,9 @@ class ZoomControls extends StatelessWidget {
               IconButton(
                 tooltip: 'Zoom out',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale > _minScale ? _zoomOut : null,
+                onPressed: scale > _minScale + kPreviewZoomEpsilon
+                    ? _zoomOut
+                    : null,
                 icon: const Icon(Icons.zoom_out),
                 color: theme.colorScheme.onSurface,
                 disabledColor: theme.colorScheme.onSurface.withValues(
@@ -128,7 +296,9 @@ class ZoomControls extends StatelessWidget {
               IconButton(
                 tooltip: 'Zoom in',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale < _maxScale ? _zoomIn : null,
+                onPressed: scale < _maxScale - kPreviewZoomEpsilon
+                    ? _zoomIn
+                    : null,
                 icon: const Icon(Icons.zoom_in_sharp),
                 color: theme.colorScheme.onSurface,
                 disabledColor: theme.colorScheme.onSurface.withValues(
@@ -138,7 +308,10 @@ class ZoomControls extends StatelessWidget {
               IconButton(
                 tooltip: 'Reset zoom',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale != _minScale ? _reset : null,
+                onPressed:
+                    (scale - kDefaultPreviewZoom).abs() > kPreviewZoomEpsilon
+                    ? _reset
+                    : null,
                 icon: const Icon(Icons.zoom_out_map),
                 color: theme.colorScheme.onSurface,
                 disabledColor: theme.colorScheme.onSurface.withValues(
@@ -166,12 +339,12 @@ class ZoomControls extends StatelessWidget {
 
   void _zoomIn() {
     final double currentScale = _transformationController.value.entry(0, 0);
-    _setScale(currentScale + 0.25);
+    _setScale(currentScale + kPreviewZoomStep);
   }
 
   void _zoomOut() {
     final double currentScale = _transformationController.value.entry(0, 0);
-    _setScale(currentScale - 0.25);
+    _setScale(currentScale - kPreviewZoomStep);
   }
 
   void _setScale(double scale) {

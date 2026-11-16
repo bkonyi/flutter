@@ -412,6 +412,11 @@ void main() {
         expect(live.headers['cross-origin-resource-policy'], 'same-site');
         final String liveHtml = await live.readAsString();
         expect(liveHtml, contains('All Previews'));
+        expect(liveHtml, contains('id="zoom-out"'));
+        expect(liveHtml, contains('id="zoom-reset"'));
+        expect(liveHtml, contains('id="zoom-in"'));
+        expect(liveHtml, contains('#sync-btn:disabled'));
+        expect(liveHtml, contains('flutter-widget-preview-zoom'));
         expect(liveHtml, contains('__api/sync'));
         expect(liveHtml, contains('__api/previews'));
         expect(liveHtml, isNot(contains('src="./?embed=1')));

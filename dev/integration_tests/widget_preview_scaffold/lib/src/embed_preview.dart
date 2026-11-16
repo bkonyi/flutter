@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter/widget_previews.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
@@ -14,6 +15,8 @@ import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.d
 class EmbedPreviewScaffold extends StatelessWidget {
   const EmbedPreviewScaffold({
     required this.controller,
+    required this.currentZoom,
+    required this.onZoomChanged,
     required this.params,
     this.ideTheme = const IdeTheme(),
     super.key,
@@ -38,96 +41,174 @@ class EmbedPreviewScaffold extends StatelessWidget {
   static const _kStatusSectionSpacing = 8.0;
 
   final WidgetPreviewScaffoldController controller;
+  final ValueGetter<double> currentZoom;
   final IdeTheme ideTheme;
+  final ValueChanged<double> onZoomChanged;
   final EmbedPreviewParams params;
+
+  double get _zoom => params.zoom ?? EmbedPreviewParams.kDefaultZoom;
+
+  bool _isEditableTextFocused() {
+    final BuildContext? focusContext =
+        FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) {
+      return false;
+    }
+    if (focusContext.widget case EditableText(readOnly: false)) {
+      return true;
+    }
+    final EditableTextState? editableState = focusContext
+        .findAncestorStateOfType<EditableTextState>();
+    return editableState != null && !editableState.widget.readOnly;
+  }
+
+  void _emitZoom(double targetZoom) {
+    final double clamped = targetZoom.clamp(kMinPreviewZoom, kMaxPreviewZoom);
+    if ((clamped - currentZoom()).abs() <= kPreviewZoomEpsilon) {
+      return;
+    }
+    onZoomChanged(clamped);
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (HardwareKeyboard.instance.isAltPressed || _isEditableTextFocused()) {
+      return KeyEventResult.ignored;
+    }
+    final bool isCtrlOrMeta =
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    final FocusNode? primaryFocus = FocusManager.instance.primaryFocus;
+    final bool isScopeIdle =
+        primaryFocus == null || primaryFocus is FocusScopeNode;
+    // When an interactive preview descendant holds primary focus, require
+    // Ctrl/Cmd so unmodified keys are never stolen from focused controls.
+    if (!isCtrlOrMeta && !isScopeIdle) {
+      return KeyEventResult.ignored;
+    }
+    final bool isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+    final LogicalKeyboardKey key = event.logicalKey;
+    if (key == LogicalKeyboardKey.equal ||
+        key == LogicalKeyboardKey.add ||
+        key == LogicalKeyboardKey.numpadAdd) {
+      _emitZoom(currentZoom() + kPreviewZoomStep);
+      return KeyEventResult.handled;
+    }
+    if (!isShiftPressed &&
+        (key == LogicalKeyboardKey.minus ||
+            key == LogicalKeyboardKey.numpadSubtract)) {
+      _emitZoom(currentZoom() - kPreviewZoomStep);
+      return KeyEventResult.handled;
+    }
+    if (!isShiftPressed &&
+        (key == LogicalKeyboardKey.digit0 ||
+            key == LogicalKeyboardKey.numpad0)) {
+      _emitZoom(kDefaultPreviewZoom);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: controller.previewsRevisionListenable,
-      builder: (BuildContext context, int _, Widget? _) {
-        final PreviewLookupResult? lookup = params.isAllPreviews
-            ? null
-            : controller.resolvePreviewMatch(params.previewId);
-        final Brightness? explicitBrightness = switch (lookup) {
-          PreviewLookupMatch(:final WidgetPreview preview) =>
-            params.brightness ?? preview.brightness,
-          PreviewLookupMissing() ||
-          PreviewLookupAmbiguous() ||
-          null => params.brightness,
-        };
-        final ThemeMode themeMode = switch (explicitBrightness) {
-          Brightness.light => ThemeMode.light,
-          Brightness.dark => ThemeMode.dark,
-          null =>
-            ideTheme.ideSpecifiedTheme
-                ? (ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light)
-                : ThemeMode.system,
-        };
-        // Use builder + Navigator instead of MaterialApp(home: ...) so
-        // WidgetsApp._usesNavigator stays false (never enabling
-        // SingleEntryBrowserHistory or Navigator.pushNamed on hash changes)
-        // while keeping a Navigator/Overlay ancestor for previewed widgets.
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          theme: ThemeData.light(),
-          darkTheme: ThemeData.dark(),
-          themeMode: themeMode,
-          title: null,
-          builder: (BuildContext context, Widget? _) {
-            return Navigator(
-              pages: <Page<void>>[
-                MaterialPage<void>(
-                  key: _kRootPageKey,
-                  child: Scaffold(
-                    body: LayoutBuilder(
-                      builder:
-                          (BuildContext context, BoxConstraints constraints) {
-                            if (lookup == null) {
-                              final List<WidgetPreviewGroup> groups =
-                                  controller.allPreviewGroups;
-                              if (groups.isEmpty) {
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: _handleKeyEvent,
+      child: ValueListenableBuilder<int>(
+        valueListenable: controller.previewsRevisionListenable,
+        builder: (BuildContext context, int _, Widget? _) {
+          final PreviewLookupResult? lookup = params.isAllPreviews
+              ? null
+              : controller.resolvePreviewMatch(params.previewId);
+          final Brightness? explicitBrightness = switch (lookup) {
+            PreviewLookupMatch(:final WidgetPreview preview) =>
+              params.brightness ?? preview.brightness,
+            PreviewLookupMissing() ||
+            PreviewLookupAmbiguous() ||
+            null => params.brightness,
+          };
+          final ThemeMode themeMode = switch (explicitBrightness) {
+            Brightness.light => ThemeMode.light,
+            Brightness.dark => ThemeMode.dark,
+            null =>
+              ideTheme.ideSpecifiedTheme
+                  ? (ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light)
+                  : ThemeMode.system,
+          };
+          // Use builder + Navigator instead of MaterialApp(home: ...) so
+          // WidgetsApp._usesNavigator stays false (never enabling
+          // SingleEntryBrowserHistory or Navigator.pushNamed on hash changes)
+          // while keeping a Navigator/Overlay ancestor for previewed widgets.
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData.light(),
+            darkTheme: ThemeData.dark(),
+            themeMode: themeMode,
+            title: null,
+            builder: (BuildContext context, Widget? _) {
+              return Navigator(
+                pages: <Page<void>>[
+                  MaterialPage<void>(
+                    key: _kRootPageKey,
+                    child: Scaffold(
+                      body: PreviewPointerScrollZoom(
+                        zoom: _zoom,
+                        onZoomChanged: _emitZoom,
+                        child: LayoutBuilder(
+                          builder:
+                              (
+                                BuildContext context,
+                                BoxConstraints constraints,
+                              ) {
+                                if (lookup == null) {
+                                  final List<WidgetPreviewGroup> groups =
+                                      controller.allPreviewGroups;
+                                  if (groups.isEmpty) {
+                                    return _buildStatusView(
+                                      context: context,
+                                      constraints: constraints,
+                                      message: _kNoPreviewsMessage,
+                                      title: _kNoPreviewsTitle,
+                                    );
+                                  }
+                                  return _buildAllPreviewsGallery(
+                                    context: context,
+                                    constraints: constraints,
+                                    groups: groups,
+                                  );
+                                }
+                                if (lookup case PreviewLookupMatch(
+                                  :final WidgetPreview preview,
+                                ) when !preview.hasError) {
+                                  return _buildPreviewSubtree(
+                                    context: context,
+                                    outerConstraints: constraints,
+                                    preview: preview,
+                                    viewportConstraints: constraints,
+                                  );
+                                }
+                                final (String title, String message) =
+                                    _lookupStatusDetails(lookup);
                                 return _buildStatusView(
                                   context: context,
                                   constraints: constraints,
-                                  message: _kNoPreviewsMessage,
-                                  title: _kNoPreviewsTitle,
+                                  message: message,
+                                  title: title,
                                 );
-                              }
-                              return _buildAllPreviewsGallery(
-                                context: context,
-                                constraints: constraints,
-                                groups: groups,
-                              );
-                            }
-                            if (lookup case PreviewLookupMatch(
-                              :final WidgetPreview preview,
-                            ) when !preview.hasError) {
-                              return _buildPreviewSubtree(
-                                context: context,
-                                outerConstraints: constraints,
-                                preview: preview,
-                                viewportConstraints: constraints,
-                              );
-                            }
-                            final (String title, String message) =
-                                _lookupStatusDetails(lookup);
-                            return _buildStatusView(
-                              context: context,
-                              constraints: constraints,
-                              message: message,
-                              title: title,
-                            );
-                          },
+                              },
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ],
-              onDidRemovePage: (Page<Object?> _) {},
-            );
-          },
-        );
-      },
+                ],
+                onDidRemovePage: (Page<Object?> _) {},
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -231,6 +312,7 @@ class EmbedPreviewScaffold extends StatelessWidget {
               resolvedHeight: resolvedHeight,
               resolvedWidth: resolvedWidth,
               viewportConstraints: viewportConstraints,
+              zoom: _zoom,
             ),
           ),
         ),
@@ -467,6 +549,7 @@ class _EmbedPreviewContent extends StatefulWidget {
     required this.preview,
     required this.previewerConstraints,
     required this.viewportConstraints,
+    required this.zoom,
     this.resolvedHeight,
     this.resolvedWidth,
     super.key,
@@ -478,6 +561,7 @@ class _EmbedPreviewContent extends StatefulWidget {
   final double? resolvedHeight;
   final double? resolvedWidth;
   final BoxConstraints viewportConstraints;
+  final double zoom;
 
   @override
   State<_EmbedPreviewContent> createState() => _EmbedPreviewContentState();
@@ -521,6 +605,7 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       :double? resolvedHeight,
       :double? resolvedWidth,
       :BoxConstraints viewportConstraints,
+      :double zoom,
     ) = widget;
     final wrapped = SizedBox(
       width: resolvedWidth,
@@ -531,50 +616,50 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
         child: child,
       ),
     );
-    final bool needsHorizontalScroll =
-        resolvedWidth != null &&
-        viewportConstraints.hasBoundedWidth &&
-        resolvedWidth > viewportConstraints.maxWidth;
-    final bool needsVerticalScroll =
-        resolvedHeight != null &&
-        viewportConstraints.hasBoundedHeight &&
-        resolvedHeight > viewportConstraints.maxHeight;
-    if (needsHorizontalScroll && needsVerticalScroll) {
+    final constrained = ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth:
+            resolvedWidth ??
+            (viewportConstraints.hasBoundedWidth
+                ? viewportConstraints.maxWidth
+                : double.infinity),
+        maxHeight:
+            resolvedHeight ??
+            (viewportConstraints.hasBoundedHeight
+                ? viewportConstraints.maxHeight
+                : double.infinity),
+      ),
+      child: wrapped,
+    );
+    final scaled = ScaledPreviewLayout(scale: zoom, child: constrained);
+    if (viewportConstraints.hasBoundedHeight) {
       return SingleChildScrollView(
         scrollDirection: Axis.vertical,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: wrapped,
-        ),
-      );
-    }
-    if (needsHorizontalScroll) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            minHeight: viewportConstraints.hasBoundedHeight
-                ? viewportConstraints.maxHeight
-                : 0.0,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: viewportConstraints.hasBoundedWidth
+                  ? viewportConstraints.maxWidth
+                  : 0.0,
+              minHeight: viewportConstraints.maxHeight,
+            ),
+            child: Center(child: scaled),
           ),
-          child: Center(child: wrapped),
         ),
       );
     }
-    if (needsVerticalScroll) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.vertical,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            minWidth: viewportConstraints.hasBoundedWidth
-                ? viewportConstraints.maxWidth
-                : 0.0,
-          ),
-          child: Center(child: wrapped),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: viewportConstraints.hasBoundedWidth
+              ? viewportConstraints.maxWidth
+              : 0.0,
         ),
-      );
-    }
-    return Center(child: wrapped);
+        child: Center(child: scaled),
+      ),
+    );
   }
 
   @override
@@ -596,16 +681,14 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       );
     }
     try {
-      final PreviewLocalizationsData? localizationsData = preview.localizations;
-      final PreviewThemeData? themeData = preview.theme;
       final previewWidget = EnableWidgetInspectorScope(
         child: PreviewWidget(preview: preview, child: preview.previewBuilder()),
       );
       return WidgetPreviewTheming(
-        theme: themeData,
+        theme: preview.theme,
         child: ScrollNotificationObserver(
           child: WidgetPreviewLocalizations(
-            localizationsData: localizationsData,
+            localizationsData: preview.localizations,
             child: _buildSizedPreviewFrame(previewWidget),
           ),
         ),

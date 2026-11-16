@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
@@ -295,6 +296,49 @@ void main() {
           'embed=1&previewId=alpha',
         ).isAllPreviews,
         isFalse,
+      );
+
+      // Zoom parameter parsing, clamping, equality, and canonical formatting.
+      expect(EmbedPreviewParams.fromFragment('embed=1').zoom, isNull);
+      expect(EmbedPreviewParams.fromFragment('embed=1&zoom=0').zoom, isNull);
+      expect(EmbedPreviewParams.fromFragment('embed=1&zoom=-1').zoom, isNull);
+      expect(EmbedPreviewParams.fromFragment('embed=1&zoom=NaN').zoom, isNull);
+      expect(
+        EmbedPreviewParams.fromFragment('embed=1&zoom=0.05').zoom,
+        EmbedPreviewParams.kMinZoom,
+      );
+      expect(EmbedPreviewParams.fromFragment('embed=1&zoom=0.5').zoom, 0.5);
+      expect(EmbedPreviewParams.fromFragment('embed=1&zoom=1.25').zoom, 1.25);
+      expect(
+        EmbedPreviewParams.fromFragment('embed=1&zoom=12').zoom,
+        EmbedPreviewParams.kMaxZoom,
+      );
+      expect(
+        const EmbedPreviewParams(isEmbed: true, zoom: 0.5),
+        isNot(equals(const EmbedPreviewParams(isEmbed: true, zoom: 1.5))),
+      );
+      expect(
+        const EmbedPreviewParams(isEmbed: true, zoom: 0.5).hashCode,
+        equals(const EmbedPreviewParams(isEmbed: true, zoom: 0.5).hashCode),
+      );
+      expect(formatEmbedZoom(0.25), '0.25');
+      expect(formatEmbedZoom(0.5), '0.5');
+      expect(formatEmbedZoom(1.0), '1');
+      expect(formatEmbedZoom(1.25), '1.25');
+      expect(formatEmbedZoom(2.0), '2');
+      expect(formatEmbedZoom(4.0), '4');
+      expect(const EmbedPreviewParams(isEmbed: true).withZoom(1.5).zoom, 1.5);
+      expect(
+        const EmbedPreviewParams(isEmbed: true, zoom: 1.5).withZoom(1.0).zoom,
+        isNull,
+      );
+      expect(
+        buildUpdatedZoomFragment('embed=1&previewId=*', 1.5),
+        'embed=1&previewId=%2A&zoom=1.5',
+      );
+      expect(
+        buildUpdatedZoomFragment('embed=1&previewId=*&zoom=1.5', 1.0),
+        'embed=1&previewId=%2A',
       );
     });
   });
@@ -976,6 +1020,394 @@ void main() {
           scrollable: find.byType(Scrollable).first,
         );
         expect(find.text('Beta: count=0'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'scales single preview across 50% and 200% without changing logical MediaQuery, preserves button hit-testing and TextField +/-/0 input, and supports Ctrl+wheel/keyboard zoom',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(800, 600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}'
+          '&width=375&height=400&zoom=0.5',
+        );
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        // Logical MediaQuery.size, textScale, and windowConstraints remain 375x400,
+        // while visual ScaledPreviewLayout box scales to 187.5x200 centered in 800x600.
+        expect(find.textContaining('media=375x400'), findsOneWidget);
+        expect(
+          find.textContaining('scale=1.0 constraints=375x400'),
+          findsOneWidget,
+        );
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout)),
+          const Size(187.5, 200.0),
+        );
+        expect(
+          tester.getCenter(find.byType(ScaledPreviewLayout)),
+          const Offset(400.0, 300.0),
+        );
+
+        // Button hit-testing works accurately at 50% zoom.
+        await tester.tap(find.text('Increment'));
+        await tester.pump();
+        expect(find.text('Alpha: count=1'), findsOneWidget);
+
+        // Oversized 1280x800 preview zoomed out to 50% (640x400) fits centered
+        // inside 800x600 without overflow while keeping logical 1280x800 layout.
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}'
+          '&width=1280&height=800&zoom=0.5',
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.textContaining('media=1280x800'), findsOneWidget);
+        expect(find.textContaining('constraints=1280x800'), findsOneWidget);
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout)),
+          const Size(640.0, 400.0),
+        );
+
+        // Zooming to 200% on 375x400 (750x800 > 800x600 vertically) scrolls cleanly
+        // without overflow and preserves button hit-testing.
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}'
+          '&width=375&height=400&zoom=2',
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.textContaining('media=375x400'), findsOneWidget);
+        expect(find.textContaining('constraints=375x400'), findsOneWidget);
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout)),
+          const Size(750.0, 800.0),
+        );
+        await tester.tap(find.text('Increment'));
+        await tester.pump();
+        expect(find.text('Alpha: count=2'), findsOneWidget);
+
+        // Updating fragment from zoom=1.5 to omitted (null) resets zoom to 100%.
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}'
+          '&width=375&height=400&zoom=1.5',
+        );
+        await tester.pump();
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout)),
+          const Size(562.5, 600.0),
+        );
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}'
+          '&width=375&height=400',
+        );
+        await tester.pump();
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout)),
+          const Size(375.0, 400.0),
+        );
+
+        // Keyboard shortcuts (+/=, -, 0) and Ctrl+wheel adjust zoom when TextField
+        // is not focused.
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.25,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          0.75,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        final pointer = TestPointer(7, PointerDeviceKind.mouse);
+        await tester.sendEventToBinding(
+          pointer.hover(tester.getCenter(find.byType(ScaledPreviewLayout))),
+        );
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, -20)));
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.25,
+        );
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, 20)));
+        await tester.pump();
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        // Focusing TextField and typing '0', '+', '-' does NOT hijack input or zoom.
+        await tester.tap(find.byType(TextField));
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.enterText(find.byType(TextField), '0+-');
+        await tester.pump();
+        expect(find.text('0+-'), findsOneWidget);
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        // Responsive mode (no explicit width/height) keeps finite maxWidth on bare
+        // TextField when zoomed to 200%.
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&zoom=2',
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(tester.getSize(find.byType(ScaledPreviewLayout)).width, 1600.0);
+      },
+    );
+
+    testWidgets(
+      'resets back to 100% when parent clears zoom hash after local iframe zoom and does not steal unmodified keys from focused preview controls',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(800, 600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final autofocusFieldNode = FocusNode(debugLabel: 'autofocus-textfield');
+        addTearDown(autofocusFieldNode.dispose);
+        final childFocusNode = FocusNode(debugLabel: 'custom-preview-control');
+        addTearDown(childFocusNode.dispose);
+        final receivedKeys = <LogicalKeyboardKey>[];
+
+        const baseFragment = 'embed=1&previewId=Focusable&width=300&height=200';
+        debugSetUrlFragment(baseFragment);
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => <WidgetPreview>[
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'focusablePreview',
+              libraryUri: 'package:my_app/focusable.dart',
+              line: 10,
+              packageName: 'my_app',
+              previewFunction: () => Focus(
+                focusNode: childFocusNode,
+                onKeyEvent: (FocusNode _, KeyEvent event) {
+                  if (event is KeyDownEvent) {
+                    receivedKeys.add(event.logicalKey);
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: const SizedBox(width: 100, height: 100),
+              ),
+              scriptUri: 'file:///project/lib/focusable.dart',
+              transformedPreview: const Preview(name: 'Focusable').transform(),
+            ),
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'autofocusPreview',
+              libraryUri: 'package:my_app/autofocus.dart',
+              line: 20,
+              packageName: 'my_app',
+              previewFunction: () => Material(
+                child: TextField(
+                  autofocus: true,
+                  focusNode: autofocusFieldNode,
+                ),
+              ),
+              scriptUri: 'file:///project/lib/autofocus.dart',
+              transformedPreview: const Preview(name: 'Autofocus').transform(),
+            ),
+          ],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+
+        // 1. Start at zoom: null (100%), zoom locally via '+' twice to 150%.
+        expect(EmbedPreviewParams.fromFragment(getUrlFragment()).zoom, isNull);
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.5,
+        );
+        expect(EmbedPreviewParams.fromFragment(getUrlFragment()).zoom, 1.5);
+
+        // 2. Outer /live toolbar clicks Reset (100%), setting hash without zoom:
+        // single-source-of-truth _embedParams transitions 1.5 -> null and resets!
+        debugSetUrlFragment(baseFragment);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        // 3. When a preview descendant holds focus, unmodified -/=/0 are NOT
+        // stolen, while Ctrl + '=' / Ctrl + '0' still adjusts zoom.
+        childFocusNode.requestFocus();
+        await tester.pump();
+        expect(childFocusNode.hasPrimaryFocus, isTrue);
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.pump();
+        expect(
+          receivedKeys,
+          equals(<LogicalKeyboardKey>[
+            LogicalKeyboardKey.equal,
+            LogicalKeyboardKey.minus,
+            LogicalKeyboardKey.digit0,
+          ]),
+        );
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.25,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+
+        // 4. A preview with TextField(autofocus: true) retains primary focus on
+        // mount without being preempted by the embed keyboard zoom listener.
+        debugSetUrlFragment('embed=1&previewId=Autofocus&width=300&height=200');
+        await tester.pump();
+        expect(autofocusFieldNode.hasPrimaryFocus, isTrue);
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.pump();
+        expect(
+          tester
+              .widget<ScaledPreviewLayout>(find.byType(ScaledPreviewLayout))
+              .scale,
+          1.0,
+        );
+      },
+    );
+
+    testWidgets(
+      'scales all-previews gallery cards at 50% and 200% without nested vertical scroll views',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(450, 700);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        debugSetUrlFragment('embed=1&previewId=*&zoom=0.5');
+
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => <WidgetPreview>[
+            _buildBetaPreview(),
+            _buildAlphaPreview(),
+          ],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        // Beta Card has @Preview(size: Size(300, 400)) -> logical 300x400 preserved,
+        // visual ScaledPreviewLayout box shrinks to 150x200 at 50% zoom.
+        expect(find.textContaining('media=300x400'), findsOneWidget);
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout).first),
+          const Size(150.0, 200.0),
+        );
+        // Gallery cards use horizontal SingleChildScrollView only (no nested vertical
+        // SingleChildScrollView fighting the outer ListView).
+        expect(
+          find.byWidgetPredicate(
+            (Widget widget) =>
+                widget is SingleChildScrollView &&
+                widget.scrollDirection == Axis.vertical,
+          ),
+          findsNothing,
+        );
+
+        // Zooming gallery to 200% grows Beta Card visual box to 600x800 and scrolls
+        // horizontally inside the 450px viewport without overflow.
+        debugSetUrlFragment('embed=1&previewId=*&zoom=2');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout).first),
+          const Size(600.0, 800.0),
+        );
+
+        // Omitting zoom resets gallery cards back to 100% (300x400).
+        debugSetUrlFragment('embed=1&previewId=*');
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(
+          tester.getSize(find.byType(ScaledPreviewLayout).first),
+          const Size(300.0, 400.0),
+        );
       },
     );
   });

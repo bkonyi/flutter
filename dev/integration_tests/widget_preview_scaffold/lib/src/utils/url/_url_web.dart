@@ -5,10 +5,17 @@
 // NOTE: originally from package:devtools_app_shared
 
 import 'dart:async';
+import 'dart:js_interop';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web/web.dart';
+
+import 'url.dart';
+
+const _kMessageTypeKey = 'type';
+const _kWildcardTargetOrigin = '*';
+const _kZoomMessageType = 'flutter-widget-preview-zoom';
 
 String? _debugUrlFragmentOverride;
 Uri? _debugBaseUriOverride;
@@ -98,6 +105,29 @@ void reloadWindow() {
     return;
   }
   window.location.reload();
+}
+
+/// Synchronizes interactive embed [zoom] changes with the URL fragment via
+/// `history.replaceState` and notifies any embedding parent shell.
+void notifyEmbedZoomChanged(double zoom) {
+  final String updatedFragment = buildUpdatedZoomFragment(
+    getUrlFragment(),
+    zoom,
+  );
+  if (_debugUrlFragmentOverride != null) {
+    _debugUrlFragmentOverride = updatedFragment;
+  }
+  window.history.replaceState(null, '', '#$updatedFragment');
+  final CrossOriginWindow? parentWindow = window.parentCrossOrigin;
+  if (parentWindow != null && parentWindow.unsafeWindow != window) {
+    parentWindow.postMessage(
+      <String, Object>{
+        _kMessageTypeKey: _kZoomMessageType,
+        EmbedPreviewParams.kZoomParam: zoom,
+      }.jsify(),
+      _kWildcardTargetOrigin.toJS,
+    );
+  }
 }
 
 /// Number of times [reloadWindow] has been invoked in tests.

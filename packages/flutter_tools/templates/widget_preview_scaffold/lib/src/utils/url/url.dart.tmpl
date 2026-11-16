@@ -12,6 +12,8 @@ import '_url_stub.dart' if (dart.library.js_interop) '_url_web.dart';
 
 export '_url_stub.dart' if (dart.library.js_interop) '_url_web.dart';
 
+const _kZoomPrecisionScale = 10000.0;
+
 /// Parses URL fragment key/value pairs using query-string decoding after
 /// stripping any leading `'#'`, `'/'`, or `'?'` characters.
 Map<String, String> parseFragmentParameters(String fragment) {
@@ -33,6 +35,29 @@ Map<String, String> parseFragmentParameters(String fragment) {
   }
 }
 
+/// Formats [zoom] as a canonical decimal string without trailing `.0` noise.
+String formatEmbedZoom(double zoom) {
+  final double rounded =
+      (zoom * _kZoomPrecisionScale).roundToDouble() / _kZoomPrecisionScale;
+  if (rounded == rounded.truncateToDouble()) {
+    return rounded.toInt().toString();
+  }
+  return rounded.toString();
+}
+
+/// Returns [fragment] updated with [EmbedPreviewParams.kZoomParam] set to
+/// [formatEmbedZoom] of [zoom], or removed when [zoom] equals `1.0`.
+String buildUpdatedZoomFragment(String fragment, double zoom) {
+  final params = Map<String, String>.of(parseFragmentParameters(fragment));
+  if ((zoom - EmbedPreviewParams.kDefaultZoom).abs() <=
+      EmbedPreviewParams.kZoomEpsilon) {
+    params.remove(EmbedPreviewParams.kZoomParam);
+  } else {
+    params[EmbedPreviewParams.kZoomParam] = formatEmbedZoom(zoom);
+  }
+  return Uri(queryParameters: params).query;
+}
+
 /// Parsed URL fragment configuration for chromeless single-preview or
 /// all-previews embed mode.
 @immutable
@@ -45,6 +70,7 @@ class EmbedPreviewParams {
     this.previewId,
     this.textScale,
     this.width,
+    this.zoom,
   });
 
   factory EmbedPreviewParams.fromCurrentUrl() {
@@ -69,6 +95,7 @@ class EmbedPreviewParams {
       previewId: previewId,
       textScale: _parsePositiveFiniteDouble(params[kTextScaleParam]),
       width: _parsePositiveFiniteDouble(params[kWidthParam]),
+      zoom: _parseZoom(params[kZoomParam]),
     );
   }
 
@@ -76,6 +103,7 @@ class EmbedPreviewParams {
   static const kBrightnessParam = 'brightness';
   static const kDarkBrightness = 'dark';
   static const kDefaultDtdProxyPath = 'dtd_ws';
+  static const kDefaultZoom = 1.0;
   static const kDtdProxyParam = 'dtdProxy';
   static const kEmbedEnabledValue = '1';
   static const kEmbedParam = 'embed';
@@ -83,11 +111,16 @@ class EmbedPreviewParams {
   static const kHttpScheme = 'http';
   static const kHttpsScheme = 'https';
   static const kLightBrightness = 'light';
+  static const kMaxZoom = 4.0;
+  static const kMinZoom = 0.25;
   static const kPreviewIdParam = 'previewId';
   static const kTextScaleParam = 'textScale';
   static const kWidthParam = 'width';
   static const kWsScheme = 'ws';
   static const kWssScheme = 'wss';
+  static const kZoomEpsilon = 1e-6;
+  static const kZoomParam = 'zoom';
+  static const kZoomStep = 0.25;
 
   final Brightness? brightness;
   final String? dtdProxy;
@@ -96,10 +129,30 @@ class EmbedPreviewParams {
   final String? previewId;
   final double? textScale;
   final double? width;
+  final double? zoom;
 
   /// Whether this embed configuration targets the grouped all-previews gallery
   /// (when [previewId] is omitted, empty, or [kAllPreviewsValue]).
   bool get isAllPreviews => previewId == null || previewId == kAllPreviewsValue;
+
+  /// Returns a copy of this configuration with [zoom] clamped to
+  /// `[kMinZoom, kMaxZoom]`, or cleared to `null` when at [kDefaultZoom].
+  EmbedPreviewParams withZoom(double nextZoom) {
+    final double clamped = nextZoom.clamp(kMinZoom, kMaxZoom);
+    final double? normalized = (clamped - kDefaultZoom).abs() <= kZoomEpsilon
+        ? null
+        : clamped;
+    return EmbedPreviewParams(
+      brightness: brightness,
+      dtdProxy: dtdProxy,
+      height: height,
+      isEmbed: isEmbed,
+      previewId: previewId,
+      textScale: textScale,
+      width: width,
+      zoom: normalized,
+    );
+  }
 
   /// Resolves [dtdProxy] (or [kDefaultDtdProxyPath] when [isEmbed] is `true`)
   /// against [baseUri] using `ws` or `wss`, or returns `null` if [baseUri] has
@@ -141,6 +194,14 @@ class EmbedPreviewParams {
     return parsed;
   }
 
+  static double? _parseZoom(String? value) {
+    final double? parsed = _parsePositiveFiniteDouble(value);
+    if (parsed == null) {
+      return null;
+    }
+    return parsed.clamp(kMinZoom, kMaxZoom);
+  }
+
   @override
   int get hashCode => Object.hash(
     brightness,
@@ -150,6 +211,7 @@ class EmbedPreviewParams {
     previewId,
     textScale,
     width,
+    zoom,
   );
 
   @override
@@ -162,6 +224,7 @@ class EmbedPreviewParams {
         isEmbed == other.isEmbed &&
         previewId == other.previewId &&
         textScale == other.textScale &&
-        width == other.width;
+        width == other.width &&
+        zoom == other.zoom;
   }
 }

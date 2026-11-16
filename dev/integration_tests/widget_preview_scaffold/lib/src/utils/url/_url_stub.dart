@@ -9,6 +9,8 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import 'url.dart';
+
 String? _debugUrlFragmentOverride;
 Uri? _debugBaseUriOverride;
 final _debugFragmentChangeController = StreamController<String>.broadcast(
@@ -50,6 +52,17 @@ Stream<String> get onUrlFragmentChange => _debugFragmentChangeController.stream;
 void reloadWindow() {
   _debugReloadCount++;
   _debugOnReloadCallback?.call();
+}
+
+/// Synchronizes interactive embed [zoom] changes with the simulated test URL
+/// fragment when active; no-op for non-web platforms otherwise.
+void notifyEmbedZoomChanged(double zoom) {
+  if (_debugUrlFragmentOverride != null) {
+    _debugUrlFragmentOverride = buildUpdatedZoomFragment(
+      getUrlFragment(),
+      zoom,
+    );
+  }
 }
 
 /// Number of times [reloadWindow] has been invoked in tests.

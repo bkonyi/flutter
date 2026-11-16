@@ -1035,6 +1035,14 @@ class ZoomablePreviewArea extends StatelessWidget {
   final TransformationController transformationController;
   final bool errorThrownDuringTreeConstruction;
 
+  void _setScale(double nextScale) {
+    transformationController.value = Matrix4.diagonal3Values(
+      nextScale,
+      nextScale,
+      1.0,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (errorThrownDuringTreeConstruction) {
@@ -1044,11 +1052,15 @@ class ZoomablePreviewArea extends StatelessWidget {
       listenable: transformationController,
       builder: (context, _) {
         final double scale = transformationController.value.entry(0, 0);
-        return SingleChildScrollView(
-          scrollDirection: Axis.vertical,
+        return PreviewPointerScrollZoom(
+          zoom: scale,
+          onZoomChanged: _setScale,
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: _ScaledLayoutWrapper(scale: scale, child: child),
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ScaledPreviewLayout(scale: scale, child: child),
+            ),
           ),
         );
       },
@@ -1056,27 +1068,30 @@ class ZoomablePreviewArea extends StatelessWidget {
   }
 }
 
-class _ScaledLayoutWrapper extends SingleChildRenderObjectWidget {
-  const _ScaledLayoutWrapper({super.child, required this.scale});
+/// Scales the painted output, hit-test coordinates, and reported layout box of
+/// [child] by [scale] without altering [child]'s logical layout constraints.
+class ScaledPreviewLayout extends SingleChildRenderObjectWidget {
+  const ScaledPreviewLayout({required this.scale, super.child, super.key});
 
   final double scale;
 
   @override
-  RenderObject createRenderObject(BuildContext context) {
-    return _ScaledLayoutRenderObject(scale: scale);
+  RenderScaledPreviewLayout createRenderObject(BuildContext context) {
+    return RenderScaledPreviewLayout(scale: scale);
   }
 
   @override
   void updateRenderObject(
     BuildContext context,
-    _ScaledLayoutRenderObject renderObject,
+    RenderScaledPreviewLayout renderObject,
   ) {
     renderObject.scale = scale;
   }
 }
 
-class _ScaledLayoutRenderObject extends RenderShiftedBox {
-  _ScaledLayoutRenderObject({required this._scale, RenderBox? child})
+/// Render box backing [ScaledPreviewLayout].
+class RenderScaledPreviewLayout extends RenderShiftedBox {
+  RenderScaledPreviewLayout({required this._scale, RenderBox? child})
     : super(child);
 
   double _scale;
@@ -1867,12 +1882,26 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
     });
   }
 
+  double _readEmbedZoom() =>
+      _embedParams.zoom ?? EmbedPreviewParams.kDefaultZoom;
+
+  void _handleEmbedZoomChanged(double zoom) {
+    final EmbedPreviewParams updated = _embedParams.withZoom(zoom);
+    if (updated == _embedParams) {
+      return;
+    }
+    _applyEmbedParams(updated);
+    notifyEmbedZoomChanged(updated.zoom ?? EmbedPreviewParams.kDefaultZoom);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isEmbedSession || _embedParams.isEmbed) {
       return EmbedPreviewScaffold(
         controller: widget.controller,
+        currentZoom: _readEmbedZoom,
         ideTheme: widget.ideTheme,
+        onZoomChanged: _handleEmbedZoomChanged,
         params: _embedParams,
       );
     }
