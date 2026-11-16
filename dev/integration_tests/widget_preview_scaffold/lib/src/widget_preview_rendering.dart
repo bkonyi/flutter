@@ -1572,7 +1572,9 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
       unawaited(SystemNavigator.selectMultiEntryHistory());
     }
     _fragmentSubscription = onUrlFragmentChange.listen((String fragment) {
-      _applyEmbedParams(EmbedPreviewParams.fromFragment(fragment));
+      _applyEmbedParams(
+        EmbedPreviewParams.fromFragment(fragment, baseUri: getBaseUri()),
+      );
     });
     _originalOnError = FlutterError.onError;
     FlutterError.onError = _handleFlutterError;
@@ -1855,7 +1857,10 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
     final String fragment = uri.fragment.isNotEmpty
         ? uri.fragment
         : uri.toString();
-    final routeParams = EmbedPreviewParams.fromFragment(fragment);
+    final routeParams = EmbedPreviewParams.fromFragment(
+      fragment,
+      baseUri: getBaseUri(),
+    );
     if (routeParams.isEmbed) {
       _applyEmbedParams(routeParams);
       return SynchronousFuture<bool>(true);
@@ -1894,6 +1899,14 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
     notifyEmbedZoomChanged(updated.zoom ?? EmbedPreviewParams.kDefaultZoom);
   }
 
+  void _handleEmbedParamsChanged(EmbedPreviewParams updated) {
+    if (updated == _embedParams) {
+      return;
+    }
+    _applyEmbedParams(updated);
+    replaceEmbedUrl(updated.toFragment(baseUri: getBaseUri()));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isEmbedSession || _embedParams.isEmbed) {
@@ -1901,6 +1914,7 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
         controller: widget.controller,
         currentZoom: _readEmbedZoom,
         ideTheme: widget.ideTheme,
+        onParamsChanged: _handleEmbedParamsChanged,
         onZoomChanged: _handleEmbedZoomChanged,
         params: _embedParams,
       );

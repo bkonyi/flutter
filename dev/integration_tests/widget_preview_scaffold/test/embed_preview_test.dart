@@ -11,6 +11,8 @@ import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
+import 'package:widget_preview_scaffold/src/embed_live_controls.dart';
+import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
@@ -1408,6 +1410,249 @@ void main() {
           tester.getSize(find.byType(ScaledPreviewLayout).first),
           const Size(300.0, 400.0),
         );
+      },
+    );
+  });
+
+  group('/live native controls', () {
+    test(
+      'resolveLiveRootUri and EmbedPreviewParams handle /live and theme fallback',
+      () {
+        expect(
+          resolveLiveRootUri(
+            Uri.parse('http://localhost:8080/live?root=/app#foo'),
+          ).resolve('dtd_ws').toString(),
+          'http://localhost:8080/dtd_ws',
+        );
+        expect(
+          resolveLiveRootUri(
+            Uri.parse('http://localhost:8080/sub/live/'),
+          ).resolve('__api/capabilities').toString(),
+          'http://localhost:8080/sub/__api/capabilities',
+        );
+        expect(
+          EmbedPreviewParams.isLiveUriPath(
+            Uri.parse('http://localhost:8080/live'),
+          ),
+          isTrue,
+        );
+        expect(
+          EmbedPreviewParams.isLiveUriPath(
+            Uri.parse('http://localhost:8080/sub/live/'),
+          ),
+          isTrue,
+        );
+        expect(
+          EmbedPreviewParams.isLiveUriPath(Uri.parse('http://localhost:8080/')),
+          isFalse,
+        );
+
+        final EmbedPreviewParams fromLivePath = EmbedPreviewParams.fromFragment(
+          '',
+          baseUri: Uri.parse('http://localhost:8080/live?theme=dark'),
+        );
+        expect(fromLivePath.showControls, isTrue);
+        expect(fromLivePath.isEmbed, isTrue);
+        expect(fromLivePath.brightness, Brightness.dark);
+
+        final EmbedPreviewParams chromeless = EmbedPreviewParams.fromFragment(
+          'embed=1',
+          baseUri: Uri.parse('http://localhost:8080/'),
+        );
+        expect(chromeless.showControls, isFalse);
+        expect(chromeless.isEmbed, isTrue);
+      },
+    );
+
+    testWidgets(
+      'chromeless #embed=1 hides live controls while #live=1 renders top bar, reload error banner, and selection bar',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(420, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+          baseUri: Uri.parse('http://localhost:8080/'),
+        );
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(find.byType(EmbedLiveTopBar), findsNothing);
+        expect(find.byType(EmbedLiveSelectionBar), findsNothing);
+
+        // Switch to /live with canSendToChat: false.
+        debugSetProbeCapabilitiesHandler(
+          () async => (canSendToChat: false, projectRoot: '/tmp/my_app'),
+        );
+        debugSetTriggerSyncHandler(
+          () async => (
+            compileSuccess: false,
+            errorMessage: 'Syntax error in main.dart',
+          ),
+        );
+        debugSetUrlFragment(
+          'previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+          baseUri: Uri.parse('http://localhost:8080/live'),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.byType(EmbedLiveTopBar), findsOneWidget);
+        expect(find.byType(EmbedLiveSelectionBar), findsOneWidget);
+        expect(
+          find.byKey(const Key('embed-live-preview-selector')),
+          findsOneWidget,
+        );
+
+        // Toggle brightness -> updates params to dark.
+        await tester.tap(find.byKey(const Key('embed-live-brightness-toggle')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('brightness=dark'));
+
+        // Select 375px width preset, then Responsive to clear.
+        await tester.tap(find.byKey(const Key('embed-live-width-375')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('width=375'));
+
+        await tester.tap(find.byKey(const Key('embed-live-width-responsive')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('width=')));
+
+        // Zoom + and - and reset.
+        await tester.tap(find.byKey(const Key('embed-live-zoom-in')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('zoom=1.25'));
+        await tester.tap(find.byKey(const Key('embed-live-zoom-reset')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('zoom=')));
+
+        // Reload shows error banner on compile failure, and dismiss hides it.
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('embed-live-error-banner')),
+          findsOneWidget,
+        );
+        expect(find.text('Syntax error in main.dart'), findsOneWidget);
+        await tester.tap(find.byKey(const Key('embed-live-error-dismiss')));
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-error-banner')), findsNothing);
+
+        // Toggle select mode and create a selection.
+        await tester.tap(find.byKey(const Key('embed-live-select-toggle')));
+        await tester.pump();
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        final TestGesture gesture = await tester.startGesture(
+          surfaceTopLeft + const Offset(10, 10),
+        );
+        await gesture.moveTo(surfaceTopLeft + const Offset(60, 40));
+        await gesture.up();
+        await tester.pump();
+
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+        expect(find.byKey(const Key('embed-live-copy-button')), findsOneWidget);
+        expect(
+          find.byKey(const Key('embed-live-clear-button')),
+          findsOneWidget,
+        );
+        // canSendToChat is false so Send button is hidden.
+        expect(find.byKey(const Key('embed-live-send-button')), findsNothing);
+
+        // Clear removes selection bar content.
+        await tester.tap(find.byKey(const Key('embed-live-clear-button')));
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'canSendToChat: true disables Send when note is empty, sends on submit, and ignores +-0 zoom keys in note TextField',
+      (WidgetTester tester) async {
+        String? sentMessage;
+        List<Map<String, Object?>>? sentSelections;
+        debugSetProbeCapabilitiesHandler(
+          () async => (canSendToChat: true, projectRoot: '/tmp/my_app'),
+        );
+        debugSetSendSelectionHandler(({
+          required String message,
+          required List<Map<String, Object?>> selections,
+          String? brightness,
+          String? previewId,
+          String? previewName,
+          String? projectRoot,
+          String? textScale,
+          String? viewport,
+          String? zoom,
+        }) async {
+          sentMessage = message;
+          sentSelections = selections;
+        });
+
+        debugSetUrlFragment(
+          'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&select=1',
+          baseUri: Uri.parse('http://localhost:8080/'),
+        );
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pumpAndSettle();
+
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        final TestGesture gesture = await tester.startGesture(
+          surfaceTopLeft + const Offset(10, 10),
+        );
+        await gesture.moveTo(surfaceTopLeft + const Offset(50, 35));
+        await gesture.up();
+        await tester.pump();
+
+        final Finder sendFinder = find.byKey(
+          const Key('embed-live-send-button'),
+        );
+        expect(sendFinder, findsOneWidget);
+        expect(tester.widget<FilledButton>(sendFinder).onPressed, isNull);
+
+        // Typing +-0 in the note TextField must not trigger zoom.
+        final Finder noteFinder = find.byKey(
+          const Key('embed-live-note-input'),
+        );
+        await tester.enterText(noteFinder, 'Fix +-0 padding');
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('zoom=')));
+
+        expect(tester.widget<FilledButton>(sendFinder).onPressed, isNotNull);
+        await tester.tap(sendFinder);
+        await tester.pumpAndSettle();
+
+        expect(sentMessage, 'Fix +-0 padding');
+        expect(sentSelections, hasLength(1));
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
       },
     );
   });

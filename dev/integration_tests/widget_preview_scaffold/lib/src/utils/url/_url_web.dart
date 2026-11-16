@@ -5,7 +5,9 @@
 // NOTE: originally from package:devtools_app_shared
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -13,23 +15,48 @@ import 'package:web/web.dart';
 
 import 'url.dart';
 
-const _kActiveKey = 'active';
-const _kClearSelectionsMessageType = 'flutter-widget-preview-clear-selections';
-const _kIdKey = 'id';
-const _kMessageTypeKey = 'type';
+const _kApiCapabilitiesPath = '__api/capabilities';
+const _kApiSendSelectionPath = '__api/send-selection';
+const _kApiSyncPath = '__api/sync';
+const _kBrightnessKey = 'brightness';
+const _kCacheNoStore = 'no-store';
+const _kCanSendToChatKey = 'canSendToChat';
+const _kCompileSuccessKey = 'compileSuccess';
+const _kContentTypeHeader = 'Content-Type';
+const _kContextKey = 'context';
+const _kConversationIdKey = 'conversationId';
+const _kErrorKey = 'error';
+const _kErrorMessageKey = 'errorMessage';
+const _kGetConversationIdMethod = 'getConversationId';
+const _kJsonContentType = 'application/json';
+const _kMessageKey = 'message';
+const _kMethodGet = 'GET';
+const _kMethodPost = 'POST';
+const _kPreviewIdKey = 'previewId';
+const _kPreviewNameKey = 'previewName';
+const _kProjectRootKey = 'projectRoot';
+const _kRootParam = 'root';
 const _kSelectionsKey = 'selections';
-const _kSelectionsMessageType = 'flutter-widget-preview-selections';
-const _kSelectModeKey = 'selectMode';
-const _kSetSelectModeMessageType = 'flutter-widget-preview-set-select-mode';
-const _kWildcardTargetOrigin = '*';
-const _kZoomMessageType = 'flutter-widget-preview-zoom';
+const _kSidecarKey = 'sidecar';
+const _kTextScaleKey = 'textScale';
+const _kViewportKey = 'viewport';
+const _kZoomKey = 'zoom';
 
-typedef _ParentSelectionCommandHandlers = ({
-  void Function(String? selectionId) onClearSelections,
-  void Function(bool active) onSetSelectMode,
-});
+typedef LiveCapabilitiesResult = ({bool canSendToChat, String? projectRoot});
+typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
+typedef LiveSendSelectionHandler =
+    Future<void> Function({
+      required String message,
+      required List<Map<String, Object?>> selections,
+      String? brightness,
+      String? previewId,
+      String? previewName,
+      String? projectRoot,
+      String? textScale,
+      String? viewport,
+      String? zoom,
+    });
 
-var _debugCaptureParentSelections = false;
 String? _debugUrlFragmentOverride;
 Uri? _debugBaseUriOverride;
 final _debugFragmentChangeController = StreamController<String>.broadcast(
@@ -58,9 +85,9 @@ final StreamController<String> _urlFragmentChangeController =
     );
 var _debugReloadCount = 0;
 VoidCallback? _debugOnReloadCallback;
-final _debugPostedParentSelections =
-    <({bool selectMode, List<Map<String, Object?>> selections})>[];
-final _debugSelectionCommandListeners = <_ParentSelectionCommandHandlers>[];
+Future<LiveCapabilitiesResult> Function()? _debugProbeCapabilitiesHandler;
+Future<LiveSyncResult> Function()? _debugTriggerSyncHandler;
+LiveSendSelectionHandler? _debugSendSelectionHandler;
 
 Map<String, String> loadQueryParams({String Function(String)? urlModifier}) {
   var url = getWebUrl()!;
@@ -137,7 +164,7 @@ void replaceEmbedUrl(String fragment) {
 }
 
 /// Synchronizes interactive embed [zoom] changes with the URL fragment via
-/// `history.replaceState` and notifies any embedding parent shell.
+/// `history.replaceState`.
 void notifyEmbedZoomChanged(double zoom) {
   final String updatedFragment = buildUpdatedZoomFragment(
     getUrlFragment(),
@@ -147,128 +174,234 @@ void notifyEmbedZoomChanged(double zoom) {
     _debugUrlFragmentOverride = updatedFragment;
   }
   window.history.replaceState(null, '', '#$updatedFragment');
-  final CrossOriginWindow? parentWindow = window.parentCrossOrigin;
-  if (parentWindow != null && parentWindow.unsafeWindow != window) {
-    parentWindow.postMessage(
-      <String, Object>{
-        _kMessageTypeKey: _kZoomMessageType,
-        EmbedPreviewParams.kZoomParam: zoom,
-      }.jsify(),
-      _kWildcardTargetOrigin.toJS,
-    );
-  }
 }
 
-/// Posts the current [selectMode] and [selections] list to any embedding
-/// same-origin parent window.
-void notifyParentSelections({
-  required List<Map<String, Object?>> selections,
-  required bool selectMode,
-}) {
-  if (_debugCaptureParentSelections) {
-    _debugPostedParentSelections.add((
-      selectMode: selectMode,
-      selections: List<Map<String, Object?>>.unmodifiable(selections),
-    ));
+Uri _buildLiveApiUri(String relativePath) {
+  final Uri baseUri = getBaseUri();
+  final Uri resolved = resolveLiveRootUri(baseUri).resolve(relativePath);
+  final queryParams = <String, String>{};
+  final String? root = baseUri.queryParameters[_kRootParam];
+  if (root != null && root.isNotEmpty) {
+    queryParams[_kRootParam] = root;
   }
-  final CrossOriginWindow? parentWindow = window.parentCrossOrigin;
-  if (parentWindow != null && parentWindow.unsafeWindow != window) {
-    parentWindow.postMessage(
-      <String, Object?>{
-        _kMessageTypeKey: _kSelectionsMessageType,
-        _kSelectModeKey: selectMode,
-        _kSelectionsKey: selections,
-      }.jsify(),
-      window.location.origin.toJS,
-    );
+  final String? conversationId = baseUri.queryParameters[_kConversationIdKey];
+  if (conversationId != null && conversationId.isNotEmpty) {
+    queryParams[_kConversationIdKey] = conversationId;
   }
+  if (queryParams.isEmpty) {
+    return resolved;
+  }
+  return resolved.replace(queryParameters: queryParams);
 }
 
-/// Subscribes to same-origin parent selection commands (`set-select-mode` and
-/// `clear-selections`), returning a callback that cancels the listener.
-VoidCallback listenToParentSelectionCommands({
-  required void Function(String? selectionId) onClearSelections,
-  required void Function(bool active) onSetSelectMode,
-}) {
-  final _ParentSelectionCommandHandlers? debugHandlers =
-      _debugCaptureParentSelections
-      ? (onClearSelections: onClearSelections, onSetSelectMode: onSetSelectMode)
-      : null;
-  if (debugHandlers != null) {
-    _debugSelectionCommandListeners.add(debugHandlers);
-  }
-  final StreamSubscription<MessageEvent> subscription = EventStreamProviders
-      .messageEvent
-      .forTarget(window)
-      .listen((MessageEvent event) {
-        if (event.origin != window.location.origin) {
-          return;
-        }
-        final Object? dartData = event.data?.dartify();
-        if (dartData is! Map<Object?, Object?>) {
-          return;
-        }
-        final Object? messageType = dartData[_kMessageTypeKey];
-        if (messageType == _kSetSelectModeMessageType) {
-          if (dartData[_kActiveKey] case final bool active) {
-            onSetSelectMode(active);
-          }
-        } else if (messageType == _kClearSelectionsMessageType) {
-          final Object? rawId = dartData[_kIdKey];
-          final String? selectionId = rawId is String && rawId.isNotEmpty
-              ? rawId
-              : null;
-          onClearSelections(selectionId);
-        }
-      });
-  return () {
-    if (debugHandlers != null) {
-      _debugSelectionCommandListeners.remove(debugHandlers);
+Future<String?> _readSidecarConversationId() async {
+  try {
+    final JSObject globalWindow = window as JSObject;
+    final JSAny? sidecar = globalWindow.getProperty<JSAny?>(_kSidecarKey.toJS);
+    if (sidecar == null || !sidecar.isA<JSObject>()) {
+      return null;
     }
-    unawaited(subscription.cancel());
+    final JSAny? context = (sidecar as JSObject).getProperty<JSAny?>(
+      _kContextKey.toJS,
+    );
+    if (context == null || !context.isA<JSObject>()) {
+      return null;
+    }
+    final JSObject contextObj = context as JSObject;
+    final JSAny? getConvFn = contextObj.getProperty<JSAny?>(
+      _kGetConversationIdMethod.toJS,
+    );
+    if (getConvFn == null || !getConvFn.isA<JSFunction>()) {
+      return null;
+    }
+    final JSAny? result = contextObj.callMethod<JSAny?>(
+      _kGetConversationIdMethod.toJS,
+    );
+    if (result == null) {
+      return null;
+    }
+    if (result.isA<JSPromise>()) {
+      final JSAny? awaited = await (result as JSPromise<JSAny?>).toDart;
+      if (awaited != null && awaited.isA<JSString>()) {
+        final String value = (awaited as JSString).toDart;
+        return value.isEmpty ? null : value;
+      }
+      return null;
+    }
+    if (result.isA<JSString>()) {
+      final String value = (result as JSString).toDart;
+      return value.isEmpty ? null : value;
+    }
+  } on Object {
+    return null;
+  }
+  return null;
+}
+
+/// Probes `__api/capabilities` on the live server to determine whether host
+/// chat sending is supported and which project root is active.
+Future<LiveCapabilitiesResult> probeLiveCapabilities() async {
+  if (_debugProbeCapabilitiesHandler case final handler?) {
+    return handler();
+  }
+  try {
+    final Uri uri = _buildLiveApiUri(_kApiCapabilitiesPath);
+    final Response response = await window
+        .fetch(
+          uri.toString().toJS,
+          RequestInit(method: _kMethodGet, cache: _kCacheNoStore),
+        )
+        .toDart;
+    if (!response.ok) {
+      return (canSendToChat: false, projectRoot: null);
+    }
+    final String body = (await response.text().toDart).toDart;
+    final Object? decoded = jsonDecode(body);
+    if (decoded is Map<Object?, Object?>) {
+      final bool canSend = decoded[_kCanSendToChatKey] == true;
+      final Object? rawRoot = decoded[_kProjectRootKey];
+      final String? projectRoot = rawRoot is String && rawRoot.isNotEmpty
+          ? rawRoot
+          : null;
+      return (canSendToChat: canSend, projectRoot: projectRoot);
+    }
+  } on Object {
+    // Fall back to read-only capabilities when the endpoint is unavailable.
+  }
+  return (canSendToChat: false, projectRoot: null);
+}
+
+/// Triggers a preview sync/reload via `POST __api/sync` on the live server.
+Future<LiveSyncResult> triggerLiveSync() async {
+  if (_debugTriggerSyncHandler case final handler?) {
+    return handler();
+  }
+  final Uri uri = _buildLiveApiUri(_kApiSyncPath);
+  final Response response = await window
+      .fetch(
+        uri.toString().toJS,
+        RequestInit(method: _kMethodPost, cache: _kCacheNoStore),
+      )
+      .toDart;
+  final String body = (await response.text().toDart).toDart;
+  Object? decoded;
+  try {
+    decoded = jsonDecode(body);
+  } on FormatException {
+    decoded = null;
+  }
+  if (!response.ok) {
+    final String? error = decoded is Map<Object?, Object?>
+        ? decoded[_kErrorKey] as String? ??
+              decoded[_kErrorMessageKey] as String?
+        : null;
+    return (
+      compileSuccess: false,
+      errorMessage: error ?? 'Sync failed with status ${response.status}.',
+    );
+  }
+  if (decoded is Map<Object?, Object?>) {
+    final bool compileSuccess = decoded[_kCompileSuccessKey] != false;
+    final Object? rawError = decoded[_kErrorMessageKey] ?? decoded[_kErrorKey];
+    final String? errorMessage = rawError is String && rawError.isNotEmpty
+        ? rawError
+        : null;
+    return (compileSuccess: compileSuccess, errorMessage: errorMessage);
+  }
+  return (compileSuccess: true, errorMessage: null);
+}
+
+/// Sends the active [selections] and user [message] to the host chat via
+/// `POST __api/send-selection`.
+Future<void> sendLiveSelectionToChat({
+  required String message,
+  required List<Map<String, Object?>> selections,
+  String? brightness,
+  String? previewId,
+  String? previewName,
+  String? projectRoot,
+  String? textScale,
+  String? viewport,
+  String? zoom,
+}) async {
+  if (_debugSendSelectionHandler case final handler?) {
+    await handler(
+      message: message,
+      selections: selections,
+      brightness: brightness,
+      previewId: previewId,
+      previewName: previewName,
+      projectRoot: projectRoot,
+      textScale: textScale,
+      viewport: viewport,
+      zoom: zoom,
+    );
+    return;
+  }
+  final Uri baseUri = getBaseUri();
+  final String? conversationId =
+      await _readSidecarConversationId() ??
+      baseUri.queryParameters[_kConversationIdKey];
+  final String? resolvedRoot =
+      projectRoot ?? baseUri.queryParameters[_kRootParam];
+  final payload = <String, Object?>{
+    _kMessageKey: message,
+    _kSelectionsKey: selections,
+    if (conversationId != null && conversationId.isNotEmpty)
+      _kConversationIdKey: conversationId,
+    if (resolvedRoot != null && resolvedRoot.isNotEmpty)
+      _kProjectRootKey: resolvedRoot,
+    if (previewId != null && previewId.isNotEmpty) _kPreviewIdKey: previewId,
+    if (previewName != null && previewName.isNotEmpty)
+      _kPreviewNameKey: previewName,
+    if (brightness != null && brightness.isNotEmpty)
+      _kBrightnessKey: brightness,
+    if (viewport != null && viewport.isNotEmpty) _kViewportKey: viewport,
+    if (textScale != null && textScale.isNotEmpty) _kTextScaleKey: textScale,
+    if (zoom != null && zoom.isNotEmpty) _kZoomKey: zoom,
   };
+  final Uri uri = _buildLiveApiUri(_kApiSendSelectionPath);
+  final Response response = await window
+      .fetch(
+        uri.toString().toJS,
+        RequestInit(
+          method: _kMethodPost,
+          cache: _kCacheNoStore,
+          headers:
+              <String, String>{_kContentTypeHeader: _kJsonContentType}.jsify()!
+                  as HeadersInit,
+          body: jsonEncode(payload).toJS,
+        ),
+      )
+      .toDart;
+  if (!response.ok) {
+    final String body = (await response.text().toDart).toDart;
+    String? error;
+    try {
+      final Object? decoded = jsonDecode(body);
+      if (decoded is Map<Object?, Object?>) {
+        final Object? rawError = decoded[_kErrorKey];
+        if (rawError is String && rawError.isNotEmpty) {
+          error = rawError;
+        }
+      }
+    } on FormatException {
+      error = null;
+    }
+    throw StateError(
+      error ?? 'Failed to send selection (HTTP ${response.status}).',
+    );
+  }
 }
 
 /// Number of times [reloadWindow] has been invoked in tests.
 @visibleForTesting
 int get debugReloadCount => _debugReloadCount;
 
-/// Selection update payloads emitted via [notifyParentSelections] in tests.
-@visibleForTesting
-List<({bool selectMode, List<Map<String, Object?>> selections})>
-get debugPostedParentSelections =>
-    List<
-      ({bool selectMode, List<Map<String, Object?>> selections})
-    >.unmodifiable(_debugPostedParentSelections);
-
-/// Simulates a parent `flutter-widget-preview-set-select-mode` command in tests.
-@visibleForTesting
-void debugDispatchParentSetSelectMode(bool active) {
-  for (final _ParentSelectionCommandHandlers listener
-      in List<_ParentSelectionCommandHandlers>.of(
-        _debugSelectionCommandListeners,
-      )) {
-    listener.onSetSelectMode(active);
-  }
-}
-
-/// Simulates a parent `flutter-widget-preview-clear-selections` command in tests.
-@visibleForTesting
-void debugDispatchParentClearSelections({String? id}) {
-  final String? normalizedId = id != null && id.isNotEmpty ? id : null;
-  for (final _ParentSelectionCommandHandlers listener
-      in List<_ParentSelectionCommandHandlers>.of(
-        _debugSelectionCommandListeners,
-      )) {
-    listener.onClearSelections(normalizedId);
-  }
-}
-
 /// Updates the simulated URL fragment (and optional [baseUri]) for tests and
 /// notifies [onUrlFragmentChange] listeners.
 @visibleForTesting
 void debugSetUrlFragment(String fragment, {Uri? baseUri}) {
-  _debugCaptureParentSelections = true;
   _debugUrlFragmentOverride = fragment;
   if (baseUri != null) {
     _debugBaseUriOverride = baseUri;
@@ -282,14 +415,34 @@ void debugSetReloadHandler(VoidCallback? onReload) {
   _debugOnReloadCallback = onReload;
 }
 
+/// Registers an optional test handler for [probeLiveCapabilities].
+@visibleForTesting
+void debugSetProbeCapabilitiesHandler(
+  Future<LiveCapabilitiesResult> Function()? handler,
+) {
+  _debugProbeCapabilitiesHandler = handler;
+}
+
+/// Registers an optional test handler for [triggerLiveSync].
+@visibleForTesting
+void debugSetTriggerSyncHandler(Future<LiveSyncResult> Function()? handler) {
+  _debugTriggerSyncHandler = handler;
+}
+
+/// Registers an optional test handler for [sendLiveSelectionToChat].
+@visibleForTesting
+void debugSetSendSelectionHandler(LiveSendSelectionHandler? handler) {
+  _debugSendSelectionHandler = handler;
+}
+
 /// Resets all URL test overrides and counters.
 @visibleForTesting
 void debugResetUrlTestState() {
-  _debugCaptureParentSelections = false;
   _debugUrlFragmentOverride = null;
   _debugBaseUriOverride = null;
   _debugReloadCount = 0;
   _debugOnReloadCallback = null;
-  _debugPostedParentSelections.clear();
-  _debugSelectionCommandListeners.clear();
+  _debugProbeCapabilitiesHandler = null;
+  _debugTriggerSyncHandler = null;
+  _debugSendSelectionHandler = null;
 }

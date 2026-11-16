@@ -58,6 +58,30 @@ String buildUpdatedZoomFragment(String fragment, double zoom) {
   return Uri(queryParameters: params).query;
 }
 
+/// Resolves the live server root [Uri] from [baseUri] by stripping any trailing
+/// `/live`, `/live/`, or non-slash last path segment and clearing query/fragment.
+Uri resolveLiveRootUri(Uri baseUri) {
+  var path = baseUri.path;
+  if (path.endsWith('/live/')) {
+    path = path.substring(0, path.length - 'live/'.length);
+  } else if (path.endsWith('/live')) {
+    path = path.substring(0, path.length - 'live'.length);
+  } else if (!path.endsWith('/')) {
+    final int lastSlash = path.lastIndexOf('/');
+    path = lastSlash >= 0 ? path.substring(0, lastSlash + 1) : '/';
+  }
+  if (path.isEmpty) {
+    path = '/';
+  }
+  return Uri(
+    scheme: baseUri.scheme,
+    userInfo: baseUri.userInfo,
+    host: baseUri.host,
+    port: baseUri.hasPort ? baseUri.port : null,
+    path: path,
+  );
+}
+
 /// Parsed URL fragment configuration for chromeless single-preview or
 /// all-previews embed mode.
 @immutable
@@ -69,20 +93,27 @@ class EmbedPreviewParams {
     this.isEmbed = false,
     this.previewId,
     this.selectMode = false,
+    this.showControls = false,
     this.textScale,
     this.width,
     this.zoom,
   });
 
   factory EmbedPreviewParams.fromCurrentUrl() {
-    return EmbedPreviewParams.fromFragment(getUrlFragment());
+    return EmbedPreviewParams.fromFragment(
+      getUrlFragment(),
+      baseUri: getBaseUri(),
+    );
   }
 
   factory EmbedPreviewParams.parse(String fragment) =
       EmbedPreviewParams.fromFragment;
 
-  factory EmbedPreviewParams.fromFragment(String fragment) {
-    final Map<String, String> params = parseFragmentParameters(fragment);
+  factory EmbedPreviewParams.fromFragment(String fragment, {Uri? baseUri}) {
+    final params = <String, String>{
+      ...?baseUri?.queryParameters,
+      ...parseFragmentParameters(fragment),
+    };
     final String? rawPreviewId = params[kPreviewIdParam];
     final String? previewId = rawPreviewId != null && rawPreviewId.isNotEmpty
         ? rawPreviewId
@@ -91,13 +122,20 @@ class EmbedPreviewParams {
     final String? dtdProxy = rawDtdProxy != null && rawDtdProxy.isNotEmpty
         ? rawDtdProxy
         : null;
+    final bool showControls =
+        params[kLiveParam] == kLiveEnabledValue ||
+        params[kLiveParam]?.toLowerCase() == _kTrueValue ||
+        (baseUri != null && isLiveUriPath(baseUri));
     return EmbedPreviewParams(
-      brightness: _parseBrightness(params[kBrightnessParam]),
+      brightness: _parseBrightness(
+        params[kBrightnessParam] ?? params[_kThemeParam],
+      ),
       dtdProxy: dtdProxy,
       height: _parsePositiveFiniteDouble(params[kHeightParam]),
-      isEmbed: params[kEmbedParam] == kEmbedEnabledValue,
+      isEmbed: params[kEmbedParam] == kEmbedEnabledValue || showControls,
       previewId: previewId,
       selectMode: _parseSelectMode(params[kSelectParam]),
+      showControls: showControls,
       textScale: _parsePositiveFiniteDouble(params[kTextScaleParam]),
       width: _parsePositiveFiniteDouble(params[kWidthParam]),
       zoom: _parseZoom(params[kZoomParam]),
@@ -116,6 +154,8 @@ class EmbedPreviewParams {
   static const kHttpScheme = 'http';
   static const kHttpsScheme = 'https';
   static const kLightBrightness = 'light';
+  static const kLiveEnabledValue = '1';
+  static const kLiveParam = 'live';
   static const kMaxZoom = 4.0;
   static const kMinZoom = 0.25;
   static const kPreviewIdParam = 'previewId';
@@ -128,7 +168,15 @@ class EmbedPreviewParams {
   static const kZoomEpsilon = 1e-6;
   static const kZoomParam = 'zoom';
   static const kZoomStep = 0.25;
-  static const _kSelectTrueValue = 'true';
+  static const _kLivePathSegment = '/live';
+  static const _kLivePathTrailingSlash = '/live/';
+  static const _kThemeParam = 'theme';
+  static const _kTrueValue = 'true';
+
+  /// Returns `true` when [uri] points to the `/live` interactive viewer route.
+  static bool isLiveUriPath(Uri uri) =>
+      uri.path.endsWith(_kLivePathSegment) ||
+      uri.path.endsWith(_kLivePathTrailingSlash);
 
   final Brightness? brightness;
   final String? dtdProxy;
@@ -136,6 +184,7 @@ class EmbedPreviewParams {
   final bool isEmbed;
   final String? previewId;
   final bool selectMode;
+  final bool showControls;
   final double? textScale;
   final double? width;
   final double? zoom;
@@ -147,11 +196,15 @@ class EmbedPreviewParams {
   /// Returns a copy of this configuration with the specified fields updated.
   EmbedPreviewParams copyWith({
     Brightness? brightness,
+    bool clearHeight = false,
+    bool clearPreviewId = false,
+    bool clearWidth = false,
     String? dtdProxy,
     double? height,
     bool? isEmbed,
     String? previewId,
     bool? selectMode,
+    bool? showControls,
     double? textScale,
     double? width,
     double? zoom,
@@ -159,21 +212,24 @@ class EmbedPreviewParams {
     return EmbedPreviewParams(
       brightness: brightness ?? this.brightness,
       dtdProxy: dtdProxy ?? this.dtdProxy,
-      height: height ?? this.height,
+      height: clearHeight ? null : (height ?? this.height),
       isEmbed: isEmbed ?? this.isEmbed,
-      previewId: previewId ?? this.previewId,
+      previewId: clearPreviewId ? null : (previewId ?? this.previewId),
       selectMode: selectMode ?? this.selectMode,
+      showControls: showControls ?? this.showControls,
       textScale: textScale ?? this.textScale,
-      width: width ?? this.width,
+      width: clearWidth ? null : (width ?? this.width),
       zoom: zoom ?? this.zoom,
     );
   }
 
   /// Serializes this configuration into a canonical URL fragment query string
   /// without a leading `'#'`.
-  String toFragment() {
+  String toFragment({Uri? baseUri}) {
     final queryParams = <String, String>{
       if (isEmbed) kEmbedParam: kEmbedEnabledValue,
+      if (showControls && (baseUri == null || !isLiveUriPath(baseUri)))
+        kLiveParam: kLiveEnabledValue,
       if (previewId case final String id when id.isNotEmpty)
         kPreviewIdParam: id,
       if (brightness case final Brightness resolvedBrightness)
@@ -213,6 +269,7 @@ class EmbedPreviewParams {
       isEmbed: isEmbed,
       previewId: previewId,
       selectMode: selectMode,
+      showControls: showControls,
       textScale: textScale,
       width: width,
       zoom: normalized,
@@ -239,7 +296,9 @@ class EmbedPreviewParams {
     if (!isEmbed) {
       return null;
     }
-    return baseUri.resolve(kDefaultDtdProxyPath).replace(scheme: wsScheme);
+    return resolveLiveRootUri(
+      baseUri,
+    ).resolve(kDefaultDtdProxyPath).replace(scheme: wsScheme);
   }
 
   static Brightness? _parseBrightness(String? value) => switch (value) {
@@ -249,7 +308,7 @@ class EmbedPreviewParams {
   };
 
   static bool _parseSelectMode(String? value) =>
-      value == kSelectEnabledValue || value?.toLowerCase() == _kSelectTrueValue;
+      value == kSelectEnabledValue || value?.toLowerCase() == _kTrueValue;
 
   static double? _parsePositiveFiniteDouble(String? value) {
     if (value == null || value.isEmpty) {
@@ -278,6 +337,7 @@ class EmbedPreviewParams {
     isEmbed,
     previewId,
     selectMode,
+    showControls,
     textScale,
     width,
     zoom,
@@ -293,6 +353,7 @@ class EmbedPreviewParams {
         isEmbed == other.isEmbed &&
         previewId == other.previewId &&
         selectMode == other.selectMode &&
+        showControls == other.showControls &&
         textScale == other.textScale &&
         width == other.width &&
         zoom == other.zoom;

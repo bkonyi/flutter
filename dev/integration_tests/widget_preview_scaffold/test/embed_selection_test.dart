@@ -225,6 +225,11 @@ void main() {
 
         final Finder scaledFinder = find.byType(ScaledPreviewLayout);
         expect(scaledFinder, findsOneWidget);
+        final EmbedSelectionController selectionController = tester
+            .widget<EmbedSelectablePreviewSurface>(
+              find.byType(EmbedSelectablePreviewSurface).first,
+            )
+            .selectionController;
         final Offset topLeftZoom1 = tester.getTopLeft(scaledFinder);
         expect(tester.getSize(scaledFinder), const Size(400, 300));
 
@@ -235,9 +240,9 @@ void main() {
           end: topLeftZoom1 + const Offset(204, 80),
         );
 
-        expect(debugPostedParentSelections, hasLength(1));
+        expect(selectionController.selectionsJson, hasLength(1));
         final Map<String, Object?> zoom1Selection =
-            debugPostedParentSelections.last.selections.single;
+            selectionController.selectionsJson.single;
         expect(zoom1Selection['id'], 'sel-1');
         expect(zoom1Selection['index'], 1);
         expect(zoom1Selection['kind'], 'region');
@@ -295,9 +300,9 @@ void main() {
 
         // Clear selection and switch to zoom=2.0, then drag the exact same logical region
         // (scaled by 2.0 in screen space).
-        debugDispatchParentClearSelections();
+        selectionController.clearSelections();
         await tester.pump();
-        expect(debugPostedParentSelections.last.selections, isEmpty);
+        expect(selectionController.selectionsJson, isEmpty);
 
         debugSetUrlFragment(
           'embed=1&previewId=${Uri.encodeQueryComponent(_kCardPreviewId)}'
@@ -316,7 +321,7 @@ void main() {
         );
 
         final Map<String, Object?> zoom2Selection =
-            debugPostedParentSelections.last.selections.single;
+            selectionController.selectionsJson.single;
         expect(zoom2Selection['zoom'], 2.0);
         expect(zoom2Selection['x'], zoom1Selection['x']);
         expect(zoom2Selection['y'], zoom1Selection['y']);
@@ -340,6 +345,11 @@ void main() {
               'embed=1&previewId=${Uri.encodeQueryComponent(_kCardPreviewId)}&select=1',
         );
 
+        final EmbedSelectionController selectionController = tester
+            .widget<EmbedSelectablePreviewSurface>(
+              find.byType(EmbedSelectablePreviewSurface).first,
+            )
+            .selectionController;
         final Offset topLeft = tester.getTopLeft(
           find.byType(ScaledPreviewLayout),
         );
@@ -352,7 +362,7 @@ void main() {
         );
 
         final Map<String, Object?> pointSelection =
-            debugPostedParentSelections.last.selections.single;
+            selectionController.selectionsJson.single;
         expect(pointSelection['kind'], 'point');
         expect(pointSelection['x'], 82);
         expect(pointSelection['y'], 111);
@@ -378,7 +388,7 @@ void main() {
         );
 
         final Map<String, Object?> secondSelection =
-            debugPostedParentSelections.last.selections.last;
+            selectionController.selectionsJson.last;
         final secondWidgets = (secondSelection['widgets']! as List<Object?>)
             .cast<Map<String, Object?>>();
         expect(
@@ -411,12 +421,18 @@ void main() {
               'embed=1&previewId=${Uri.encodeQueryComponent(_kCardPreviewId)}',
         );
 
+        final EmbedSelectionController selectionController = tester
+            .widget<EmbedSelectablePreviewSurface>(
+              find.byType(EmbedSelectablePreviewSurface).first,
+            )
+            .selectionController;
+
         // Normal tap on ElevatedButton works when selectMode is false and Shift is not pressed.
         expect(find.text('Taps: 0'), findsOneWidget);
         await tester.tap(find.byKey(_kSubmitKey));
         await tester.pump();
         expect(find.text('Taps: 1'), findsOneWidget);
-        expect(debugPostedParentSelections, isEmpty);
+        expect(selectionController.selections, isEmpty);
 
         // Holding Shift + click/drag selects without triggering ElevatedButton.onPressed!
         final Offset topLeft = tester.getTopLeft(
@@ -433,19 +449,18 @@ void main() {
         await tester.pump();
 
         expect(find.text('Taps: 1'), findsOneWidget);
-        expect(debugPostedParentSelections, hasLength(1));
-        expect(debugPostedParentSelections.last.selectMode, isFalse);
-        expect(debugPostedParentSelections.last.selections, hasLength(1));
+        expect(selectionController.selectMode, isFalse);
+        expect(selectionController.selections, hasLength(1));
         expect(
           find.byKey(const ValueKey<String>('embed-selection-overlay-sel-1')),
           findsOneWidget,
         );
 
-        // Enable selectMode via parent postMessage command, add a second selection (#2).
-        debugDispatchParentSetSelectMode(true);
+        // Enable selectMode directly on controller, add a second selection (#2).
+        selectionController.setSelectMode(true);
         await tester.pump();
         expect(getUrlFragment(), contains('select=1'));
-        expect(debugPostedParentSelections.last.selectMode, isTrue);
+        expect(selectionController.selectMode, isTrue);
 
         await _dragBetweenGlobal(
           tester,
@@ -453,7 +468,7 @@ void main() {
           start: topLeft + const Offset(195, 20),
           end: topLeft + const Offset(280, 55),
         );
-        expect(debugPostedParentSelections.last.selections, hasLength(2));
+        expect(selectionController.selections, hasLength(2));
         expect(find.text('#1'), findsOneWidget);
         expect(find.text('#2'), findsOneWidget);
 
@@ -464,9 +479,9 @@ void main() {
         );
         await tester.pump();
 
-        expect(debugPostedParentSelections.last.selections, hasLength(1));
+        expect(selectionController.selections, hasLength(1));
         final Map<String, Object?> remaining =
-            debugPostedParentSelections.last.selections.single;
+            selectionController.selectionsJson.single;
         expect(remaining['id'], 'sel-2');
         expect(remaining['index'], 1);
         expect(find.text('#1'), findsOneWidget);
@@ -476,19 +491,19 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
         expect(getUrlFragment().contains('select='), isFalse);
-        expect(debugPostedParentSelections.last.selectMode, isFalse);
-        expect(debugPostedParentSelections.last.selections, hasLength(1));
+        expect(selectionController.selectMode, isFalse);
+        expect(selectionController.selections, hasLength(1));
 
         // Second Escape clears all remaining selections.
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
-        expect(debugPostedParentSelections.last.selections, isEmpty);
+        expect(selectionController.selections, isEmpty);
         expect(find.text('#1'), findsNothing);
       },
     );
 
     testWidgets(
-      'supports multi-region #1 + #2 across All Previews gallery cards and parent clear-by-id',
+      'supports multi-region #1 + #2 across All Previews gallery cards and removeSelectionById',
       (WidgetTester tester) async {
         await _pumpEmbedPreview(
           tester,
@@ -497,6 +512,9 @@ void main() {
 
         final Finder surfaces = find.byType(EmbedSelectablePreviewSurface);
         expect(surfaces, findsNWidgets(2));
+        final EmbedSelectionController selectionController = tester
+            .widget<EmbedSelectablePreviewSurface>(surfaces.first)
+            .selectionController;
 
         final Offset cardOneTopLeft = tester.getTopLeft(surfaces.at(0));
         final Offset cardTwoTopLeft = tester.getTopLeft(surfaces.at(1));
@@ -518,7 +536,7 @@ void main() {
         );
 
         final List<Map<String, Object?>> selections =
-            debugPostedParentSelections.last.selections;
+            selectionController.selectionsJson;
         expect(selections, hasLength(2));
         expect(selections[0]['id'], 'sel-1');
         expect(selections[0]['index'], 1);
@@ -533,12 +551,12 @@ void main() {
         expect(find.text('#1'), findsOneWidget);
         expect(find.text('#2'), findsOneWidget);
 
-        // Parent command clearing only 'sel-1' leaves 'sel-2' renumbered to index 1.
-        debugDispatchParentClearSelections(id: 'sel-1');
+        // Removing 'sel-1' leaves 'sel-2' renumbered to index 1.
+        selectionController.removeSelectionById('sel-1');
         await tester.pump();
 
         final List<Map<String, Object?>> afterRemoveOne =
-            debugPostedParentSelections.last.selections;
+            selectionController.selectionsJson;
         expect(afterRemoveOne, hasLength(1));
         expect(afterRemoveOne.single['id'], 'sel-2');
         expect(afterRemoveOne.single['index'], 1);
@@ -547,39 +565,54 @@ void main() {
     );
 
     test(
-      'does not retain posted selection payloads or listeners when debugSetUrlFragment is unused',
+      'formatEmbedSelectionContext formats selections with project root and widgets',
       () {
-        notifyParentSelections(
-          selectMode: true,
-          selections: const <Map<String, Object?>>[
-            <String, Object?>{'id': 'sel-1'},
-          ],
-        );
-        expect(debugPostedParentSelections, isEmpty);
-
-        final controller = EmbedSelectionController(
-          initialParams: const EmbedPreviewParams(isEmbed: true),
-        );
-        addTearDown(controller.dispose);
-
-        // Even after replaceEmbedUrl sets a fragment override in non-test flow,
-        // debugPostedParentSelections must remain empty unless debugSetUrlFragment was called.
-        controller.setSelectMode(true);
-        controller.addSelection(
-          brightness: .light,
-          height: 20,
-          kind: .region,
+        const entry = EmbedSelectionEntry(
+          brightness: Brightness.dark,
+          height: 40,
+          id: 'sel-1',
+          index: 1,
+          kind: EmbedSelectionKind.region,
           previewHeight: 300,
           previewId: _kCardPreviewId,
+          previewName: 'My Card',
           previewWidth: 400,
-          textScale: 1.0,
-          widgets: const <EmbedSelectedWidgetInfo>[],
-          width: 40,
+          textScale: 1.25,
+          widgets: <EmbedSelectedWidgetInfo>[
+            EmbedSelectedWidgetInfo(
+              height: 36,
+              key: "[<'submit'>]",
+              text: 'Submit',
+              widget: 'ElevatedButton',
+              width: 100,
+              x: 12,
+              y: 16,
+            ),
+          ],
+          width: 120,
           x: 10,
-          y: 10,
-          zoom: 1.0,
+          y: 20,
+          zoom: 1.5,
         );
-        expect(debugPostedParentSelections, isEmpty);
+        final String formatted = formatEmbedSelectionContext(
+          selections: const <EmbedSelectionEntry>[entry],
+          projectRoot: '/tmp/my_app',
+        );
+        expect(formatted, contains('Selected Widget Preview Context (1):'));
+        expect(formatted, contains('Project: /tmp/my_app'));
+        expect(
+          formatted,
+          contains(
+            '#1 My Card ($_kCardPreviewId) - region (10, 20) 120x40 in 400x300 '
+            '[dark, textScale=1.25, zoom=1.5]',
+          ),
+        );
+        expect(
+          formatted,
+          contains(
+            '  - ElevatedButton key=[<\'submit\'>] "Submit" (12, 16) 100x36',
+          ),
+        );
       },
     );
   });

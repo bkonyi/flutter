@@ -935,13 +935,3 @@ class CapturePreviewResponse {
     );
   }
 }
-
-/// Wire constants for widget preview selection DTD RPCs, stream events, and
-/// HTTP endpoints.
-abstract final class WidgetPreviewSelection {
-  static const kCount = 'count';
-  static const kSelections = 'selections';
-  static const kType = 'type';
-  static const kTypeName = 'WidgetPreviewSelection';
-  static const kUpdatedAt = 'updatedAt';
-}

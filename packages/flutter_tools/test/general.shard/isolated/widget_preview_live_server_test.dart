@@ -30,7 +30,6 @@ import 'package:flutter_tools/src/web/memory_fs.dart';
 import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
-import 'package:flutter_tools/src/widget_preview/preview_selection_store.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:stream_channel/stream_channel.dart';
@@ -405,7 +404,7 @@ void main() {
     });
 
     testWithoutContext(
-      'serves /live, /__api/status, /__api/previews, and POST /__api/sync',
+      'serves /live, /__api/status, /__api/capabilities, and POST /__api/sync',
       () async {
         final shelf.Response live = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/live')),
@@ -413,36 +412,34 @@ void main() {
         expect(live.statusCode, io.HttpStatus.ok);
         expect(live.headers['cross-origin-resource-policy'], 'same-site');
         final String liveHtml = await live.readAsString();
-        expect(liveHtml, contains('All Previews'));
-        expect(liveHtml, contains('id="zoom-out"'));
-        expect(liveHtml, contains('id="zoom-reset"'));
-        expect(liveHtml, contains('id="zoom-in"'));
-        expect(liveHtml, contains('id="select-toggle"'));
-        expect(liveHtml, contains('id="selection-bar"'));
-        expect(liveHtml, contains('id="copy-selection-btn"'));
-        expect(liveHtml, contains('id="selection-clear"'));
-        expect(liveHtml, contains('flutter-widget-preview-selections'));
-        expect(liveHtml, contains('flutter-widget-preview-set-select-mode'));
-        expect(liveHtml, contains('flutter-widget-preview-clear-selections'));
-        expect(liveHtml, contains('__api/selection'));
-        expect(liveHtml, contains('#sync-btn:disabled'));
-        expect(liveHtml, contains('flutter-widget-preview-zoom'));
-        expect(liveHtml, contains('__api/sync'));
-        expect(liveHtml, contains("frame.addEventListener('load'"));
-        expect(liveHtml, contains('clearLocalSelections();'));
-        expect(liveHtml, contains('__api/previews'));
-        expect(liveHtml, isNot(contains('src="./?embed=1')));
-        expect(liveHtml, contains("window.location.pathname.endsWith('/') ? '../' : './'"));
-        expect(liveHtml, contains("rootPrefix + '?embed=1#'"));
+        expect(liveHtml, contains('__embed_flutter_bootstrap.js'));
+        expect(liveHtml, isNot(contains('<iframe')));
 
         final shelf.Response liveSlash = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/live/')),
         );
         expect(liveSlash.statusCode, io.HttpStatus.ok);
         final String liveSlashHtml = await liveSlash.readAsString();
-        expect(liveSlashHtml, isNot(contains('src="./?embed=1')));
-        expect(liveSlashHtml, contains("rootPrefix + '__api/previews'"));
-        expect(liveSlashHtml, contains("rootPrefix + '__api/sync'"));
+        expect(liveSlashHtml, contains('__embed_flutter_bootstrap.js'));
+
+        final shelf.Response capabilities = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/capabilities')),
+        );
+        expect(capabilities.statusCode, io.HttpStatus.ok);
+        expect(capabilities.headers['cache-control'], 'no-store');
+        final capabilitiesJson =
+            jsonDecode(await capabilities.readAsString()) as Map<String, Object?>;
+        expect(capabilitiesJson['canSendToChat'], isFalse);
+        expect(capabilitiesJson['projectRoot'], '/tmp/my_app');
+
+        final shelf.Response crossOriginCapabilities = await server.handler(
+          shelf.Request(
+            'GET',
+            Uri.parse('http://localhost:8080/__api/capabilities'),
+            headers: <String, String>{'host': 'localhost:8080', 'origin': 'https://evil.example'},
+          ),
+        );
+        expect(crossOriginCapabilities.statusCode, io.HttpStatus.forbidden);
 
         final shelf.Response status = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/__api/status')),
@@ -454,13 +451,15 @@ void main() {
         expect(statusJson['scaffoldService'], dtdServices.widgetPreviewScaffoldService);
         expect(statusJson['scaffoldStream'], dtdServices.widgetPreviewScaffoldStream);
 
-        final shelf.Response previews = await server.handler(
+        final shelf.Response removedPreviews = await server.handler(
           shelf.Request('GET', Uri.parse('http://localhost:8080/__api/previews')),
         );
-        expect(previews.statusCode, io.HttpStatus.ok);
-        final previewsJson = jsonDecode(await previews.readAsString()) as Map<String, Object?>;
-        expect(previewsJson['previews'], isA<List<Object?>>());
-        expect(dtdServices.lastListSyncArg, isFalse);
+        expect(removedPreviews.statusCode, io.HttpStatus.notFound);
+
+        final shelf.Response removedSelection = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/selection')),
+        );
+        expect(removedSelection.statusCode, io.HttpStatus.notFound);
 
         final shelf.Response sync = await server.handler(
           shelf.Request('POST', Uri.parse('http://localhost:8080/__api/sync')),
@@ -468,200 +467,6 @@ void main() {
         expect(sync.statusCode, io.HttpStatus.ok);
         final syncJson = jsonDecode(await sync.readAsString()) as Map<String, Object?>;
         expect(syncJson['compileSuccess'], isTrue);
-
-        // GET /__api/selection starts empty.
-        final shelf.Response initialSelection = await server.handler(
-          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/selection')),
-        );
-        expect(initialSelection.statusCode, io.HttpStatus.ok);
-        expect(jsonDecode(await initialSelection.readAsString()), <String, Object?>{
-          'type': 'WidgetPreviewSelection',
-          'selections': <Object?>[],
-          'count': 0,
-          'updatedAt': null,
-        });
-
-        // POST /__api/selection stores selection entries and returns Success with count/updatedAt.
-        final sampleSelection = <String, Object?>{
-          'id': 'sel-1',
-          'index': 1,
-          'kind': 'region',
-          'previewId': 'package:my_app/main.dart::myPreview',
-          'x': 24,
-          'y': 16,
-          'width': 180,
-          'height': 64,
-          'previewWidth': 400,
-          'previewHeight': 300,
-          'brightness': 'light',
-          'textScale': 1.0,
-          'zoom': 1.0,
-          'widgets': <Map<String, Object?>>[
-            <String, Object?>{
-              'widget': 'ElevatedButton',
-              'text': 'Submit',
-              'x': 32,
-              'y': 24,
-              'width': 120,
-              'height': 40,
-            },
-          ],
-        };
-        final shelf.Response postSelection = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: jsonEncode(<String, Object?>{
-              'selections': <Map<String, Object?>>[sampleSelection],
-            }),
-          ),
-        );
-        expect(postSelection.statusCode, io.HttpStatus.ok);
-        final postJson = jsonDecode(await postSelection.readAsString()) as Map<String, Object?>;
-        expect(postJson['type'], 'Success');
-        expect(postJson['count'], 1);
-        expect(postJson['updatedAt'], isA<String>());
-        expect(dtdServices.fakeDtd.postedEvents, hasLength(1));
-        expect(
-          dtdServices.fakeDtd.postedEvents.single.streamId,
-          dtdServices.widgetPreviewScaffoldStream,
-        );
-        expect(
-          dtdServices.fakeDtd.postedEvents.single.eventKind,
-          WidgetPreviewDtdServices.kSelectionUpdatedEvent,
-        );
-        expect(dtdServices.fakeDtd.postedEvents.single.eventData, <String, Object?>{
-          'selections': <Object?>[sampleSelection],
-          'count': 1,
-          'updatedAt': postJson['updatedAt'],
-        });
-
-        final shelf.Response updatedSelection = await server.handler(
-          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/selection')),
-        );
-        expect(updatedSelection.statusCode, io.HttpStatus.ok);
-        final updatedJson =
-            jsonDecode(await updatedSelection.readAsString()) as Map<String, Object?>;
-        expect(updatedJson['type'], 'WidgetPreviewSelection');
-        expect(updatedJson['count'], 1);
-        expect(updatedJson['updatedAt'], postJson['updatedAt']);
-        expect(updatedJson['selections'], <Object?>[sampleSelection]);
-
-        // Malformed body, oversized body, schema violations, and non-list selections return 400 Bad Request, and cross-origin is 403.
-        final shelf.Response badJson = await server.handler(
-          shelf.Request('POST', Uri.parse('http://localhost:8080/__api/selection'), body: '{bad'),
-        );
-        expect(badJson.statusCode, io.HttpStatus.badRequest);
-        final shelf.Response badParams = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: jsonEncode(<String, Object?>{'selections': 'invalid'}),
-          ),
-        );
-        expect(badParams.statusCode, io.HttpStatus.badRequest);
-
-        // Oversized body with Content-Length > 64 KiB returns 400.
-        final oversizedBody =
-            '{"selections":[{"kind":"point","x":1,"y":2,"previewId":"'
-            '${'a' * PreviewSelectionStore.kMaxSelectionBodyBytes}"}]}';
-        final shelf.Response oversizedContentLength = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: oversizedBody,
-          ),
-        );
-        expect(oversizedContentLength.statusCode, io.HttpStatus.badRequest);
-
-        // Chunked stream without Content-Length stops reading as soon as 64 KiB is exceeded.
-        var trailingChunkRead = false;
-        Stream<List<int>> buildOversizedChunkStream() async* {
-          yield List<int>.filled((PreviewSelectionStore.kMaxSelectionBodyBytes ~/ 2) + 1, 0x20);
-          yield List<int>.filled((PreviewSelectionStore.kMaxSelectionBodyBytes ~/ 2) + 1, 0x20);
-          trailingChunkRead = true;
-          yield const <int>[0x20];
-        }
-
-        final shelf.Response oversizedChunked = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: buildOversizedChunkStream(),
-          ),
-        );
-        expect(oversizedChunked.statusCode, io.HttpStatus.badRequest);
-        expect(trailingChunkRead, isFalse);
-
-        // Unknown nested keys, > 32 entries, and > 12 widgets return 400.
-        final shelf.Response unknownKeyResp = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: jsonEncode(<String, Object?>{
-              'selections': <Map<String, Object?>>[
-                <String, Object?>{
-                  'kind': 'point',
-                  'x': 1,
-                  'y': 2,
-                  'extra': <String, Object?>{'nested': true},
-                },
-              ],
-            }),
-          ),
-        );
-        expect(unknownKeyResp.statusCode, io.HttpStatus.badRequest);
-
-        final shelf.Response tooManyEntriesResp = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: jsonEncode(<String, Object?>{
-              'selections': <Map<String, Object?>>[
-                for (var i = 0; i < PreviewSelectionStore.kMaxSelections + 1; i++)
-                  <String, Object?>{'kind': 'point', 'x': i, 'y': i},
-              ],
-            }),
-          ),
-        );
-        expect(tooManyEntriesResp.statusCode, io.HttpStatus.badRequest);
-
-        final shelf.Response tooManyWidgetsResp = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            body: jsonEncode(<String, Object?>{
-              'selections': <Map<String, Object?>>[
-                <String, Object?>{
-                  'kind': 'point',
-                  'x': 1,
-                  'y': 2,
-                  'widgets': <Map<String, Object?>>[
-                    for (var i = 0; i < PreviewSelectionStore.kMaxWidgetsPerSelection + 1; i++)
-                      <String, Object?>{
-                        'widget': 'Text',
-                        'x': 0,
-                        'y': 0,
-                        'width': 10,
-                        'height': 10,
-                      },
-                  ],
-                },
-              ],
-            }),
-          ),
-        );
-        expect(tooManyWidgetsResp.statusCode, io.HttpStatus.badRequest);
-
-        final shelf.Response crossOriginSelection = await server.handler(
-          shelf.Request(
-            'POST',
-            Uri.parse('http://localhost:8080/__api/selection'),
-            headers: <String, String>{'host': 'localhost:8080', 'origin': 'https://evil.example'},
-            body: jsonEncode(<String, Object?>{'selections': <Object?>[]}),
-          ),
-        );
-        expect(crossOriginSelection.statusCode, io.HttpStatus.forbidden);
       },
     );
 
@@ -748,58 +553,9 @@ void main() {
         });
         expect(getPreviewsResp['result'], <String, Object?>{'ok': true});
 
-        // Allowed: getSelection and setSelection on widgetPreviewService.
-        final Map<String, Object?> getSelectionResp = await sendRpc(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 41,
-          'method': '${dtdServices.widgetPreviewService}.getSelection',
-          'params': <String, Object?>{'ignored': true},
-        });
-        expect(getSelectionResp['result'], <String, Object?>{'ok': true});
-        expect(forwardedToUpstream.last['params'], isEmpty);
-
-        final Map<String, Object?> setSelectionResp = await sendRpc(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 42,
-          'method': '${dtdServices.widgetPreviewService}.setSelection',
-          'params': <String, Object?>{
-            'selections': <Map<String, Object?>>[
-              <String, Object?>{'id': 'sel-1', 'index': 1, 'kind': 'point', 'x': 10, 'y': 20},
-            ],
-            'unexpected': true,
-          },
-        });
-        expect(setSelectionResp['result'], <String, Object?>{'ok': true});
-        expect(forwardedToUpstream.last['params'], <String, Object?>{
-          'selections': <Map<String, Object?>>[
-            <String, Object?>{'id': 'sel-1', 'index': 1, 'kind': 'point', 'x': 10, 'y': 20},
-          ],
-        });
-
-        final Map<String, Object?> badSetSelectionResp = await sendRpc(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 43,
-          'method': '${dtdServices.widgetPreviewService}.setSelection',
-          'params': <String, Object?>{'selections': 'not-a-list'},
-        });
-        expect((badSetSelectionResp['error']! as Map<String, Object?>)['code'], -32602);
-
-        final Map<String, Object?> unknownKeyWsResp = await sendRpc(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 44,
-          'method': '${dtdServices.widgetPreviewService}.setSelection',
-          'params': <String, Object?>{
-            'selections': <Map<String, Object?>>[
-              <String, Object?>{'kind': 'point', 'x': 1, 'y': 2, 'unknown': true},
-            ],
-          },
-        });
-        expect((unknownKeyWsResp['error']! as Map<String, Object?>)['code'], -32602);
-
         final Map<String, Object?> oversizedFrameResp = await sendRpc(
-          '{"jsonrpc":"2.0","id":45,"method":"${dtdServices.widgetPreviewService}.setSelection",'
-          '"params":{"selections":[{"kind":"point","x":1,"y":2,"previewId":"'
-          '${'x' * PreviewSelectionStore.kMaxSelectionBodyBytes}"}]}}',
+          '{"jsonrpc":"2.0","id":45,"method":"${dtdServices.widgetPreviewService}.listPreviews",'
+          '"params":{"fileUri":"${'x' * (64 * 1024)}"}}',
         );
         expect((oversizedFrameResp['error']! as Map<String, Object?>)['code'], -32600);
 
@@ -822,7 +578,7 @@ void main() {
         });
         expect(serviceInfoResult.containsKey('dtdUri'), isFalse);
         expect(serviceInfoResult.containsKey('projectRoot'), isFalse);
-        expect(forwardedToUpstream, hasLength(5));
+        expect(forwardedToUpstream, hasLength(3));
 
         // Disallowed methods must be rejected with -32601 without forwarding.
         for (final (int id, String method) in <(int, String)>[
@@ -831,6 +587,8 @@ void main() {
           (7, 'postEvent'),
           (8, '${dtdServices.widgetPreviewScaffoldService}.capturePreview'),
           (9, '${dtdServices.widgetPreviewService}.syncPreviews'),
+          (10, '${dtdServices.widgetPreviewService}.getSelection'),
+          (11, '${dtdServices.widgetPreviewService}.setSelection'),
         ]) {
           final Map<String, Object?> err = await sendRpc(<String, Object?>{
             'jsonrpc': '2.0',
@@ -869,7 +627,7 @@ void main() {
         });
         expect((notificationErr['error']! as Map<String, Object?>)['code'], -32600);
 
-        expect(forwardedToUpstream, hasLength(5));
+        expect(forwardedToUpstream, hasLength(3));
         await client.sink.close();
       },
     );
@@ -1072,8 +830,7 @@ void main() {
         final ({String body, Map<String, String> headers, int statusCode}) liveSlash =
             await httpGet(client, server.selectedPort, '/subapp/live/');
         expect(liveSlash.statusCode, io.HttpStatus.ok);
-        expect(liveSlash.body, isNot(contains('src="./?embed=1')));
-        expect(liveSlash.body, contains("window.location.pathname.endsWith('/') ? '../' : './'"));
+        expect(liveSlash.body, contains('__embed_main.dart.js'));
         final ({String body, Map<String, String> headers, int statusCode}) status = await httpGet(
           client,
           server.selectedPort,

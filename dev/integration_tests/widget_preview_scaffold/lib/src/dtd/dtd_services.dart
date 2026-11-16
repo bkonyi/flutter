@@ -40,12 +40,9 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kListPreviews = 'listPreviews';
   static const kGetPreviews = 'getPreviews';
   static const kCapturePreview = 'capturePreview';
-  static const kSetSelection = 'setSelection';
-  static const kGetSelection = 'getSelection';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
   static const kPreviewReloadedEvent = 'PreviewReloaded';
-  static const kSelectionUpdatedEvent = 'SelectionUpdated';
   static const kFullRestart = 'fullRestart';
 
   /// Error code for [RpcException] thrown when a requested preview ID or name

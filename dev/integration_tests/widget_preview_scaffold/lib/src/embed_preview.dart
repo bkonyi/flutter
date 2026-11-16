@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
+import 'package:widget_preview_scaffold/src/embed_live_controls.dart';
 import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
@@ -12,7 +15,8 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
 
-/// Chromeless single-preview or all-previews gallery canvas for `#embed=1` mode.
+/// Chromeless single-preview or all-previews gallery canvas for `#embed=1` mode,
+/// or interactive `/live` viewer when [EmbedPreviewParams.showControls] is set.
 class EmbedPreviewScaffold extends StatefulWidget {
   const EmbedPreviewScaffold({
     required this.controller,
@@ -20,12 +24,14 @@ class EmbedPreviewScaffold extends StatefulWidget {
     required this.onZoomChanged,
     required this.params,
     this.ideTheme = const IdeTheme(),
+    this.onParamsChanged,
     super.key,
   });
 
   final WidgetPreviewScaffoldController controller;
   final ValueGetter<double> currentZoom;
   final IdeTheme ideTheme;
+  final ValueChanged<EmbedPreviewParams>? onParamsChanged;
   final ValueChanged<double> onZoomChanged;
   final EmbedPreviewParams params;
 
@@ -55,16 +61,90 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   late final _selectionController = EmbedSelectionController(
     initialParams: widget.params,
   );
+  var _canSendToChat = false;
+  var _hasProbedCapabilities = false;
+  var _isSyncing = false;
+  String? _projectRoot;
+  String? _syncErrorMessage;
 
   EmbedPreviewParams get _params => widget.params;
 
   double get _zoom => _params.zoom ?? EmbedPreviewParams.kDefaultZoom;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.params.showControls) {
+      _hasProbedCapabilities = true;
+      unawaited(_probeCapabilities());
+    }
+  }
+
+  @override
   void didUpdateWidget(EmbedPreviewScaffold oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.params != widget.params) {
       _selectionController.syncFromParams(widget.params);
+    }
+    if (widget.params.showControls && !_hasProbedCapabilities) {
+      _hasProbedCapabilities = true;
+      unawaited(_probeCapabilities());
+    }
+  }
+
+  Future<void> _probeCapabilities() async {
+    final (:bool canSendToChat, :String? projectRoot) =
+        await probeLiveCapabilities();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _canSendToChat = canSendToChat;
+      _projectRoot = projectRoot;
+    });
+  }
+
+  void _handleParamsChanged(EmbedPreviewParams nextParams) {
+    if (nextParams == _params) {
+      return;
+    }
+    widget.onParamsChanged?.call(nextParams);
+  }
+
+  Future<void> _handleSyncPressed() async {
+    if (_isSyncing) {
+      return;
+    }
+    setState(() {
+      _isSyncing = true;
+      _syncErrorMessage = null;
+    });
+    try {
+      final (:bool compileSuccess, :String? errorMessage) =
+          await triggerLiveSync();
+      if (!mounted) {
+        return;
+      }
+      if (compileSuccess) {
+        _selectionController.clearSelections();
+        setState(() {
+          _isSyncing = false;
+          _syncErrorMessage = null;
+        });
+      } else {
+        setState(() {
+          _isSyncing = false;
+          _syncErrorMessage = errorMessage ?? 'Preview compilation failed.';
+        });
+      }
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSyncing = false;
+        _syncErrorMessage = error.toString();
+      });
     }
   }
 
@@ -192,58 +272,88 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
             themeMode: themeMode,
             title: null,
             builder: (BuildContext context, Widget? _) {
+              final Widget previewStage = PreviewPointerScrollZoom(
+                zoom: _zoom,
+                onZoomChanged: _emitZoom,
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    if (lookup == null) {
+                      final List<WidgetPreviewGroup> groups =
+                          controller.allPreviewGroups;
+                      if (groups.isEmpty) {
+                        return _buildStatusView(
+                          context: context,
+                          constraints: constraints,
+                          message: _kNoPreviewsMessage,
+                          title: _kNoPreviewsTitle,
+                        );
+                      }
+                      return _buildAllPreviewsGallery(
+                        context: context,
+                        constraints: constraints,
+                        groups: groups,
+                      );
+                    }
+                    if (lookup case PreviewLookupMatch(
+                      :final WidgetPreview preview,
+                    ) when !preview.hasError) {
+                      return _buildPreviewSubtree(
+                        context: context,
+                        outerConstraints: constraints,
+                        preview: preview,
+                        viewportConstraints: constraints,
+                      );
+                    }
+                    final (String title, String message) = _lookupStatusDetails(
+                      lookup,
+                    );
+                    return _buildStatusView(
+                      context: context,
+                      constraints: constraints,
+                      message: message,
+                      title: title,
+                    );
+                  },
+                ),
+              );
               return Navigator(
                 pages: <Page<void>>[
                   MaterialPage<void>(
                     key: _kRootPageKey,
                     child: Scaffold(
-                      body: PreviewPointerScrollZoom(
-                        zoom: _zoom,
-                        onZoomChanged: _emitZoom,
-                        child: LayoutBuilder(
-                          builder:
-                              (
-                                BuildContext context,
-                                BoxConstraints constraints,
-                              ) {
-                                if (lookup == null) {
-                                  final List<WidgetPreviewGroup> groups =
-                                      controller.allPreviewGroups;
-                                  if (groups.isEmpty) {
-                                    return _buildStatusView(
-                                      context: context,
-                                      constraints: constraints,
-                                      message: _kNoPreviewsMessage,
-                                      title: _kNoPreviewsTitle,
-                                    );
-                                  }
-                                  return _buildAllPreviewsGallery(
-                                    context: context,
-                                    constraints: constraints,
-                                    groups: groups,
-                                  );
-                                }
-                                if (lookup case PreviewLookupMatch(
-                                  :final WidgetPreview preview,
-                                ) when !preview.hasError) {
-                                  return _buildPreviewSubtree(
-                                    context: context,
-                                    outerConstraints: constraints,
-                                    preview: preview,
-                                    viewportConstraints: constraints,
-                                  );
-                                }
-                                final (String title, String message) =
-                                    _lookupStatusDetails(lookup);
-                                return _buildStatusView(
-                                  context: context,
-                                  constraints: constraints,
-                                  message: message,
-                                  title: title,
-                                );
-                              },
-                        ),
-                      ),
+                      body: params.showControls
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                EmbedLiveTopBar(
+                                  isSyncing: _isSyncing,
+                                  onDismissSyncError: () {
+                                    setState(() {
+                                      _syncErrorMessage = null;
+                                    });
+                                  },
+                                  onParamsChanged: _handleParamsChanged,
+                                  onSyncPressed: _handleSyncPressed,
+                                  onZoomChanged: _emitZoom,
+                                  params: params,
+                                  previews: <WidgetPreview>[
+                                    for (final WidgetPreviewGroup group
+                                        in controller.allPreviewGroups)
+                                      ...group.previews,
+                                  ],
+                                  selectionController: _selectionController,
+                                  syncErrorMessage: _syncErrorMessage,
+                                ),
+                                Expanded(child: previewStage),
+                                EmbedLiveSelectionBar(
+                                  canSendToChat: _canSendToChat,
+                                  params: params,
+                                  projectRoot: _projectRoot,
+                                  selectionController: _selectionController,
+                                ),
+                              ],
+                            )
+                          : previewStage,
                     ),
                   ),
                 ],

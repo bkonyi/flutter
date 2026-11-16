@@ -125,23 +125,60 @@ class EmbedSelectionEntry {
   };
 }
 
-/// Coordinates multi-region selection state, URL synchronization, and parent
-/// `postMessage` notifications across single-preview and gallery embed views.
+/// Formats [selections] (with optional [projectRoot]) into a concise
+/// human-readable context block suitable for copying to the clipboard.
+String formatEmbedSelectionContext({
+  required List<EmbedSelectionEntry> selections,
+  String? projectRoot,
+}) {
+  if (selections.isEmpty) {
+    return '';
+  }
+  final lines = <String>[
+    'Selected Widget Preview Context (${selections.length}):',
+    if (projectRoot case final String root when root.isNotEmpty)
+      'Project: $root',
+  ];
+  for (final EmbedSelectionEntry entry in selections) {
+    final String previewLabel =
+        entry.previewName != null && entry.previewName!.isNotEmpty
+        ? '${entry.previewName} (${entry.previewId})'
+        : entry.previewId;
+    final String geometry = switch (entry.kind) {
+      .point => 'point (${entry.x}, ${entry.y})',
+      .region =>
+        'region (${entry.x}, ${entry.y}) ${entry.width}x${entry.height}',
+    };
+    lines.add(
+      '#${entry.index} $previewLabel - $geometry in '
+      '${entry.previewWidth}x${entry.previewHeight} '
+      '[${entry.brightness.name}, textScale=${formatEmbedZoom(entry.textScale)}, '
+      'zoom=${formatEmbedZoom(entry.zoom)}]',
+    );
+    for (final EmbedSelectedWidgetInfo widget in entry.widgets) {
+      final parts = <String>[
+        widget.widget,
+        if (widget.key case final String key when key.isNotEmpty) 'key=$key',
+        if (widget.text case final String text when text.isNotEmpty) '"$text"',
+        '(${widget.x}, ${widget.y}) ${widget.width}x${widget.height}',
+      ];
+      lines.add('  - ${parts.join(' ')}');
+    }
+  }
+  return lines.join('\n');
+}
+
+/// Coordinates multi-region selection state and URL synchronization across
+/// single-preview and gallery embed views.
 class EmbedSelectionController extends ChangeNotifier {
   EmbedSelectionController({required EmbedPreviewParams initialParams})
     : _params = initialParams,
-      _selectMode = initialParams.selectMode {
-    _unsubscribeParentCommands = listenToParentSelectionCommands(
-      onClearSelections: _handleParentClearSelections,
-      onSetSelectMode: _handleParentSetSelectMode,
-    );
-  }
+      _selectMode = initialParams.selectMode;
 
   EmbedPreviewParams _params;
   bool _selectMode;
   var _selectionCounter = 0;
   final _selections = <EmbedSelectionEntry>[];
-  VoidCallback? _unsubscribeParentCommands;
 
   bool get selectMode => _selectMode;
 
@@ -162,28 +199,20 @@ class EmbedSelectionController extends ChangeNotifier {
     }
   }
 
-  /// Updates [selectMode], optionally syncing the embed URL fragment and
-  /// notifying the embedding parent window.
-  void setSelectMode(
-    bool active, {
-    bool notifyParent = true,
-    bool updateUrl = true,
-  }) {
+  /// Updates [selectMode] and optionally syncs the embed URL fragment.
+  void setSelectMode(bool active, {bool updateUrl = true}) {
     final bool modeChanged = _selectMode != active;
     _selectMode = active;
     _params = _params.copyWith(selectMode: active);
     if (updateUrl && modeChanged) {
-      replaceEmbedUrl(_params.toFragment());
+      replaceEmbedUrl(_params.toFragment(baseUri: getBaseUri()));
     }
     if (modeChanged) {
       notifyListeners();
     }
-    if (notifyParent) {
-      _emitParentSelections();
-    }
   }
 
-  /// Appends a newly captured selection entry and notifies the parent window.
+  /// Appends a newly captured selection entry.
   EmbedSelectionEntry addSelection({
     required Brightness brightness,
     required int height,
@@ -218,7 +247,6 @@ class EmbedSelectionController extends ChangeNotifier {
     );
     _selections.add(entry);
     notifyListeners();
-    _emitParentSelections();
     return entry;
   }
 
@@ -236,17 +264,15 @@ class EmbedSelectionController extends ChangeNotifier {
       _selections[i] = _selections[i].withIndex(i + 1);
     }
     notifyListeners();
-    _emitParentSelections();
   }
 
-  /// Clears all active selections and notifies the parent window.
+  /// Clears all active selections.
   void clearSelections() {
     final bool hadSelections = _selections.isNotEmpty;
     _selections.clear();
     if (hadSelections) {
       notifyListeners();
     }
-    _emitParentSelections();
   }
 
   /// Handles `Escape` key presses: exits [selectMode] first if active, or
@@ -261,29 +287,6 @@ class EmbedSelectionController extends ChangeNotifier {
       return true;
     }
     return false;
-  }
-
-  void _handleParentSetSelectMode(bool active) {
-    setSelectMode(active);
-  }
-
-  void _handleParentClearSelections(String? selectionId) {
-    if (selectionId != null && selectionId.isNotEmpty) {
-      removeSelectionById(selectionId);
-      return;
-    }
-    clearSelections();
-  }
-
-  void _emitParentSelections() {
-    notifyParentSelections(selectMode: _selectMode, selections: selectionsJson);
-  }
-
-  @override
-  void dispose() {
-    _unsubscribeParentCommands?.call();
-    _unsubscribeParentCommands = null;
-    super.dispose();
   }
 }
 
