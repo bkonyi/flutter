@@ -149,7 +149,7 @@ void main() {
       final String moduleBootstrap = await embedMainModule.readAsString();
       expect(moduleBootstrap, contains('"id":"packages/my_app/main.dart"'));
       expect(moduleBootstrap, contains('"id":"web_entrypoint.dart"'));
-      expect(moduleBootstrap, contains('src: "__ddc_bundle.js"'));
+      expect(moduleBootstrap, contains('src: "/__ddc_bundle.js"'));
       expect(moduleBootstrap, isNot(contains('{src: "on_load_end_bootstrap.js"')));
       expect(moduleBootstrap, contains(r'window.$dartLoader.loader.nextAttempt();'));
     });
@@ -681,6 +681,76 @@ void main() {
         await expectLater(client2.stream, emitsDone);
       },
     );
+
+    testWithoutContext('returns 503 JSON error when POST /__api/sync times out', () async {
+      final server = WidgetPreviewLiveServer(
+        basePathProvider: () => '',
+        config: WidgetPreviewLiveConfig(
+          dtdServices: _TimeoutSyncWidgetPreviewDtdServices(
+            fs: fs,
+            logger: logger,
+            project: FlutterProject.fromDirectoryTest(fs.directory('/tmp/my_app')),
+          ),
+        ),
+        configuredHost: 'localhost',
+        isWindows: false,
+        modules: const <String, String>{},
+        renderFlutterBootstrapJs: () => 'flutter_bootstrap',
+        renderIndexHtml: () => 'index',
+        webMemoryFS: webMemoryFS,
+      );
+      final shelf.Response response = await server.handler(
+        shelf.Request('POST', Uri.parse('http://localhost:8080/__api/sync')),
+      );
+      expect(response.statusCode, io.HttpStatus.serviceUnavailable);
+      expect(jsonDecode(await response.readAsString()), <String, Object?>{
+        'error': contains('Sync timed out'),
+      });
+    });
+
+    testWithoutContext(
+      'rewrites embed URLs as root-relative under basePath and throws on missing marker',
+      () async {
+        final server = WidgetPreviewLiveServer(
+          basePathProvider: () => 'subapp',
+          config: WidgetPreviewLiveConfig(dtdServices: dtdServices),
+          configuredHost: 'localhost',
+          isWindows: false,
+          modules: const <String, String>{'main_module': 'main_module'},
+          renderFlutterBootstrapJs: () => 'load("main.dart.js");',
+          renderIndexHtml: () => '<script src="flutter_bootstrap.js"></script>',
+          webMemoryFS: webMemoryFS,
+        );
+        final shelf.Response liveResponse = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/subapp/live/')),
+        );
+        expect(liveResponse.statusCode, io.HttpStatus.ok);
+        expect(
+          await liveResponse.readAsString(),
+          contains('src="/subapp/__embed_flutter_bootstrap.js"'),
+        );
+
+        final shelf.Response mainJsResponse = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/subapp/__embed_main.dart.js')),
+        );
+        expect(mainJsResponse.statusCode, io.HttpStatus.ok);
+        expect(
+          await mainJsResponse.readAsString(),
+          contains('/subapp/__embed_main_module.bootstrap.js'),
+        );
+
+        webMemoryFS.files['main_module.bootstrap.js'] = utf8.encode('console.log("no marker");');
+        await expectLater(
+          server.handler(
+            shelf.Request(
+              'GET',
+              Uri.parse('http://localhost:8080/subapp/__embed_main_module.bootstrap.js'),
+            ),
+          ),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
   });
 
   group('$WebAssetServer live wiring', () {
@@ -999,4 +1069,16 @@ class _FakeWidgetPreviewDtdServices extends WidgetPreviewDtdServices {
 class _FakeDtdLauncher extends Fake implements DtdLauncher {
   @override
   Future<void> dispose() async {}
+}
+
+class _TimeoutSyncWidgetPreviewDtdServices extends _FakeWidgetPreviewDtdServices {
+  _TimeoutSyncWidgetPreviewDtdServices({
+    required super.fs,
+    required super.logger,
+    required super.project,
+  });
+
+  @override
+  Future<SyncPreviewsResponse> Function({required Duration timeout})? get onSyncPreviews =>
+      ({required Duration timeout}) => throw TimeoutException('Sync timed out', timeout);
 }

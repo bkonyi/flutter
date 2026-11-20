@@ -73,6 +73,7 @@ class WidgetPreviewLiveServer {
   static const _kEmbedFlutterBootstrapPath = '__embed_flutter_bootstrap.js';
   static const _kEmbedMainDartJsPath = '__embed_main.dart.js';
   static const _kEmbedMainModuleBootstrapPath = '__embed_main_module.bootstrap.js';
+  static const _kEntrypointExtensionMarker = '/* ENTRYPOINT_EXTENTION_MARKER */';
   static const _kLivePath = 'live';
   static const _kLiveSlashPath = 'live/';
   static const _kMainModuleBootstrapPath = 'main_module.bootstrap.js';
@@ -183,10 +184,15 @@ class WidgetPreviewLiveServer {
     };
   }
 
+  String _rootRelativePath(String subPath) {
+    final String basePath = basePathProvider().replaceAll(RegExp(r'^/+|/+$'), '');
+    return basePath.isEmpty ? '/$subPath' : '/$basePath/$subPath';
+  }
+
   shelf.Response _serveEmbedIndexHtml() {
     final String html = renderIndexHtml()
-        .replaceAll('flutter_bootstrap.js', _kEmbedFlutterBootstrapPath)
-        .replaceAll('main.dart.js', _kEmbedMainDartJsPath);
+        .replaceAll('flutter_bootstrap.js', _rootRelativePath(_kEmbedFlutterBootstrapPath))
+        .replaceAll('main.dart.js', _rootRelativePath(_kEmbedMainDartJsPath));
     return shelf.Response.ok(
       html,
       encoding: utf8,
@@ -195,7 +201,10 @@ class WidgetPreviewLiveServer {
   }
 
   shelf.Response _serveEmbedFlutterBootstrapJs() {
-    final String js = renderFlutterBootstrapJs().replaceAll('main.dart.js', _kEmbedMainDartJsPath);
+    final String js = renderFlutterBootstrapJs().replaceAll(
+      'main.dart.js',
+      _rootRelativePath(_kEmbedMainDartJsPath),
+    );
     return shelf.Response.ok(
       js,
       encoding: utf8,
@@ -209,7 +218,7 @@ class WidgetPreviewLiveServer {
       mapperUrl: 'stack_trace_mapper.js',
       generateLoadingIndicator: false,
       isWindows: isWindows,
-    ).replaceAll('main_module.bootstrap.js', _kEmbedMainModuleBootstrapPath);
+    ).replaceAll('main_module.bootstrap.js', _rootRelativePath(_kEmbedMainModuleBootstrapPath));
     return shelf.Response.ok(
       js,
       encoding: utf8,
@@ -225,9 +234,16 @@ class WidgetPreviewLiveServer {
         headers: _securityHeaders(contentType: 'text/plain; charset=utf-8'),
       );
     }
-    final String bootstrap = utf8
-        .decode(storedBootstrap)
-        .replaceFirst('/* ENTRYPOINT_EXTENTION_MARKER */', _buildEmbedModuleRegistrationJs());
+    final String decodedBootstrap = utf8.decode(storedBootstrap);
+    if (!decodedBootstrap.contains(_kEntrypointExtensionMarker)) {
+      throw StateError(
+        '$_kMainModuleBootstrapPath is missing expected $_kEntrypointExtensionMarker marker.',
+      );
+    }
+    final String bootstrap = decodedBootstrap.replaceFirst(
+      _kEntrypointExtensionMarker,
+      _buildEmbedModuleRegistrationJs(),
+    );
     return shelf.Response.ok(
       bootstrap,
       encoding: utf8,
@@ -244,7 +260,7 @@ class WidgetPreviewLiveServer {
     buffer.writeln('''
 window.\$dartLoader.loadConfig.loadScriptFn = function(loader) {
   loader.addScriptsToQueue([
-    {src: "$_kDdcBundlePath", id: "__ddc_bundle__"}
+    {src: "${_rootRelativePath(_kDdcBundlePath)}", id: "__ddc_bundle__"}
   ], null);
   loader.loadEnqueuedModules();
 };
@@ -433,6 +449,11 @@ window.\$dartLoader.loader.nextAttempt();''');
       );
     } on RpcException catch (e) {
       return _jsonErrorResponse(HttpStatus.serviceUnavailable, e.message);
+    } on TimeoutException catch (e) {
+      return _jsonErrorResponse(
+        HttpStatus.serviceUnavailable,
+        e.message ?? 'Timed out synchronizing widget previews.',
+      );
     }
   }
 
