@@ -625,66 +625,79 @@ class _EmbedSelectablePreviewSurfaceState
       ),
     };
 
-    final Widget badge = Positioned(
-      left: badgeLeft,
-      top: badgeTop,
-      child: Directionality(
-        textDirection: TextDirection.ltr,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: _kBadgeBackgroundColor,
-            borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
-          ),
-          child: SizedBox(
-            height: _kBadgeHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: _kBadgeHorizontalPadding,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  IgnorePointer(
-                    child: Text(
-                      '#${entry.index}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: _kBadgeFontSize,
-                        fontWeight: FontWeight.w600,
-                        height: 1.0,
-                      ),
+    final Widget badgeContent = Directionality(
+      textDirection: TextDirection.ltr,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: _kBadgeBackgroundColor,
+          borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
+        ),
+        child: SizedBox(
+          height: _kBadgeHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: _kBadgeHorizontalPadding,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                IgnorePointer(
+                  child: Text(
+                    '#${entry.index}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: _kBadgeFontSize,
+                      fontWeight: FontWeight.w600,
+                      height: 1.0,
                     ),
                   ),
-                  const SizedBox(width: _kBadgeSpacing),
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      key: ValueKey<String>(
-                        'embed-selection-remove-${entry.id}',
-                      ),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => widget.selectionController
-                          .removeSelectionById(entry.id),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 2.0),
-                        child: Text(
-                          '\u00D7',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13.0,
-                            fontWeight: FontWeight.bold,
-                            height: 1.0,
-                          ),
+                ),
+                const SizedBox(width: _kBadgeSpacing),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    key: ValueKey<String>('embed-selection-remove-${entry.id}'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => widget.selectionController.removeSelectionById(
+                      entry.id,
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 2.0),
+                      child: Text(
+                        '\u00D7',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13.0,
+                          fontWeight: FontWeight.bold,
+                          height: 1.0,
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
       ),
+    );
+
+    final Widget badge = Positioned(
+      left: badgeLeft,
+      top: badgeTop,
+      child:
+          entry.previewWidth > 0 && entry.previewWidth < _kBadgeEstimatedWidth
+          ? ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: entry.previewWidth.toDouble(),
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: badgeContent,
+              ),
+            )
+          : badgeContent,
     );
 
     return <Widget>[indicator, badge];

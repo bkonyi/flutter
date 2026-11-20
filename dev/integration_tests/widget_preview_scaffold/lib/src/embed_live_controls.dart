@@ -31,6 +31,7 @@ class EmbedLiveTopBar extends StatelessWidget {
     required this.onZoomChanged,
     required this.params,
     required this.previews,
+    required this.resolvedPreviewId,
     required this.selectionController,
     this.onDismissSyncError,
     this.syncErrorMessage,
@@ -44,6 +45,7 @@ class EmbedLiveTopBar extends StatelessWidget {
   final ValueChanged<double> onZoomChanged;
   final EmbedPreviewParams params;
   final List<WidgetPreview> previews;
+  final String? resolvedPreviewId;
   final EmbedSelectionController selectionController;
   final String? syncErrorMessage;
 
@@ -57,10 +59,7 @@ class EmbedLiveTopBar extends StatelessWidget {
     final Brightness activeBrightness =
         params.brightness ?? Theme.of(context).brightness;
     final String selectedPreviewValue =
-        params.previewId != null &&
-            previews.any((WidgetPreview p) => p.id == params.previewId)
-        ? params.previewId!
-        : EmbedPreviewParams.kAllPreviewsValue;
+        resolvedPreviewId ?? EmbedPreviewParams.kAllPreviewsValue;
     final bool isResponsive = params.width == null && params.height == null;
     final bool isMobile =
         params.width == _kMobilePresetWidth && params.height == null;

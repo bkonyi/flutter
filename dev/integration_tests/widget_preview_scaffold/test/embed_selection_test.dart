@@ -615,5 +615,117 @@ void main() {
         );
       },
     );
+
+    testWidgets('marquee selection aligns after scrolling a zoomed preview', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      debugSetUrlFragment(
+        'embed=1&previewId=${Uri.encodeQueryComponent(_kCardPreviewId)}'
+        '&zoom=2&select=1',
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: () => <WidgetPreview>[_buildCardPreview()],
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+      await tester.pump();
+
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position
+          .jumpTo(40.0);
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).last)
+          .position
+          .jumpTo(50.0);
+      await tester.pump();
+
+      final Finder surfaceFinder = find
+          .byType(EmbedSelectablePreviewSurface)
+          .first;
+      final EmbedSelectionController selectionController = tester
+          .widget<EmbedSelectablePreviewSurface>(surfaceFinder)
+          .selectionController;
+      final Offset surfaceTopLeft = tester.getTopLeft(surfaceFinder);
+
+      await _dragBetweenGlobal(
+        tester,
+        pointerId: 20,
+        start: surfaceTopLeft + const Offset(28 * 2.0, 20 * 2.0),
+        end: surfaceTopLeft + const Offset(160 * 2.0, 70 * 2.0),
+      );
+
+      expect(selectionController.selectionsJson, hasLength(1));
+      final Map<String, Object?> sel =
+          selectionController.selectionsJson.single;
+      expect(sel['x'], 28);
+      expect(sel['y'], 20);
+      expect(sel['width'], 132);
+      expect(sel['height'], 50);
+      final widgets = (sel['widgets']! as List<Object?>)
+          .cast<Map<String, Object?>>();
+      expect(
+        widgets,
+        contains(
+          allOf(
+            containsPair('widget', 'ElevatedButton'),
+            containsPair('key', "[<'submit'>]"),
+          ),
+        ),
+      );
+    });
+
+    testWidgets(
+      'narrow preview badge x button stays within bounds and is tappable',
+      (WidgetTester tester) async {
+        final WidgetPreview narrowPreview = buildWidgetPreview(
+          column: 1,
+          functionName: 'narrowPreview',
+          libraryUri: 'package:my_app/narrow.dart',
+          line: 1,
+          packageName: 'my_app',
+          previewFunction: () => const SizedBox(width: 40, height: 40),
+          scriptUri: 'file:///project/lib/narrow.dart',
+          transformedPreview: const Preview(size: Size(40, 40)).transform(),
+        );
+        await _pumpEmbedPreview(
+          tester,
+          fragment:
+              'embed=1&previewId=${Uri.encodeQueryComponent(narrowPreview.id)}&select=1',
+          previewList: <WidgetPreview>[narrowPreview],
+        );
+
+        final Finder narrowSurface = find
+            .byType(EmbedSelectablePreviewSurface)
+            .first;
+        final EmbedSelectionController narrowSelectionController = tester
+            .widget<EmbedSelectablePreviewSurface>(narrowSurface)
+            .selectionController;
+        final Offset narrowTopLeft = tester.getTopLeft(narrowSurface);
+        await _dragBetweenGlobal(
+          tester,
+          pointerId: 21,
+          start: narrowTopLeft + const Offset(4, 4),
+          end: narrowTopLeft + const Offset(30, 30),
+        );
+        expect(narrowSelectionController.selections, hasLength(1));
+        final String narrowSelId =
+            narrowSelectionController.selections.single.id;
+        await tester.tap(
+          find.byKey(ValueKey<String>('embed-selection-remove-$narrowSelId')),
+        );
+        await tester.pump();
+        expect(narrowSelectionController.selections, isEmpty);
+      },
+    );
   });
 }

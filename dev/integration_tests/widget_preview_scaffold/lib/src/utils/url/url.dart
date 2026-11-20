@@ -58,6 +58,42 @@ String buildUpdatedZoomFragment(String fragment, double zoom) {
   return Uri(queryParameters: params).query;
 }
 
+const _kManagedEmbedQueryKeys = <String>{
+  EmbedPreviewParams.kBrightnessParam,
+  EmbedPreviewParams.kDtdProxyParam,
+  EmbedPreviewParams.kEmbedParam,
+  EmbedPreviewParams.kHeightParam,
+  EmbedPreviewParams.kLiveParam,
+  EmbedPreviewParams.kPreviewIdParam,
+  EmbedPreviewParams.kSelectParam,
+  EmbedPreviewParams.kTextScaleParam,
+  EmbedPreviewParams.kWidthParam,
+  EmbedPreviewParams.kZoomParam,
+};
+
+/// Returns [currentUri] with [fragment] applied and any managed embed query
+/// parameters stripped from `queryParameters`, while preserving host query
+/// parameters (such as `token`, `root`, or `conversationId`).
+Uri buildSanitizedEmbedUri(Uri currentUri, String fragment) {
+  final String normalized = fragment.startsWith('#')
+      ? fragment.substring(1)
+      : fragment;
+  final preservedQuery = <String, List<String>>{
+    for (final MapEntry(:String key, :List<String> value)
+        in currentUri.queryParametersAll.entries)
+      if (!_kManagedEmbedQueryKeys.contains(key)) key: value,
+  };
+  return Uri(
+    scheme: currentUri.scheme,
+    userInfo: currentUri.userInfo,
+    host: currentUri.host,
+    port: currentUri.hasPort ? currentUri.port : null,
+    path: currentUri.path,
+    queryParameters: preservedQuery.isEmpty ? null : preservedQuery,
+    fragment: normalized,
+  );
+}
+
 /// Resolves the live server root [Uri] from [baseUri] by stripping any trailing
 /// `/live`, `/live/`, or non-slash last path segment and clearing query/fragment.
 Uri resolveLiveRootUri(Uri baseUri) {

@@ -72,21 +72,30 @@ void reloadWindow() {
 /// Replaces the current embed URL fragment without adding a browser history
 /// entry and notifies [onUrlFragmentChange] listeners.
 void replaceEmbedUrl(String fragment) {
-  final String normalized = fragment.startsWith('#')
-      ? fragment.substring(1)
-      : fragment;
-  _debugUrlFragmentOverride = normalized;
-  _debugFragmentChangeController.add(normalized);
+  final Uri updatedUri = buildSanitizedEmbedUri(getBaseUri(), fragment);
+  _debugUrlFragmentOverride = updatedUri.fragment;
+  if (_debugBaseUriOverride != null) {
+    _debugBaseUriOverride = updatedUri;
+  }
+  _debugFragmentChangeController.add(updatedUri.fragment);
 }
 
 /// Synchronizes interactive embed [zoom] changes with the simulated test URL
 /// fragment when active; no-op for non-web platforms otherwise.
 void notifyEmbedZoomChanged(double zoom) {
   if (_debugUrlFragmentOverride != null) {
-    _debugUrlFragmentOverride = buildUpdatedZoomFragment(
+    final String updatedFragment = buildUpdatedZoomFragment(
       getUrlFragment(),
       zoom,
     );
+    final Uri updatedUri = buildSanitizedEmbedUri(
+      getBaseUri(),
+      updatedFragment,
+    );
+    _debugUrlFragmentOverride = updatedUri.fragment;
+    if (_debugBaseUriOverride != null) {
+      _debugBaseUriOverride = updatedUri;
+    }
   }
 }
 

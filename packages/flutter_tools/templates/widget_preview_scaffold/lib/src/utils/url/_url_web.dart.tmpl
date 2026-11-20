@@ -140,14 +140,15 @@ void reloadWindow() {
 /// Replaces the current embed URL fragment via `history.replaceState` without
 /// adding a browser history entry and notifies [onUrlFragmentChange] listeners.
 void replaceEmbedUrl(String fragment) {
-  final String normalized = fragment.startsWith('#')
-      ? fragment.substring(1)
-      : fragment;
+  final Uri updatedUri = buildSanitizedEmbedUri(getBaseUri(), fragment);
   if (_debugUrlFragmentOverride != null) {
-    _debugUrlFragmentOverride = normalized;
+    _debugUrlFragmentOverride = updatedUri.fragment;
   }
-  window.history.replaceState(null, '', '#$normalized');
-  _debugFragmentChangeController.add(normalized);
+  if (_debugBaseUriOverride != null) {
+    _debugBaseUriOverride = updatedUri;
+  }
+  window.history.replaceState(null, '', updatedUri.toString());
+  _debugFragmentChangeController.add(updatedUri.fragment);
 }
 
 /// Synchronizes interactive embed [zoom] changes with the URL fragment via
@@ -157,10 +158,14 @@ void notifyEmbedZoomChanged(double zoom) {
     getUrlFragment(),
     zoom,
   );
+  final Uri updatedUri = buildSanitizedEmbedUri(getBaseUri(), updatedFragment);
   if (_debugUrlFragmentOverride != null) {
-    _debugUrlFragmentOverride = updatedFragment;
+    _debugUrlFragmentOverride = updatedUri.fragment;
   }
-  window.history.replaceState(null, '', '#$updatedFragment');
+  if (_debugBaseUriOverride != null) {
+    _debugBaseUriOverride = updatedUri;
+  }
+  window.history.replaceState(null, '', updatedUri.toString());
 }
 
 JSObject? _resolveHostObject() {
