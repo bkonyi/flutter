@@ -57,6 +57,7 @@ class WidgetPreviewSessionClient {
   WidgetPreviewSessionClient({
     required this._toolContext,
     @visibleForTesting this._dtdConnector = DartToolingDaemon.connect,
+    @visibleForTesting this._dtdProbeTimeout = kDefaultDtdProbeTimeout,
     @visibleForTesting this._headlessStartupTimeout = kDefaultHeadlessStartupTimeout,
     @visibleForTesting this._processExitTimeout = kDefaultProcessExitTimeout,
     @visibleForTesting
@@ -66,6 +67,7 @@ class WidgetPreviewSessionClient {
   });
 
   static const kDtdUrl = 'dtd-url';
+  static const kDefaultDtdProbeTimeout = Duration(seconds: 2);
   static const kDefaultHeadlessStartupTimeout = Duration(minutes: 2);
   static const kDefaultProcessExitTimeout = Duration(seconds: 5);
 
@@ -106,6 +108,7 @@ class WidgetPreviewSessionClient {
 
   final ToolContext _toolContext;
   final DtdConnector _dtdConnector;
+  final Duration _dtdProbeTimeout;
   final Duration _headlessStartupTimeout;
   final Duration _processExitTimeout;
   final Duration _scaffoldReadyTimeout;
@@ -163,7 +166,7 @@ class WidgetPreviewSessionClient {
     for (final candidateUri in candidateUris) {
       DartToolingDaemon? dtd;
       try {
-        dtd = await _dtdConnector(candidateUri);
+        dtd = await _dtdConnector(candidateUri).timeout(_dtdProbeTimeout);
       } on ToolExit {
         rethrow;
       } on Exception {

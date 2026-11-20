@@ -825,7 +825,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     }
     if (existingDtdUri != null) {
       logger.printTrace('Connecting to existing DTD instance at: $existingDtdUri...');
-      await _dtdService.connect(dtdWsUri: existingDtdUri);
+      try {
+        await _dtdService.connect(dtdWsUri: existingDtdUri);
+      } on Exception catch (error) {
+        logger.printWarning(
+          'Failed to connect to existing DTD instance at $existingDtdUri: $error. '
+          'Starting a new DTD instance instead.',
+        );
+      }
     }
   }
 

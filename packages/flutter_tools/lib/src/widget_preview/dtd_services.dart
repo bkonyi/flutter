@@ -290,8 +290,8 @@ class WidgetPreviewDtdServices {
 
   /// Connects to an existing DTD instance and registers any relevant services.
   Future<void> connect({required Uri dtdWsUri}) async {
-    _dtdUri = dtdWsUri;
     _dtd ??= await DartToolingDaemon.connect(dtdWsUri);
+    _dtdUri = dtdWsUri;
 
     _allLspServicesRegistered = false;
     final RegisteredServicesResponse registeredServices = await _dtd!.getRegisteredServices();
@@ -705,17 +705,45 @@ class DtdLauncher {
 
     // Wait for the DTD connection information.
     final dtdUri = Completer<Uri>();
-    late final StreamSubscription<String> sub;
-    sub = _dtdProcess!.stdout.transformWithCallSite(utf8.decoder).listen((String data) async {
-      await sub.cancel();
-      final jsonData = json.decode(data) as Map<String, Object?>;
-      if (jsonData case {'tooling_daemon_details': {'uri': final String dtdUriString}}) {
-        dtdUri.complete(Uri.parse(dtdUriString));
-      } else {
-        throwToolExit('Unable to start the Dart Tooling Daemon.');
+    _dtdProcess!.stderr.drain<void>().ignore();
+    late final StreamSubscription<String> stdoutSub;
+
+    void completeWithFailure(String message) {
+      if (!dtdUri.isCompleted) {
+        dtdUri.completeWithToolExit(message);
       }
-    });
-    return dtdUri.future;
+    }
+
+    stdoutSub = _dtdProcess!.stdout
+        .transformWithCallSite(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (String line) {
+            final String trimmed = line.trim();
+            if (trimmed.isEmpty || dtdUri.isCompleted) {
+              return;
+            }
+            try {
+              final Object? jsonData = json.decode(trimmed);
+              if (jsonData case {'tooling_daemon_details': {'uri': final String dtdUriString}}) {
+                dtdUri.complete(Uri.parse(dtdUriString));
+              } else {
+                completeWithFailure('Unable to start the Dart Tooling Daemon.');
+              }
+            } on FormatException catch (error) {
+              completeWithFailure('Unable to start the Dart Tooling Daemon: $error');
+            }
+          },
+          onError: (Object error) =>
+              completeWithFailure('Unable to start the Dart Tooling Daemon: $error'),
+          onDone: () => completeWithFailure('Unable to start the Dart Tooling Daemon.'),
+        );
+
+    try {
+      return await dtdUri.future;
+    } finally {
+      await stdoutSub.cancel();
+    }
   }
 
   /// Kills the spawned DTD instance.

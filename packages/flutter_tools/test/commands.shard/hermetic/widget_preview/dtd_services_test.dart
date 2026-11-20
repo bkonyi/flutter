@@ -6,6 +6,8 @@ import 'dart:async';
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
@@ -19,6 +21,7 @@ import 'package:test/fake.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
 import '../../../src/common.dart';
+import '../../../src/fake_process_manager.dart';
 import '../../../src/fakes.dart';
 
 class FakeWidgetPreviewAnalytics extends Fake implements WidgetPreviewAnalytics {
@@ -1385,6 +1388,70 @@ void main() {
         ),
       );
       expect(fakeDtd.hasListener(WidgetPreviewDtdServices.kLspStream), isFalse);
+    });
+
+    testWithoutContext('DtdLauncher.launch throws ToolExit on malformed stdout', () async {
+      final launcher = DtdLauncher(
+        artifacts: Artifacts.test(),
+        logger: logger,
+        processManager: FakeProcessManager.list(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['Artifact.engineDartBinary', 'tooling-daemon', '--machine'],
+            stdout: 'not json\n',
+          ),
+        ]),
+      );
+      await expectLater(
+        launcher.launch(),
+        throwsA(
+          isA<ToolExit>().having(
+            (ToolExit e) => e.message,
+            'message',
+            contains('Unable to start the Dart Tooling Daemon'),
+          ),
+        ),
+      );
+    });
+
+    testWithoutContext('DtdLauncher.launch throws ToolExit on premature empty exit', () async {
+      final launcher = DtdLauncher(
+        artifacts: Artifacts.test(),
+        logger: logger,
+        processManager: FakeProcessManager.list(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['Artifact.engineDartBinary', 'tooling-daemon', '--machine'],
+            exitCode: 1,
+          ),
+        ]),
+      );
+      await expectLater(
+        launcher.launch(),
+        throwsA(
+          isA<ToolExit>().having(
+            (ToolExit e) => e.message,
+            'message',
+            contains('Unable to start the Dart Tooling Daemon'),
+          ),
+        ),
+      );
+    });
+
+    testWithoutContext('connect leaves dtdUri null when connection fails', () async {
+      final services = WidgetPreviewDtdServices(
+        addUuidToServiceName: false,
+        dtdLauncher: FakeDtdLauncher(),
+        fs: fs,
+        logger: logger,
+        onHotRestartPreviewerRequest: () {},
+        previewAnalytics: WidgetPreviewAnalytics(analytics: const NoOpAnalytics()),
+        project: FlutterProject.fromDirectoryTest(fs.currentDirectory),
+        shutdownHooks: ShutdownHooks(),
+      );
+      await expectLater(
+        services.connect(dtdWsUri: Uri.parse('ws://127.0.0.1:1')),
+        throwsA(isA<Exception>()),
+      );
+      expect(services.dtdUri, isNull);
     });
   });
 }

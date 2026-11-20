@@ -2827,7 +2827,188 @@ environment:
         equals(<String>['--disable-gpu', '--no-sandbox']),
       );
     });
+
+    ({
+      BufferLogger bufferLogger,
+      WidgetPreviewStartCommand command,
+      Directory projectDir,
+      TestFlutterCommandRunner runner,
+      Directory scaffoldDir,
+    })
+    setUpStartCommand({
+      required FileSystem fs,
+      required WidgetPreviewDtdServices dtdServices,
+      Directory? cwdDir,
+      String projectPath = '/project',
+    }) {
+      final Directory projectDir = fs.directory(projectPath)..createSync(recursive: true);
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: test_app\n');
+      projectDir.childDirectory('.dart_tool').createSync(recursive: true);
+      final Directory scaffoldDir = projectDir.childDirectory('.widget_preview')
+        ..childDirectory('.dart_tool').createSync(recursive: true)
+        ..childDirectory('lib')
+            .childDirectory('src')
+            .childDirectory('dtd')
+            .createSync(recursive: true);
+      scaffoldDir
+          .childDirectory('.dart_tool')
+          .childFile('package_config.json')
+          .writeAsStringSync('{"configVersion":2,"packages":[]}');
+      scaffoldDir.childFile('pubspec.yaml').writeAsStringSync('name: widget_preview_scaffold\n');
+      final bufferLogger = BufferLogger.test();
+      final String pubspecHash = FlutterProject.fromDirectoryTest(projectDir)
+          .computeManifestMD5Hash(logger: bufferLogger, fs: fs);
+      scaffoldDir
+          .childFile('preview_manifest.json')
+          .writeAsStringSync(
+            jsonEncode(<String, Object?>{
+              'version': '0.0.2',
+              'sdk-version': '0.0.0',
+              'pubspec-hashes': <String, String>{
+                projectDir.childFile('pubspec.yaml').absolute.path: pubspecHash,
+              },
+            }),
+          );
+      fs.currentDirectory = cwdDir ?? projectDir;
+
+      final machineLogger = WidgetPreviewMachineAwareLogger(
+        bufferLogger,
+        machine: false,
+        stdio: FakeStdio(),
+        verbose: false,
+      );
+      final commandToolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        cache: _FakeCacheWithSdkVersion(fileSystem: fs, flutterRoot: '/flutter'),
+        fs: fs,
+        logger: machineLogger,
+        processManager: FakeProcessManager.empty(),
+      );
+      final command = WidgetPreviewStartCommand(
+        analysisServerFactoryOverride: () async => _FakeAnalysisServer(),
+        buildSystem: TestBuildSystem.all(BuildResult(success: true)),
+        buildTargets: const BuildTargetsImpl(),
+        dtdServicesOverride: dtdServices,
+        flutterDeviceFactoryOverride: (
+          Device _, {
+          required BuildInfo buildInfo,
+          required String target,
+        }) async => _FakeFlutterDevice(),
+        toolContext: commandToolContext,
+        watcherBuilderOverride: (_) => _FakeWatcher(),
+      );
+      final runner = TestFlutterCommandRunner(
+        deviceManager: FakeDeviceManager()..attachedDevices = <Device>[_FakeWebPreviewDevice()],
+        featureFlags: TestFeatureFlags(isWebEnabled: true),
+        toolContext: commandToolContext,
+      )..addCommand(command);
+      return (
+        bufferLogger: bufferLogger,
+        command: command,
+        projectDir: projectDir,
+        runner: runner,
+        scaffoldDir: scaffoldDir,
+      );
+    }
+
+    testWithoutContext(
+      'configureDtd logs warning and falls back to launching DTD when --dtd-url fails',
+      () async {
+        final FileSystem fs = MemoryFileSystem.test();
+        final dtdServices = _FallbackConnectDtdServices();
+        final (
+          :BufferLogger bufferLogger,
+          command: _,
+          projectDir: _,
+          :TestFlutterCommandRunner runner,
+          scaffoldDir: _,
+        ) = setUpStartCommand(
+          fs: fs,
+          dtdServices: dtdServices,
+        );
+
+        await runner.run(const <String>[
+          'start',
+          '--dtd-url=ws://127.0.0.1:1',
+          '--no-launch-previewer',
+        ]);
+
+        expect(bufferLogger.warningText, contains('Failed to connect to existing DTD instance'));
+        expect(dtdServices.launchAndConnectCalled, isTrue);
+      },
+    );
+
+    testWithoutContext(
+      'withSession times out hung DTD probe and connects to next candidate',
+      () async {
+        final FileSystem fs = MemoryFileSystem.test();
+        final Directory projectDir = fs.directory('/project')..createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: test_app\n');
+        final Directory dtdDir = fs.directory('/home/.dart/dtd')..createSync(recursive: true);
+        dtdDir
+            .childFile('dtd_1.json')
+            .writeAsStringSync(jsonEncode(<String, Object?>{'uri': 'ws://127.0.0.1:1111/a'}));
+        dtdDir
+            .childFile('dtd_2.json')
+            .writeAsStringSync(jsonEncode(<String, Object?>{'uri': 'ws://127.0.0.1:2222/b'}));
+
+        final secondDtd = _FakeCliDartToolingDaemon(
+          serviceNames: const <String>['widget-preview-1'],
+          serviceInfos: <String, PreviewServiceInfo>{
+            'widget-preview-1': PreviewServiceInfo(
+              dtdUri: 'ws://127.0.0.1:2222/b',
+              previewService: 'widget-preview-1',
+              projectRoot: projectDir.path,
+              scaffoldConnected: true,
+              scaffoldService: 'PreviewScaffold-1',
+              scaffoldStream: 'WidgetPreviewScaffold-1',
+            ),
+          },
+        );
+        final client = WidgetPreviewSessionClient(
+          dtdProbeTimeout: const Duration(milliseconds: 20),
+          dtdConnector: (Uri uri) {
+            if (uri.port == 1111) {
+              return Completer<DartToolingDaemon>().future;
+            }
+            return Future<DartToolingDaemon>.value(secondDtd);
+          },
+          toolContext: FakeToolContext(
+            artifacts: Artifacts.test(),
+            fs: fs,
+            logger: BufferLogger.test(),
+            platform: FakePlatform(environment: const <String, String>{'HOME': '/home'}),
+            processManager: FakeProcessManager.any(),
+          ),
+        );
+
+        final String matchedUri = await client.withSession<String>(
+          rootProject: FlutterProject.fromDirectoryTest(projectDir),
+          action: (WidgetPreviewActiveSession session) async => session.info.dtdUri,
+        );
+        expect(matchedUri, 'ws://127.0.0.1:2222/b');
+      },
+    );
   });
+}
+
+class _FallbackConnectDtdServices extends FakeWidgetPreviewDtdServices {
+  _FallbackConnectDtdServices() {
+    dtdUri = null;
+  }
+
+  bool launchAndConnectCalled = false;
+
+  @override
+  Future<void> connect({required Uri dtdWsUri}) async {
+    throw const io.SocketException('Connection refused');
+  }
+
+  @override
+  Future<void> launchAndConnect({required AnalysisServer analysisServer}) async {
+    launchAndConnectCalled = true;
+    dtdUri = Uri.parse('ws://127.0.0.1:54322/secret');
+  }
 }
 
 class _StubbornExitProcess extends FakeProcess {
