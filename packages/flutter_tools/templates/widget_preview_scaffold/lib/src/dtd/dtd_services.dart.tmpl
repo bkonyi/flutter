@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' show Brightness, VoidCallback;
 
 import 'package:dtd/dtd.dart';
@@ -85,8 +86,10 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   VoidCallback? onPreviewReloaded;
 
   StreamSubscription<DTDEvent>? _scaffoldStreamSubscription;
-  bool _dtdInitialized = false;
-  bool _editorServiceInitialized = false;
+  Timer? _reconnectTimer;
+  var _reconnectAttempt = 0;
+  var _disposed = false;
+  var _editorServiceInitialized = false;
 
   /// Connects to the Dart Tooling Daemon (DTD) specified by the Flutter tool.
   ///
@@ -104,21 +107,44 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     if (isViewerOnly && dtdWsUri.toString().isEmpty) {
       return;
     }
-    dtd = await DartToolingDaemon.connect(dtdWsUri);
-    _dtdInitialized = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    final DartToolingDaemon? previousDtd = _dtd;
+    _dtd = null;
+    await previousDtd?.close();
+    final DartToolingDaemon connectedDtd = await DartToolingDaemon.connect(
+      dtdWsUri,
+    );
+    if (_disposed) {
+      await connectedDtd.close();
+      return;
+    }
+    _dtd = connectedDtd;
+    _reconnectAttempt = 0;
     if (isViewerOnly) {
       await _subscribeToScaffoldReloadEvents();
+      unawaited(
+        connectedDtd.done.whenComplete(() {
+          if (!_disposed && identical(_dtd, connectedDtd)) {
+            _scheduleViewerReconnect(dtdWsUri);
+          }
+        }),
+      );
       return;
     }
     await _determineIfWindows();
-    await dtd.registerService(scaffoldServiceName, kGetPreviews, _getPreviews);
-    await dtd.registerService(
+    await connectedDtd.registerService(
+      scaffoldServiceName,
+      kGetPreviews,
+      _getPreviews,
+    );
+    await connectedDtd.registerService(
       scaffoldServiceName,
       kCapturePreview,
       _capturePreview,
     );
     unawaited(
-      dtd.postEvent(
+      connectedDtd.postEvent(
         kWidgetPreviewScaffoldStream,
         kWidgetPreviewConnectedEvent,
         const <String, Object?>{},
@@ -126,6 +152,27 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     );
     _editorServiceInitialized = true;
     await initializeEditorService(this);
+  }
+
+  void _scheduleViewerReconnect(Uri dtdWsUri) {
+    if (_disposed || _reconnectTimer != null) {
+      return;
+    }
+    final int delaySeconds = math.min(1 << _reconnectAttempt, 10);
+    _reconnectAttempt = math.min(_reconnectAttempt + 1, 4);
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
+      _reconnectTimer = null;
+      if (_disposed) {
+        return;
+      }
+      try {
+        await connect(dtdUri: dtdWsUri, readOnly: true);
+      } on Exception {
+        if (!_disposed) {
+          _scheduleViewerReconnect(dtdWsUri);
+        }
+      }
+    });
   }
 
   Future<void> _subscribeToScaffoldReloadEvents() async {
@@ -221,13 +268,18 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   /// Disposes the DTD connection.
   @override
   Future<void> dispose() async {
+    _disposed = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     if (_editorServiceInitialized) {
       super.dispose();
     }
     await _scaffoldStreamSubscription?.cancel();
     _scaffoldStreamSubscription = null;
-    if (_dtdInitialized) {
-      await dtd.close();
+    final DartToolingDaemon? currentDtd = _dtd;
+    _dtd = null;
+    if (currentDtd != null) {
+      await currentDtd.close();
     }
   }
 
@@ -328,6 +380,8 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     return Uri.parse(result.value!);
   }
 
+  DartToolingDaemon? _dtd;
+
   @override
-  late final DartToolingDaemon dtd;
+  DartToolingDaemon get dtd => _dtd!;
 }

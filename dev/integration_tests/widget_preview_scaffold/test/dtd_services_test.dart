@@ -3,7 +3,8 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:io' show Process, ProcessStartMode;
+import 'dart:io'
+    show HttpServer, Process, ProcessStartMode, WebSocket, WebSocketTransformer;
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
@@ -771,5 +772,72 @@ void main() {
         expect(debugReloadCount, 1);
       },
     );
+
+    test('viewer-only mode reconnects when DTD connection drops', () async {
+      final fakeDtd = await _startFakeDtdServer();
+      final viewerDtd = WidgetPreviewScaffoldDtdServices();
+      addTearDown(viewerDtd.dispose);
+      await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+      await fakeDtd.firstSocket()!.close();
+      await fakeDtd.secondConnected.future.timeout(const Duration(seconds: 5));
+      expect(fakeDtd.connectionCount(), 2);
+    });
+
+    test('dispose cancels pending viewer-only reconnect timer', () async {
+      final fakeDtd = await _startFakeDtdServer();
+      final viewerDtd = WidgetPreviewScaffoldDtdServices();
+      await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+      await fakeDtd.firstSocket()!.close();
+      await pumpEventQueue();
+      await viewerDtd.dispose();
+      // Wait past the 1s first reconnect backoff step to confirm cancellation.
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      expect(fakeDtd.connectionCount(), 1);
+    });
   });
+}
+
+Future<
+  ({
+    Uri uri,
+    WebSocket? Function() firstSocket,
+    int Function() connectionCount,
+    Completer<void> secondConnected,
+  })
+>
+_startFakeDtdServer() async {
+  var connections = 0;
+  final secondConnected = Completer<void>();
+  WebSocket? firstSocket;
+  final HttpServer server = await HttpServer.bind('127.0.0.1', 0);
+  addTearDown(() async {
+    await firstSocket?.close();
+    await server.close(force: true);
+  });
+  server.transform(WebSocketTransformer()).listen((WebSocket ws) {
+    connections++;
+    if (connections == 1) {
+      firstSocket = ws;
+    } else if (!secondConnected.isCompleted) {
+      secondConnected.complete();
+    }
+    ws.listen((Object? raw) {
+      final Object? decoded = jsonDecode(raw! as String);
+      if (decoded is Map<String, Object?> && decoded.containsKey('id')) {
+        ws.add(
+          jsonEncode(<String, Object?>{
+            'jsonrpc': '2.0',
+            'id': decoded['id'],
+            'result': <String, Object?>{'type': 'Success'},
+          }),
+        );
+      }
+    });
+  });
+  return (
+    uri: Uri.parse('ws://127.0.0.1:${server.port}'),
+    firstSocket: () => firstSocket,
+    connectionCount: () => connections,
+    secondConnected: secondConnected,
+  );
 }
