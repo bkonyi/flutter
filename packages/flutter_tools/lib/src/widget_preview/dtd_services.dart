@@ -674,15 +674,24 @@ class WidgetPreviewDtdServices {
     if (parsedScript == null || !parsedScript.isScheme('file')) {
       return false;
     }
-    final String scriptPath = fs.path.fromUri(parsedScript);
+    final String scriptPath = _resolvePathWithSymlinks(fs.path.fromUri(parsedScript));
     final Uri? parsedFilter = Uri.tryParse(fileUri);
     if (parsedFilter != null && parsedFilter.isScheme('file')) {
-      return fs.path.equals(scriptPath, fs.path.fromUri(parsedFilter));
+      return fs.path.equals(scriptPath, _resolvePathWithSymlinks(fs.path.fromUri(parsedFilter)));
     }
     if (!fileUri.startsWith('package:') && !fileUri.startsWith('dart:')) {
-      return fs.path.equals(scriptPath, fs.path.normalize(fileUri));
+      return fs.path.equals(scriptPath, _resolvePathWithSymlinks(fileUri));
     }
     return false;
+  }
+
+  String _resolvePathWithSymlinks(String path) {
+    final String normalized = fs.path.normalize(path);
+    final File file = fs.file(normalized);
+    if (file.existsSync()) {
+      return fs.path.normalize(file.resolveSymbolicLinksSync());
+    }
+    return normalized;
   }
 }
 

@@ -342,17 +342,15 @@ class WidgetPreviewSessionClient {
     final String resolvedPath;
     if (fs.path.isAbsolute(rawFile)) {
       resolvedPath = fs.path.normalize(rawFile);
-    } else {
-      final String cwdCandidate = fs.path.normalize(
-        fs.path.join(fs.currentDirectory.path, rawFile),
+    } else if (explicitProjectDirectory != null) {
+      final String explicitCandidate = fs.path.normalize(
+        fs.path.join(explicitProjectDirectory.absolute.path, rawFile),
       );
-      if (explicitProjectDirectory != null && !fs.file(cwdCandidate).existsSync()) {
-        resolvedPath = fs.path.normalize(
-          fs.path.join(explicitProjectDirectory.absolute.path, rawFile),
-        );
-      } else {
-        resolvedPath = cwdCandidate;
-      }
+      resolvedPath = fs.file(explicitCandidate).existsSync()
+          ? explicitCandidate
+          : fs.path.normalize(fs.path.join(fs.currentDirectory.path, rawFile));
+    } else {
+      resolvedPath = fs.path.normalize(fs.path.join(fs.currentDirectory.path, rawFile));
     }
     return fs.file(resolvedPath).uri.toString();
   }

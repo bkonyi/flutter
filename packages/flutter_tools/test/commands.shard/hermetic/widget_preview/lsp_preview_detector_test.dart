@@ -283,6 +283,50 @@ void main() {
         expect(await syncFuture, isNull);
       },
     );
+
+    testWithoutContext('awaits async onPubspecChangeDetected inside mutex', () async {
+      await detector.dispose();
+
+      final pubspecGate = Completer<void>();
+      var pubspecCompleted = false;
+      var queuedRanAfterPubspec = false;
+
+      detector = LspPreviewDetector(
+        dtd: fakeDtd,
+        onChangeDetected: detectedChanges.add,
+        onPubspecChangeDetected: (String path) async {
+          await pubspecGate.future;
+          pubspecCompleted = true;
+        },
+        previewAnalytics: previewAnalytics,
+        project: project,
+        suppressAnalytics: false,
+        toolContext: FakeToolContext(
+          artifacts: Artifacts.test(),
+          fs: fs,
+          logger: logger,
+          platform: platform,
+          processManager: FakeProcessManager.any(),
+          shutdownHooks: shutdownHooks,
+        ),
+        analysisServerFactory: () async => fakeAnalysisServer,
+        watcherBuilder: (_) => fakeWatcher,
+      );
+      await detector.initialize();
+
+      fakeWatcher.emitEvent(WatchEvent(ChangeType.MODIFY, '/project/pubspec.yaml'));
+      await pumpEventQueue();
+
+      final Future<void> guardedFuture = detector.mutex.runGuarded(() {
+        queuedRanAfterPubspec = pubspecCompleted;
+      });
+      await pumpEventQueue();
+      expect(queuedRanAfterPubspec, isFalse);
+
+      pubspecGate.complete();
+      await guardedFuture;
+      expect(queuedRanAfterPubspec, isTrue);
+    });
   });
 }
 

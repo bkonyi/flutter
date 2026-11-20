@@ -1453,5 +1453,53 @@ void main() {
       );
       expect(services.dtdUri, isNull);
     });
+
+    testWithoutContext(
+      'listPreviewsJson matches symlinked --file paths against scriptUri',
+      () async {
+        final Directory realDir = fs.directory('/real/app/lib')..createSync(recursive: true);
+        final File realFile = realDir.childFile('main.dart')..writeAsStringSync('');
+        final Directory linkDir = fs.directory('/link/app/lib')..createSync(recursive: true);
+        final symlinkFile = linkDir.childFile('main.dart') as Link;
+        fs.link(symlinkFile.path).createSync(realFile.path);
+
+        final services = WidgetPreviewDtdServices(
+          addUuidToServiceName: false,
+          dtd: fakeDtd,
+          dtdLauncher: FakeDtdLauncher(),
+          fs: fs,
+          logger: logger,
+          onHotRestartPreviewerRequest: () {},
+          previewAnalytics: WidgetPreviewAnalytics(analytics: const NoOpAnalytics()),
+          project: FlutterProject.fromDirectoryTest(fs.currentDirectory),
+          shutdownHooks: ShutdownHooks(),
+          lspPreviewsProvider: () => FlutterWidgetPreviews(
+            namespaces: const <String, String>{},
+            previews: <FlutterWidgetPreviewDetails>[
+              FlutterWidgetPreviewDetails(
+                dependencyHasErrors: false,
+                functionName: 'myPreview',
+                hasError: false,
+                isBuilder: false,
+                isMultiPreview: false,
+                libraryUri: Uri.parse('package:my_app/main.dart'),
+                packageName: 'my_app',
+                position: const Position(character: 1, line: 5),
+                previewAnnotation: 'const Preview()',
+                scriptUri: realFile.uri,
+              ),
+            ],
+            scriptUris: <Uri>[realFile.uri],
+          ),
+        );
+
+        final Map<String, Object?> jsonResult = await services.listPreviewsJson(
+          fileUri: fs.file(symlinkFile.path).uri.toString(),
+        );
+        final PreviewListResponse response = PreviewListResponse.fromJson(jsonResult);
+        expect(response.previews, hasLength(1));
+        expect(response.previews.single.functionName, 'myPreview');
+      },
+    );
   });
 }

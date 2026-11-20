@@ -35,6 +35,7 @@ import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/preview_code_generator.dart';
 import 'package:flutter_tools/src/widget_preview/preview_git_exclude.dart';
 import 'package:flutter_tools/src/widget_preview/preview_manifest.dart';
+import 'package:flutter_tools/src/widget_preview/preview_pubspec_builder.dart';
 import 'package:flutter_tools/src/widget_preview/preview_session_client.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:process/process.dart';
@@ -2828,6 +2829,28 @@ environment:
       );
     });
 
+    testWithoutContext('resolveFileFilter prefers explicitProjectDirectory over cwd', () {
+      final FileSystem fs = MemoryFileSystem.test();
+      final Directory cwdDir = fs.directory('/cwd')..createSync(recursive: true);
+      final Directory targetDir = fs.directory('/target')..createSync(recursive: true);
+      cwdDir.childDirectory('lib').childFile('foo.dart').createSync(recursive: true);
+      targetDir.childDirectory('lib').childFile('foo.dart').createSync(recursive: true);
+      fs.currentDirectory = cwdDir;
+
+      final toolContext = FakeToolContext(
+        artifacts: Artifacts.test(),
+        fs: fs,
+        logger: BufferLogger.test(),
+        processManager: FakeProcessManager.empty(),
+      );
+      final client = WidgetPreviewSessionClient(toolContext: toolContext);
+      final String? resolved = client.resolveFileFilter(
+        'lib/foo.dart',
+        explicitProjectDirectory: targetDir,
+      );
+      expect(resolved, targetDir.childDirectory('lib').childFile('foo.dart').uri.toString());
+    });
+
     ({
       BufferLogger bufferLogger,
       WidgetPreviewStartCommand command,
@@ -2839,6 +2862,7 @@ environment:
       required FileSystem fs,
       required WidgetPreviewDtdServices dtdServices,
       Directory? cwdDir,
+      PreviewPubspecBuilder? previewPubspecBuilderOverride,
       String projectPath = '/project',
     }) {
       final Directory projectDir = fs.directory(projectPath)..createSync(recursive: true);
@@ -2894,6 +2918,7 @@ environment:
           required BuildInfo buildInfo,
           required String target,
         }) async => _FakeFlutterDevice(),
+        previewPubspecBuilderOverride: previewPubspecBuilderOverride,
         toolContext: commandToolContext,
         watcherBuilderOverride: (_) => _FakeWatcher(),
       );
@@ -2989,7 +3014,55 @@ environment:
         expect(matchedUri, 'ws://127.0.0.1:2222/b');
       },
     );
+
+    testWithoutContext(
+      'onPubspecChangeDetected updates rootProject rather than cwd project',
+      () async {
+        final FileSystem fs = MemoryFileSystem.test();
+        final Directory cwdDir = fs.directory('/cwd')..createSync(recursive: true);
+        cwdDir.childFile('pubspec.yaml').writeAsStringSync('name: cwd_app\n');
+        final pubspecBuilder = _FakePreviewPubspecBuilder();
+        final (
+          bufferLogger: _,
+          :WidgetPreviewStartCommand command,
+          :Directory projectDir,
+          :TestFlutterCommandRunner runner,
+          :Directory scaffoldDir,
+        ) = setUpStartCommand(
+          fs: fs,
+          dtdServices: FakeWidgetPreviewDtdServices(),
+          cwdDir: cwdDir,
+          previewPubspecBuilderOverride: pubspecBuilder,
+          projectPath: '/root_app',
+        );
+
+        await runner.run(<String>['start', '--no-launch-previewer', projectDir.path]);
+
+        await command.onPubspecChangeDetected(projectDir.childFile('pubspec.yaml').path);
+        expect(pubspecBuilder.lastRootProject?.directory.path, projectDir.path);
+        expect(
+          scaffoldDir.childFile('pubspec.yaml').readAsStringSync(),
+          contains('name: test_app_scaffold'),
+        );
+        expect(cwdDir.childDirectory('.widget_preview').existsSync(), isFalse);
+      },
+    );
   });
+}
+
+class _FakePreviewPubspecBuilder extends Fake implements PreviewPubspecBuilder {
+  FlutterProject? lastRootProject;
+
+  @override
+  Future<void> populatePreviewPubspec({
+    required FlutterProject rootProject,
+    String? updatedPubspecPath,
+  }) async {
+    lastRootProject = rootProject;
+    rootProject.widgetPreviewScaffold
+        .childFile('pubspec.yaml')
+        .writeAsStringSync('name: ${rootProject.manifest.appName}_scaffold\n');
+  }
 }
 
 class _FallbackConnectDtdServices extends FakeWidgetPreviewDtdServices {

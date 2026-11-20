@@ -171,6 +171,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     @visibleForTesting Future<AnalysisServer> Function()? analysisServerFactoryOverride,
     @visibleForTesting WidgetPreviewDtdServices? dtdServicesOverride,
     @visibleForTesting this._flutterDeviceFactoryOverride,
+    @visibleForTesting this._previewPubspecBuilderOverride,
     @visibleForTesting this._residentRunnerFactoryOverride,
     @visibleForTesting WatcherBuilder? watcherBuilderOverride,
     this.verbose = false,
@@ -299,13 +300,15 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
 
   late final FlutterProject rootProject = getRootProject();
 
-  late final _previewPubspecBuilder = PreviewPubspecBuilder(
-    logger: logger,
-    verbose: verbose,
-    offline: offline,
-    rootProject: rootProject,
-    previewManifest: _previewManifest,
-  );
+  late final PreviewPubspecBuilder _previewPubspecBuilder =
+      _previewPubspecBuilderOverride ??
+      PreviewPubspecBuilder(
+        logger: logger,
+        verbose: verbose,
+        offline: offline,
+        rootProject: rootProject,
+        previewManifest: _previewManifest,
+      );
 
   late final _previewDetector = PreviewDetector(
     artifacts: artifacts,
@@ -315,14 +318,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     logger: logger,
     fs: fs,
     onChangeDetected: onLegacyChangeDetected,
-    onPubspecChangeDetected: _onPubspecChangeDetected,
+    onPubspecChangeDetected: onPubspecChangeDetected,
     onNonDartFileChangeDetected: _onNonDartFileChangeDetected,
   );
 
   late final _lspPreviewDetector = LspPreviewDetector(
     dtd: _dtdService,
     onChangeDetected: onChangeDetected,
-    onPubspecChangeDetected: _onPubspecChangeDetected,
+    onPubspecChangeDetected: onPubspecChangeDetected,
     previewAnalytics: previewAnalytics,
     project: rootProject,
     suppressAnalytics: !analytics.okToSend,
@@ -334,6 +337,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
 
   late final Future<AnalysisServer> Function()? _analysisServerFactoryOverride;
   final FlutterDeviceFactory? _flutterDeviceFactoryOverride;
+  final PreviewPubspecBuilder? _previewPubspecBuilderOverride;
   late final WatcherBuilder? _watcherBuilderOverride;
   final ResidentRunnerFactory? _residentRunnerFactoryOverride;
 
@@ -784,10 +788,11 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     unawaited(_triggerReload(.hotRestart));
   }
 
-  Future<void> _onPubspecChangeDetected(String path) async {
+  @visibleForTesting
+  Future<void> onPubspecChangeDetected(String path) async {
     logger.printStatus('Triggering restart based on update to pubspec.yaml: $path');
     await _previewPubspecBuilder.populatePreviewPubspec(
-      rootProject: project,
+      rootProject: rootProject,
       updatedPubspecPath: path,
     );
     await _triggerReload(.hotRestart);

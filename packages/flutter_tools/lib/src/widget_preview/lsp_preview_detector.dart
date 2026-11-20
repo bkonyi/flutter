@@ -47,7 +47,7 @@ class LspPreviewDetector {
   final FlutterProject project;
   final Directory projectRoot;
   final void Function(FlutterWidgetPreviews) onChangeDetected;
-  final void Function(String path) onPubspecChangeDetected;
+  final FutureOr<void> Function(String path) onPubspecChangeDetected;
   final void Function(String path)? onNonDartFileChangeDetected;
   @visibleForTesting
   final void Function(String path)? onPackageConfigChangeDetected;
@@ -215,7 +215,7 @@ class LspPreviewDetector {
 
   Future<void> _fileAddedOrUpdated({required String filePath}) async {
     if (filePath.isPubspec) {
-      onPubspecChangeDetected(filePath);
+      await onPubspecChangeDetected(filePath);
       return;
     }
     if (!filePath.isDartFile) {
