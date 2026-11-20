@@ -313,6 +313,10 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                         in controller.allPreviewGroups)
                                       ...group.previews,
                                   ],
+                                  resolvedPreviewId:
+                                      lookup is PreviewLookupMatch
+                                      ? lookup.preview.id
+                                      : null,
                                   selectionController: _selectionController,
                                   syncErrorMessage: _syncErrorMessage,
                                 ),
@@ -400,52 +404,28 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       Size(constraintWidth, constraintHeight),
     );
 
-    MediaQueryData mediaQueryData = MediaQuery.of(
-      context,
-    ).copyWith(platformBrightness: resolvedBrightness);
-    if (resolvedTextScale != null) {
-      mediaQueryData = mediaQueryData.copyWith(
-        textScaler: TextScaler.linear(resolvedTextScale),
-      );
-    }
-    if (resolvedWidth != null || resolvedHeight != null) {
-      mediaQueryData = mediaQueryData.copyWith(
-        size: Size(
-          resolvedWidth ?? mediaQueryData.size.width,
-          resolvedHeight ?? mediaQueryData.size.height,
-        ),
-      );
-    }
-
-    final ThemeData baseTheme = resolvedBrightness == Brightness.dark
-        ? ThemeData.dark()
-        : ThemeData.light();
     final double appliedTextScale =
         resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0);
 
-    return WidgetPreviewerWindowConstraints(
-      constraints: windowConstraints,
-      child: DefaultAssetBundle(
-        bundle: PreviewAssetBundle(packageName: preview.packageName),
-        child: MediaQuery(
-          data: mediaQueryData,
-          child: Theme(
-            data: baseTheme,
-            child: _EmbedPreviewContent(
-              key: ValueKey<String>(preview.id),
-              brightness: resolvedBrightness,
-              controller: widget.controller,
-              preview: preview,
-              previewerConstraints: windowConstraints,
-              resolvedHeight: resolvedHeight,
-              resolvedWidth: resolvedWidth,
-              selectionController: _selectionController,
-              textScale: appliedTextScale,
-              viewportConstraints: viewportConstraints,
-              zoom: _zoom,
-            ),
-          ),
-        ),
+    return WidgetPreviewEnvironment(
+      brightness: resolvedBrightness,
+      height: resolvedHeight,
+      preview: preview,
+      textScaleFactor: resolvedTextScale,
+      width: resolvedWidth,
+      windowConstraints: windowConstraints,
+      child: _EmbedPreviewContent(
+        key: ValueKey<String>(preview.id),
+        brightness: resolvedBrightness,
+        controller: widget.controller,
+        preview: preview,
+        previewerConstraints: windowConstraints,
+        resolvedHeight: resolvedHeight,
+        resolvedWidth: resolvedWidth,
+        selectionController: _selectionController,
+        textScale: appliedTextScale,
+        viewportConstraints: viewportConstraints,
+        zoom: _zoom,
       ),
     );
   }
@@ -711,6 +691,8 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
   void didUpdateWidget(_EmbedPreviewContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.preview != widget.preview ||
+        oldWidget.brightness != widget.brightness ||
+        oldWidget.textScale != widget.textScale ||
         oldWidget.resolvedWidth != widget.resolvedWidth ||
         oldWidget.resolvedHeight != widget.resolvedHeight ||
         oldWidget.previewerConstraints != widget.previewerConstraints) {
@@ -782,34 +764,18 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       zoom: zoom,
       child: constrained,
     );
-    final scaled = ScaledPreviewLayout(scale: zoom, child: selectable);
-    if (viewportConstraints.hasBoundedHeight) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.vertical,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minWidth: viewportConstraints.hasBoundedWidth
-                  ? viewportConstraints.maxWidth
-                  : 0.0,
-              minHeight: viewportConstraints.maxHeight,
-            ),
-            child: Center(child: scaled),
-          ),
-        ),
-      );
-    }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: viewportConstraints.hasBoundedWidth
-              ? viewportConstraints.maxWidth
-              : 0.0,
-        ),
-        child: Center(child: scaled),
-      ),
+    final double minWidth = viewportConstraints.hasBoundedWidth
+        ? viewportConstraints.maxWidth
+        : 0.0;
+    final double minHeight = viewportConstraints.hasBoundedHeight
+        ? viewportConstraints.maxHeight
+        : 0.0;
+    return ScaledScrollablePreview(
+      scale: zoom,
+      includeVerticalScroll: viewportConstraints.hasBoundedHeight,
+      minWidth: minWidth,
+      minHeight: minHeight,
+      child: selectable,
     );
   }
 

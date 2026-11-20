@@ -61,13 +61,11 @@ typedef StagePreviewCaptureCallback =
 /// displayed and how they should be displayed in the [WidgetPreviewScaffold].
 class WidgetPreviewScaffoldController {
   WidgetPreviewScaffoldController({
-    required PreviewsCallback previews,
+    required this._previews,
     @visibleForTesting WidgetPreviewScaffoldDtdServices? dtdServicesOverride,
     @visibleForTesting this.stageFrameTimeout = _kDefaultStageFrameTimeout,
     @visibleForTesting this.stageHostTimeout = _kDefaultStageHostTimeout,
-    // ignore: prefer_initializing_formals
-  }) : _previews = previews,
-       dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices() {
+  }) : dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices() {
     _context = _createPathContext();
     _refreshPreviewsSnapshot();
     dtdServices

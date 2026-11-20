@@ -3,7 +3,8 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:convert' show base64Encode;
+import 'dart:convert'
+    show base64Decode, base64Encode, jsonDecode, jsonEncode, utf8;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -1055,15 +1056,54 @@ class ZoomablePreviewArea extends StatelessWidget {
         return PreviewPointerScrollZoom(
           zoom: scale,
           onZoomChanged: _setScale,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ScaledPreviewLayout(scale: scale, child: child),
-            ),
-          ),
+          child: ScaledScrollablePreview(scale: scale, child: child),
         );
       },
+    );
+  }
+}
+
+/// Wraps [child] in bidirectional [SingleChildScrollView]s around a
+/// [ScaledPreviewLayout] at [scale], optionally enforcing [minWidth] and
+/// [minHeight] on the scrollable content area.
+class ScaledScrollablePreview extends StatelessWidget {
+  const ScaledScrollablePreview({
+    required this.child,
+    required this.scale,
+    this.includeVerticalScroll = true,
+    this.minHeight = 0.0,
+    this.minWidth = 0.0,
+    super.key,
+  });
+
+  final Widget child;
+  final bool includeVerticalScroll;
+  final double minHeight;
+  final double minWidth;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget scaled = ScaledPreviewLayout(scale: scale, child: child);
+    final Widget content = minWidth > 0.0 || minHeight > 0.0
+        ? ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: minWidth,
+              minHeight: minHeight,
+            ),
+            child: Center(child: scaled),
+          )
+        : scaled;
+    final horizontalScroll = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: content,
+    );
+    if (!includeVerticalScroll) {
+      return horizontalScroll;
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: horizontalScroll,
     );
   }
 }
@@ -1450,22 +1490,66 @@ class PreviewAssetBundle extends PlatformAssetBundle {
   final String packageName;
 
   // Assets shipped via package dependencies have paths that start with
-  // 'packages'.
-  static const String _kPackagesPrefix = 'packages';
+  // 'packages/'.
+  static const _kAssetManifestBin = 'AssetManifest.bin';
+  static const _kAssetManifestBinJson = 'AssetManifest.bin.json';
+  static const _kFontManifestJson = 'FontManifest.json';
+  static const _kPackagesPrefix = 'packages/';
+
+  late final String _packageAssetPrefix = '$_kPackagesPrefix$packageName/';
+
+  Map<Object?, Object?> _aliasManifestMap(Map<Object?, Object?> manifest) {
+    final aliased = Map<Object?, Object?>.of(manifest);
+    for (final MapEntry(:Object? key, :Object? value) in manifest.entries) {
+      if (key is String && key.startsWith(_packageAssetPrefix)) {
+        aliased.putIfAbsent(
+          key.substring(_packageAssetPrefix.length),
+          () => value,
+        );
+      }
+    }
+    return aliased;
+  }
+
+  ByteData _aliasManifestBytes(ByteData bytes) {
+    final Object? decoded = const StandardMessageCodec().decodeMessage(bytes);
+    if (decoded is! Map<Object?, Object?>) {
+      return bytes;
+    }
+    return const StandardMessageCodec().encodeMessage(
+      _aliasManifestMap(decoded),
+    )!;
+  }
 
   // TODO(bkonyi): when loading an invalid asset path that doesn't start with
-  // 'packages', this throws a FlutterError referencing the modified key
+  // 'packages/', this throws a FlutterError referencing the modified key
   // instead of the original. We should catch the error and rethrow one with
   // the original key in the error message.
   @override
-  Future<ByteData> load(String key) {
+  Future<ByteData> load(String key) async {
+    if (key == _kAssetManifestBin) {
+      return _aliasManifestBytes(await super.load(key));
+    }
+    if (key == _kAssetManifestBinJson) {
+      final ByteData bytes = await super.load(key);
+      final Object? encoded = jsonDecode(
+        utf8.decode(Uint8List.sublistView(bytes)),
+      );
+      if (encoded is! String) {
+        return bytes;
+      }
+      final ByteData aliasedBin = _aliasManifestBytes(
+        ByteData.sublistView(base64Decode(encoded)),
+      );
+      final String aliasedJson = jsonEncode(
+        base64Encode(Uint8List.sublistView(aliasedBin)),
+      );
+      return ByteData.sublistView(Uint8List.fromList(utf8.encode(aliasedJson)));
+    }
     // These assets are always present or are shipped via a package and aren't
     // actually located in the parent project, meaning their paths did not need
     // to be modified.
-    if (key == 'AssetManifest.bin' ||
-        key == 'AssetManifest.bin.json' ||
-        key == 'FontManifest.json' ||
-        key.startsWith(_kPackagesPrefix)) {
+    if (key == _kFontManifestJson || key.startsWith(_kPackagesPrefix)) {
       return super.load(key);
     }
     // Other assets are from the parent project. Map their keys to package
@@ -1484,7 +1568,7 @@ class PreviewAssetBundle extends PlatformAssetBundle {
     );
   }
 
-  String _toPackagePath(String key) => '$_kPackagesPrefix/$packageName/$key';
+  String _toPackagePath(String key) => '$_packageAssetPrefix$key';
 }
 
 /// Main entrypoint for the widget previewer.
@@ -2248,6 +2332,64 @@ class _StageCaptureSession {
   }
 }
 
+/// Wraps [child] with the [DefaultAssetBundle], [MediaQuery], [Theme], and
+/// [WidgetPreviewerWindowConstraints] environment for [preview].
+class WidgetPreviewEnvironment extends StatelessWidget {
+  const WidgetPreviewEnvironment({
+    required this.brightness,
+    required this.child,
+    required this.preview,
+    required this.windowConstraints,
+    this.height,
+    this.pixelRatio,
+    this.textScaleFactor,
+    this.width,
+    super.key,
+  });
+
+  final Brightness brightness;
+  final Widget child;
+  final double? height;
+  final double? pixelRatio;
+  final WidgetPreview preview;
+  final double? textScaleFactor;
+  final double? width;
+  final BoxConstraints windowConstraints;
+
+  @override
+  Widget build(BuildContext context) {
+    MediaQueryData mediaQueryData = MediaQuery.of(
+      context,
+    ).copyWith(devicePixelRatio: pixelRatio, platformBrightness: brightness);
+    if (textScaleFactor != null) {
+      mediaQueryData = mediaQueryData.copyWith(
+        textScaler: TextScaler.linear(textScaleFactor!),
+      );
+    }
+    if (width != null || height != null) {
+      mediaQueryData = mediaQueryData.copyWith(
+        size: Size(
+          width ?? mediaQueryData.size.width,
+          height ?? mediaQueryData.size.height,
+        ),
+      );
+    }
+    final ThemeData baseTheme = brightness == Brightness.dark
+        ? ThemeData.dark()
+        : ThemeData.light();
+    return WidgetPreviewerWindowConstraints(
+      constraints: windowConstraints,
+      child: DefaultAssetBundle(
+        bundle: PreviewAssetBundle(packageName: preview.packageName),
+        child: MediaQuery(
+          data: mediaQueryData,
+          child: Theme(data: baseTheme, child: child),
+        ),
+      ),
+    );
+  }
+}
+
 class _StagedPreviewHost extends StatelessWidget {
   const _StagedPreviewHost({required this.session, super.key});
 
@@ -2297,61 +2439,36 @@ class _StagedPreviewHost extends StatelessWidget {
       ),
     );
 
-    MediaQueryData stagedMediaQuery = MediaQuery.of(context).copyWith(
-      devicePixelRatio: resolvedPixelRatio,
-      platformBrightness: resolvedBrightness,
-    );
-    if (resolvedTextScaleFactor != null) {
-      stagedMediaQuery = stagedMediaQuery.copyWith(
-        textScaler: TextScaler.linear(resolvedTextScaleFactor),
-      );
-    }
-    if (constrainedWidth != null || constrainedHeight != null) {
-      stagedMediaQuery = stagedMediaQuery.copyWith(
-        size: Size(
-          constrainedWidth ?? stagedMediaQuery.size.width,
-          constrainedHeight ?? stagedMediaQuery.size.height,
-        ),
-      );
-    }
-
-    final ThemeData baseTheme = resolvedBrightness == Brightness.dark
-        ? ThemeData.dark()
-        : ThemeData.light();
-
-    return DefaultAssetBundle(
-      bundle: PreviewAssetBundle(packageName: preview.packageName),
-      child: MediaQuery(
-        data: stagedMediaQuery,
-        child: Theme(
-          data: baseTheme,
-          child: ScaffoldMessenger(
-            child: ScrollNotificationObserver(
-              child: WidgetPreviewerWindowConstraints(
-                constraints: rootWindowConstraints,
-                child: RepaintBoundary(
-                  key: boundaryKey,
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: SizedBox(
-                      width: constrainedWidth,
-                      height: constrainedHeight,
-                      child: WidgetPreviewWrapper(
-                        onLayoutError: session.recordLayoutError,
-                        onPaintDiagnostic: session.recordDiagnostic,
-                        previewerConstraints: const BoxConstraints(),
-                        suppressErrorForwarding: true,
-                        child: EnableWidgetInspectorScope(
-                          child: PreviewWidget(
-                            onDiagnostic: session.recordDiagnostic,
-                            preview: preview,
-                            suppressFrameworkErrorForwarding: true,
-                            child: _StagedPreviewBuilder(
-                              preview: preview,
-                              session: session,
-                            ),
-                          ),
-                        ),
+    return WidgetPreviewEnvironment(
+      brightness: resolvedBrightness,
+      height: constrainedHeight,
+      pixelRatio: resolvedPixelRatio,
+      preview: preview,
+      textScaleFactor: resolvedTextScaleFactor,
+      width: constrainedWidth,
+      windowConstraints: rootWindowConstraints,
+      child: ScaffoldMessenger(
+        child: ScrollNotificationObserver(
+          child: RepaintBoundary(
+            key: boundaryKey,
+            child: Material(
+              type: MaterialType.transparency,
+              child: SizedBox(
+                width: constrainedWidth,
+                height: constrainedHeight,
+                child: WidgetPreviewWrapper(
+                  onLayoutError: session.recordLayoutError,
+                  onPaintDiagnostic: session.recordDiagnostic,
+                  previewerConstraints: const BoxConstraints(),
+                  suppressErrorForwarding: true,
+                  child: EnableWidgetInspectorScope(
+                    child: PreviewWidget(
+                      onDiagnostic: session.recordDiagnostic,
+                      preview: preview,
+                      suppressFrameworkErrorForwarding: true,
+                      child: _StagedPreviewBuilder(
+                        preview: preview,
+                        session: session,
                       ),
                     ),
                   ),

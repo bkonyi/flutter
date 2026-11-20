@@ -1648,6 +1648,207 @@ void main() {
         expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
       },
     );
+
+    testWidgets('clears query-string overrides without snap-back', (
+      WidgetTester tester,
+    ) async {
+      debugSetUrlFragment(
+        'select=1',
+        baseUri: Uri.parse(
+          'http://localhost:8080/live?token=host123&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&width=375',
+        ),
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: () => _buildTestPreviews().take(2).toList(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('embed-live-width-responsive')));
+      await tester.pump();
+      expect(getBaseUri().queryParameters['width'], isNull);
+      expect(getBaseUri().queryParameters['token'], 'host123');
+
+      await tester.tap(find.byKey(const Key('embed-live-preview-selector')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('All Previews (').last);
+      await tester.pumpAndSettle();
+      expect(getBaseUri().queryParameters['previewId'], isNull);
+      expect(getBaseUri().queryParameters['token'], 'host123');
+      expect(getUrlFragment(), isNot(contains('previewId=')));
+    });
+
+    testWidgets(
+      'surfaces sendSelection errors and recovers from compile error on Reload',
+      (WidgetTester tester) async {
+        var shouldFailSync = true;
+        debugSetTriggerSyncHandler(() async {
+          if (shouldFailSync) {
+            return (compileSuccess: false, errorMessage: 'Undefined name foo');
+          }
+          return (compileSuccess: true, errorMessage: null);
+        });
+        debugSetSendSelectionHandler(({
+          required String message,
+          required List<Map<String, Object?>> selections,
+          String? brightness,
+          String? previewId,
+          String? previewName,
+          String? textScale,
+          String? viewport,
+          String? zoom,
+        }) async {
+          throw StateError('Host bridge unavailable');
+        });
+
+        debugSetUrlFragment(
+          'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&select=1',
+          baseUri: Uri.parse('http://localhost:8080/'),
+        );
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => _buildTestPreviews().take(2).toList(),
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pumpAndSettle();
+
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        final TestGesture gesture = await tester.startGesture(
+          surfaceTopLeft + const Offset(10, 10),
+        );
+        await gesture.moveTo(surfaceTopLeft + const Offset(50, 35));
+        await gesture.up();
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+
+        await tester.enterText(
+          find.byKey(const Key('embed-live-note-input')),
+          'Check this',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('embed-live-send-button')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('embed-live-send-error')), findsOneWidget);
+        expect(find.textContaining('Host bridge unavailable'), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('embed-live-error-banner')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+
+        shouldFailSync = false;
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('embed-live-error-banner')), findsNothing);
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+      },
+    );
+
+    testWidgets('dropdown matches shorthand previewId', (
+      WidgetTester tester,
+    ) async {
+      final WidgetPreview interactivePreview = buildWidgetPreview(
+        column: 1,
+        functionName: 'shorthandButton',
+        libraryUri: 'package:my_app/button.dart',
+        line: 10,
+        packageName: 'my_app',
+        previewFunction: () => const Text('Shorthand'),
+        scriptUri: 'file:///project/lib/button.dart',
+        transformedPreview: const Preview(name: 'ShorthandBtn').transform(),
+      );
+
+      debugSetUrlFragment(
+        'live=1&previewId=ShorthandBtn',
+        baseUri: Uri.parse('http://localhost:8080/'),
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: () => <WidgetPreview>[
+          interactivePreview,
+          ..._buildTestPreviews(),
+        ],
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+      await tester.pumpAndSettle();
+
+      final DropdownButton<String> dropdown = tester.widget(
+        find.byKey(const Key('embed-live-preview-selector')),
+      );
+      expect(dropdown.value, interactivePreview.id);
+    });
+
+    testWidgets(
+      'clears _layoutError when brightness or textScale updates on the same preview',
+      (WidgetTester tester) async {
+        final WidgetPreview guardPreview = buildWidgetPreview(
+          column: 1,
+          functionName: 'guardPreview',
+          libraryUri: 'package:my_app/guard.dart',
+          line: 10,
+          packageName: 'my_app',
+          previewFunction: () => Builder(
+            builder: (BuildContext context) {
+              if (MediaQuery.textScalerOf(context).scale(1.0) > 1.5 ||
+                  Theme.of(context).brightness == Brightness.dark) {
+                return const _MinWidthGuard(minWidth: 9999, child: SizedBox());
+              }
+              return const Text('Recovered Preview');
+            },
+          ),
+          scriptUri: 'file:///project/lib/guard.dart',
+          transformedPreview: const Preview(name: 'Guard').transform(),
+        );
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(guardPreview.id)}'
+          '&brightness=dark&textScale=2.0',
+        );
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: () => <WidgetPreview>[guardPreview],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        expect(tester.takeException(), isA<StateError>());
+        await tester.pump();
+        expect(find.byType(WidgetPreviewErrorWidget), findsOneWidget);
+
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(guardPreview.id)}'
+          '&brightness=light&textScale=1.0',
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.text('Recovered Preview'), findsOneWidget);
+        expect(find.byType(WidgetPreviewErrorWidget), findsNothing);
+      },
+    );
   });
 }
 

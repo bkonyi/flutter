@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:convert' show base64Decode;
-import 'dart:typed_data';
+import 'dart:convert'
+    show base64Decode, base64Encode, jsonDecode, jsonEncode, utf8;
 import 'dart:ui' as ui;
 
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -16,6 +17,7 @@ import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
+import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
 
 import 'utils/widget_preview_scaffold_test_utils.dart';
@@ -1511,6 +1513,70 @@ void main() {
       expect(decoded.width, 220);
       expect(decoded.height, 80);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'PreviewAssetBundle aliases AssetManifest.bin and AssetManifest.bin.json',
+    (tester) async {
+      final rawManifest = <Object?, Object?>{
+        'packages/my_app/assets/logo.png': <Map<Object?, Object?>>[
+          <Object?, Object?>{'asset': 'packages/my_app/assets/logo.png'},
+        ],
+        'packages/other_pkg/assets/icon.png': <Map<Object?, Object?>>[
+          <Object?, Object?>{'asset': 'packages/other_pkg/assets/icon.png'},
+        ],
+      };
+      final ByteData manifestBin = const StandardMessageCodec().encodeMessage(
+        rawManifest,
+      )!;
+      final ByteData manifestBinJson = ByteData.sublistView(
+        Uint8List.fromList(
+          utf8.encode(
+            jsonEncode(base64Encode(Uint8List.sublistView(manifestBin))),
+          ),
+        ),
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMessageHandler('flutter/assets', (
+        ByteData? message,
+      ) async {
+        final String key = utf8.decode(Uint8List.sublistView(message!));
+        return switch (key) {
+          'AssetManifest.bin' => manifestBin,
+          'AssetManifest.bin.json' => manifestBinJson,
+          _ => null,
+        };
+      });
+      addTearDown(
+        () => messenger.setMockMessageHandler('flutter/assets', null),
+      );
+
+      final bundle = PreviewAssetBundle(packageName: 'my_app');
+      final AssetManifest parsed = await AssetManifest.loadFromAssetBundle(
+        bundle,
+      );
+      expect(parsed.listAssets(), contains('assets/logo.png'));
+      expect(parsed.listAssets(), contains('packages/my_app/assets/logo.png'));
+      expect(parsed.listAssets(), isNot(contains('assets/icon.png')));
+
+      final ByteData aliasedJsonBytes = await bundle.load(
+        'AssetManifest.bin.json',
+      );
+      final Uint8List encodedStr = base64Decode(
+        jsonDecode(utf8.decode(Uint8List.sublistView(aliasedJsonBytes)))
+            as String,
+      );
+      final Object? decodedJsonMap = const StandardMessageCodec().decodeMessage(
+        ByteData.sublistView(encodedStr),
+      );
+      expect(
+        (decodedJsonMap! as Map<Object?, Object?>).containsKey(
+          'assets/logo.png',
+        ),
+        isTrue,
+      );
     },
   );
 }
