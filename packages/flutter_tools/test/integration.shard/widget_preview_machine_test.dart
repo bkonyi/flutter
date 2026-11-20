@@ -132,4 +132,55 @@ void main() {
       await runWidgetPreviewMachineMode(expectedEvents: launchEvents, useWebServer: true);
     });
   });
+
+  group('flutter widget-preview list and snapshot --machine', () {
+    testWithoutContext('lists and captures snapshot end-to-end with headless Chrome', () async {
+      tempDir.childDirectory('lib').childFile('preview.dart').writeAsStringSync('''
+import 'package:flutter/widgets.dart';
+import 'package:flutter/widget_previews.dart';
+
+@Preview(name: 'MachineTestPreview')
+Widget machineTestPreview() => const Text('Hello');
+''');
+
+      final ProcessResult listResult = await processManager.run(<String>[
+        flutterBin,
+        'widget-preview',
+        'list',
+        '--machine',
+      ], workingDirectory: tempDir.path);
+      expect(listResult.exitCode, 0, reason: 'STDERR: ${listResult.stderr}');
+      final Object? listDecoded = jsonDecode(listResult.stdout as String);
+      expect(
+        listDecoded,
+        isA<Map<String, Object?>>().having(
+          (Map<String, Object?> m) => m['previews'],
+          'previews',
+          contains(
+            isA<Map<String, Object?>>().having(
+              (Map<String, Object?> p) => p['name'],
+              'name',
+              'MachineTestPreview',
+            ),
+          ),
+        ),
+      );
+
+      final ProcessResult snapshotResult = await processManager.run(<String>[
+        flutterBin,
+        'widget-preview',
+        'snapshot',
+        '--machine',
+        'MachineTestPreview',
+      ], workingDirectory: tempDir.path);
+      expect(snapshotResult.exitCode, 0, reason: 'STDERR: ${snapshotResult.stderr}');
+      final Object? snapshotDecoded = jsonDecode(snapshotResult.stdout as String);
+      expect(
+        snapshotDecoded,
+        isA<Map<String, Object?>>()
+            .having((Map<String, Object?> m) => m['hasErrors'], 'hasErrors', isFalse)
+            .having((Map<String, Object?> m) => m['imageBase64'], 'imageBase64', isNotEmpty),
+      );
+    });
+  });
 }
