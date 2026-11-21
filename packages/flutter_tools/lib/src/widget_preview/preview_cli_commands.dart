@@ -114,8 +114,6 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     fileOption,
     dtdUrlOption,
     syncOption,
-    WidgetPreviewOptions.buildHooksOption,
-    WebOptions.webBrowserFlags,
   ];
 
   static const snapshotOptions = <OptionDescriptor<Object?>>[
@@ -273,20 +271,16 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
       final String? rawFile = getValue(_WidgetPreviewCliSubCommand.fileOption);
       final String? dtdUrl = getValue(_WidgetPreviewCliSubCommand.dtdUrlOption);
       final bool sync = getValue(_WidgetPreviewCliSubCommand.syncOption);
-      final bool buildHooks = getValue(WidgetPreviewOptions.buildHooksOption);
-      final List<String> webBrowserFlags = getValue(WebOptions.webBrowserFlags);
       final String? fileUri = client.resolveFileFilter(
         rawFile,
         explicitProjectDirectory: explicitProjectDirectory,
       );
 
-      final PreviewListResponse response = await client.withSession(
-        buildHooks: buildHooks,
+      final PreviewListResponse response = await client.listPreviewsForProject(
         dtdUrl: dtdUrl,
+        fileUri: fileUri,
         rootProject: rootProject,
-        webBrowserFlags: webBrowserFlags,
-        action: (WidgetPreviewActiveSession session) =>
-            client.listPreviews(session: session, fileUri: fileUri, sync: sync),
+        sync: sync,
       );
 
       if (machine) {

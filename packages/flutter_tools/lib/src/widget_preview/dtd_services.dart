@@ -51,10 +51,13 @@ class WidgetPreviewDtdServices {
     this.projectRootPath,
     this.webPreviewUriProvider,
   }) {
-    shutdownHooks.addShutdownHook(() async {
-      await _dtd?.close();
-      await dtdLauncher.dispose();
-    });
+    shutdownHooks.addShutdownHook(dispose);
+  }
+
+  /// Closes the DTD connection and terminates any launched DTD process.
+  Future<void> dispose() async {
+    await _dtd?.close();
+    await dtdLauncher.dispose();
   }
 
   /// The name of the widget preview service, without a UUID.

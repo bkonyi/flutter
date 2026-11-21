@@ -8,6 +8,8 @@ import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
+import 'package:unified_analytics/unified_analytics.dart';
+import 'package:watcher/watcher.dart';
 
 import '../artifacts.dart';
 import '../base/common.dart';
@@ -22,8 +24,10 @@ import '../convert.dart';
 import '../project.dart';
 import '../runner/flutter_command.dart';
 import '../runner/flutter_command_runner.dart';
+import 'analytics.dart';
 import 'dtd_services.dart';
 import 'dtd_types.dart';
+import 'lsp_preview_detector.dart';
 import 'utils.dart';
 
 export 'preview_cli_commands.dart';
@@ -56,6 +60,7 @@ class WidgetPreviewActiveSession {
 class WidgetPreviewSessionClient {
   WidgetPreviewSessionClient({
     required this._toolContext,
+    @visibleForTesting this._detectPreviewsOverride,
     @visibleForTesting this._dtdConnector = DartToolingDaemon.connect,
     @visibleForTesting this._dtdProbeTimeout = kDefaultDtdProbeTimeout,
     @visibleForTesting this._headlessStartupTimeout = kDefaultHeadlessStartupTimeout,
@@ -108,6 +113,8 @@ class WidgetPreviewSessionClient {
   static final _wsUriPattern = RegExp(r'''wss?://[^\s"'\],}]+''');
 
   final ToolContext _toolContext;
+  final Future<PreviewListResponse> Function(FlutterProject, {String? fileUri})?
+  _detectPreviewsOverride;
   final DtdConnector _dtdConnector;
   final Duration _dtdProbeTimeout;
   final Duration _headlessStartupTimeout;
@@ -124,6 +131,105 @@ class WidgetPreviewSessionClient {
     List<String> webBrowserFlags = const <String>[],
   }) async {
     final String targetProjectRoot = _normalizeProjectRoot(rootProject.directory);
+    final WidgetPreviewActiveSession? activeSession = await _findActiveSession(
+      dtdUrl: dtdUrl,
+      rootProject: rootProject,
+      targetProjectRoot: targetProjectRoot,
+    );
+    if (activeSession != null) {
+      try {
+        return await action(activeSession);
+      } finally {
+        await _closeDtdQuietly(activeSession.dtd);
+      }
+    }
+
+    return _withEphemeralHeadlessSession(
+      action: action,
+      buildHooks: buildHooks,
+      rootProject: rootProject,
+      targetProjectRoot: targetProjectRoot,
+      webBrowserFlags: webBrowserFlags,
+    );
+  }
+
+  /// Lists previews for [rootProject] by querying an active DTD session if one
+  /// exists, or running the LSP preview detector directly without booting Chrome/DDC.
+  Future<PreviewListResponse> listPreviewsForProject({
+    required FlutterProject rootProject,
+    required bool sync,
+    String? dtdUrl,
+    String? fileUri,
+  }) async {
+    final String targetProjectRoot = _normalizeProjectRoot(rootProject.directory);
+    final WidgetPreviewActiveSession? activeSession = await _findActiveSession(
+      dtdUrl: dtdUrl,
+      rootProject: rootProject,
+      targetProjectRoot: targetProjectRoot,
+    );
+    if (activeSession != null) {
+      try {
+        return await listPreviews(session: activeSession, fileUri: fileUri, sync: sync);
+      } finally {
+        await _closeDtdQuietly(activeSession.dtd);
+      }
+    }
+
+    if (_detectPreviewsOverride case final detectOverride?) {
+      return detectOverride(rootProject, fileUri: fileUri);
+    }
+
+    final ToolContext(
+      :Artifacts artifacts,
+      :FileSystem fs,
+      :Logger logger,
+      :ProcessManager processManager,
+      :ShutdownHooks shutdownHooks,
+    ) = _toolContext;
+    final previewAnalytics = WidgetPreviewAnalytics(analytics: const NoOpAnalytics());
+    final dtd = WidgetPreviewDtdServices(
+      addUuidToServiceName: true,
+      dtdLauncher: DtdLauncher(
+        logger: logger,
+        artifacts: artifacts,
+        processManager: processManager,
+      ),
+      fs: fs,
+      logger: logger,
+      onHotRestartPreviewerRequest: () {},
+      previewAnalytics: previewAnalytics,
+      project: rootProject,
+      projectRootPath: targetProjectRoot,
+      shutdownHooks: shutdownHooks,
+    );
+    final detector = LspPreviewDetector(
+      dtd: dtd,
+      onChangeDetected: (_) {},
+      onPubspecChangeDetected: (_) {},
+      previewAnalytics: previewAnalytics,
+      project: rootProject,
+      suppressAnalytics: true,
+      toolContext: _toolContext,
+      watcherBuilder: _NoOpWatcher.new,
+    );
+    try {
+      await detector.initialize();
+      await detector.waitForAnalysis();
+      final Map<String, Object?> json = await dtd.listPreviewsJson(fileUri: fileUri);
+      return PreviewListResponse.fromDTDResponse(
+        DTDResponse('', PreviewListResponse.kTypeName, json),
+      );
+    } finally {
+      await detector.dispose();
+      await dtd.dispose();
+    }
+  }
+
+  Future<WidgetPreviewActiveSession?> _findActiveSession({
+    required FlutterProject rootProject,
+    required String targetProjectRoot,
+    String? dtdUrl,
+  }) async {
     final bool hasExistingScaffold = rootProject.widgetPreviewScaffold.existsSync();
 
     if (dtdUrl != null && dtdUrl.isNotEmpty) {
@@ -157,9 +263,10 @@ class WidgetPreviewSessionClient {
             'on DTD at $parsedUri.',
           );
         }
-        return await action(WidgetPreviewActiveSession(dtd: dtd, info: info, isEphemeral: false));
-      } finally {
+        return WidgetPreviewActiveSession(dtd: dtd, info: info, isEphemeral: false);
+      } on Object {
         await _closeDtdQuietly(dtd);
+        rethrow;
       }
     }
 
@@ -204,22 +311,9 @@ class WidgetPreviewSessionClient {
         await _closeDtdQuietly(dtd);
         continue;
       }
-      try {
-        return await action(
-          WidgetPreviewActiveSession(dtd: dtd, info: matchingInfo, isEphemeral: false),
-        );
-      } finally {
-        await _closeDtdQuietly(dtd);
-      }
+      return WidgetPreviewActiveSession(dtd: dtd, info: matchingInfo, isEphemeral: false);
     }
-
-    return _withEphemeralHeadlessSession(
-      action: action,
-      buildHooks: buildHooks,
-      rootProject: rootProject,
-      targetProjectRoot: targetProjectRoot,
-      webBrowserFlags: webBrowserFlags,
-    );
+    return null;
   }
 
   /// Invokes `listPreviews` on [session].
@@ -1022,4 +1116,20 @@ class WidgetPreviewSessionClient {
         : fs.path.normalize(candidateRoot);
     return fs.path.equals(normalizedCandidate, targetRoot);
   }
+}
+
+class _NoOpWatcher implements Watcher {
+  _NoOpWatcher(this.path);
+
+  @override
+  final String path;
+
+  @override
+  Stream<WatchEvent> get events => const Stream<WatchEvent>.empty();
+
+  @override
+  bool get isReady => true;
+
+  @override
+  Future<void> get ready => Future<void>.value();
 }

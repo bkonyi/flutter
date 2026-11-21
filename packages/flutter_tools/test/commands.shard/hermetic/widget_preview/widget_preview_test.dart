@@ -1295,9 +1295,9 @@ environment:
       );
 
       final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
-        args: const <String>[],
+        args: const <String>['--no-image', kPreviewId],
         client: client,
-        isSnapshot: false,
+        isSnapshot: true,
         machine: false,
       );
 
@@ -1307,12 +1307,55 @@ environment:
       expect(fakeHeadlessProcess.signals, <io.ProcessSignal>[io.ProcessSignal.sigterm]);
       expect(processCompleter.isCompleted, isTrue);
       expect(fakeDtd.closed, isTrue);
-      expect(bufferLogger.statusText, contains('No widget previews found.'));
+      expect(bufferLogger.statusText, contains('Captured preview default'));
 
       // Running shutdown hooks afterwards must be idempotent and not re-signal
       // an already terminated process.
       await shutdownHooks.runShutdownHooks(bufferLogger);
       expect(fakeHeadlessProcess.signals, <io.ProcessSignal>[io.ProcessSignal.sigterm]);
+    });
+
+    testWithoutContext('list skips ephemeral session when no active DTD exists', () async {
+      final artifacts = Artifacts.test();
+      final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
+      final processManager = FakeProcessManager.list(<FakeCommand>[
+        FakeCommand(command: <String>[dartBinary, 'tooling-daemon', '--list'], exitCode: 1),
+      ]);
+      final toolContext = FakeToolContext(
+        artifacts: artifacts,
+        cache: FakeCache(fileSystem: fs, flutterRoot: '/flutter'),
+        fs: fs,
+        logger: humanLogger,
+        platform: FakePlatform(),
+        processManager: processManager,
+        shutdownHooks: ShutdownHooks(),
+        signals: FakeSignals(),
+        stdio: fakeStdio,
+      );
+      var detectCalled = false;
+      final client = WidgetPreviewSessionClient(
+        toolContext: toolContext,
+        detectPreviewsOverride: (FlutterProject project, {String? fileUri}) async {
+          detectCalled = true;
+          return const PreviewListResponse(previews: <PreviewEntry>[]);
+        },
+      );
+
+      final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
+        args: const <String>['--machine'],
+        client: client,
+        isSnapshot: false,
+        machine: true,
+      );
+
+      expect(commandResult?.exitStatus, ExitStatus.success);
+      expect(exitCode, 0);
+      expect(detectCalled, isTrue);
+      expect(processManager, hasNoRemainingExpectations);
+      expect(jsonDecode(fakeStdio.writtenToStdout.single), <String, Object?>{
+        'type': 'PreviewListResponse',
+        'previews': <Object?>[],
+      });
     });
 
     testWithoutContext(
@@ -1366,9 +1409,9 @@ environment:
         );
 
         final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
-          args: const <String>['--machine'],
+          args: const <String>['--no-image', kPreviewId, '--machine'],
           client: client,
-          isSnapshot: false,
+          isSnapshot: true,
           machine: true,
         );
 
@@ -1761,9 +1804,9 @@ environment:
       );
 
       final (:FlutterCommandResult? commandResult, :int exitCode) = await runSubcommand(
-        args: const <String>['--machine'],
+        args: const <String>['--no-image', kPreviewId, '--machine'],
         client: client,
-        isSnapshot: false,
+        isSnapshot: true,
         machine: true,
       );
 
@@ -2016,9 +2059,9 @@ environment:
 
       await expectLater(
         runSubcommand(
-          args: const <String>[],
+          args: const <String>['--no-image', kPreviewId],
           client: failingConnectorClient,
-          isSnapshot: false,
+          isSnapshot: true,
           machine: false,
         ),
         throwsA(isA<TestFailure>()),
@@ -2035,9 +2078,9 @@ environment:
       );
       await expectLater(
         runSubcommand(
-          args: <String>['--dtd-url=$kDtdWsUri1'],
+          args: <String>['--dtd-url=$kDtdWsUri1', '--no-image', kPreviewId],
           client: nonPeerErrorClient,
-          isSnapshot: false,
+          isSnapshot: true,
           machine: false,
         ),
         throwsStateError,
@@ -2309,10 +2352,10 @@ environment:
         commandResult: FlutterCommandResult? winHeadlessResult,
         exitCode: int winHeadlessExitCode,
       ) = await runSubcommand(
-        args: const <String>[],
+        args: const <String>['--no-image', kPreviewId],
         client: ephemeralClient,
         fileSystem: windowsFs,
-        isSnapshot: false,
+        isSnapshot: true,
         machine: false,
         platform: windowsPlatform,
       );
@@ -2412,7 +2455,6 @@ environment:
         expect(processManager, hasNoRemainingExpectations);
       }
 
-      await verifyForwarding(isSnapshot: false);
       await verifyForwarding(isSnapshot: true);
     });
 
