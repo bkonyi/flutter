@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
@@ -26,9 +27,13 @@ import 'package:flutter_tools/src/dart/analysis.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/isolated/build_targets.dart';
+import 'package:flutter_tools/src/isolated/devfs_web.dart';
+import 'package:flutter_tools/src/isolated/web_asset_server.dart';
+import 'package:flutter_tools/src/isolated/widget_preview_live_server.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/web/memory_fs.dart';
 import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
@@ -133,7 +138,14 @@ class FakeWidgetPreviewDtdServices extends Fake implements WidgetPreviewDtdServi
 }
 
 class FakeResidentRunner extends Fake implements ResidentRunner {
-  FakeResidentRunner({this.currentRestartCompleter, this.onRestart});
+  FakeResidentRunner({
+    this.currentRestartCompleter,
+    this.flutterDevices = const <FlutterDevice>[],
+    this.onRestart,
+  });
+
+  @override
+  final List<FlutterDevice> flutterDevices;
 
   final OperationResult Function(bool fullRestart)? onRestart;
   Completer<OperationResult>? currentRestartCompleter;
@@ -952,6 +964,76 @@ environment:
         recordingDtd.postedEvents.single.eventData,
         equals(const <String, Object?>{WidgetPreviewDtdServices.kFullRestart: false}),
       );
+    });
+
+    testWithoutContext('skips postPreviewReloaded on no-op syncPreviews and handleReload when WebMemoryFS revision is unchanged', () async {
+      final webMemoryFS = WebMemoryFS()
+        ..writeFileBytes('packages/my_app/main.dart.lib.js', Uint8List.fromList(<int>[1, 2, 3]));
+      final fakeLiveServer = _FakePrewarmLiveServer();
+      final fakeAssetServer = _FakeWebAssetServer(
+        liveServer: fakeLiveServer,
+        webMemoryFS: webMemoryFS,
+      );
+      final fakeDevice = _FakeFlutterDevice(devFS: _FakeWebDevFS(webAssetServer: fakeAssetServer));
+      var advanceRevisionOnRestart = false;
+      var rejectHotReload = false;
+      final fakeResidentRunner = FakeResidentRunner(
+        flutterDevices: <FlutterDevice>[fakeDevice],
+        onRestart: (bool fullRestart) {
+          if (!fullRestart && rejectHotReload) {
+            return OperationResult(
+              1,
+              _kFailedRecompileMessage,
+              updateFSReport: UpdateFSReport(hotReloadRejected: true),
+            );
+          }
+          if (advanceRevisionOnRestart) {
+            webMemoryFS.incrementRevision();
+          }
+          return OperationResult.ok;
+        },
+      );
+      final WidgetPreviewStartCommand startCommand = createStartCommand(fakeResidentRunner);
+
+      // First sync updates _lastGeneratedPreviews (from null to empty), so it reloads once.
+      final SyncPreviewsResponse initialSync = await startCommand.syncPreviews();
+      expect(initialSync.reloaded, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.prewarmCount, 1);
+
+      // Subsequent no-op sync with unchanged previews and unchanged WebMemoryFS.revision
+      // does not broadcast PreviewReloaded.
+      final SyncPreviewsResponse noopSync = await startCommand.syncPreviews();
+      expect(noopSync.compileSuccess, isTrue);
+      expect(noopSync.reloaded, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.prewarmCount, 2);
+
+      // No-op handleReload with unchanged WebMemoryFS.revision also skips PreviewReloaded.
+      final OperationResult? noopReload = await startCommand.handleReload();
+      expect(noopReload?.isOk, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.prewarmCount, 3);
+
+      // Advancing WebMemoryFS.revision broadcasts PreviewReloaded(fullRestart: false)
+      // and prewarms the live DDC bundle.
+      advanceRevisionOnRestart = true;
+      final SyncPreviewsResponse changedSync = await startCommand.syncPreviews();
+      expect(changedSync.compileSuccess, isTrue);
+      expect(changedSync.reloaded, isTrue);
+      expect(changedSync.fullRestart, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false]);
+      expect(fakeLiveServer.prewarmCount, 4);
+
+      // Fallback fullRestart broadcasts PreviewReloaded(fullRestart: true) even if
+      // revision only advances during fullRestart.
+      rejectHotReload = true;
+      final SyncPreviewsResponse restartSync = await startCommand.syncPreviews();
+      expect(restartSync.compileSuccess, isTrue);
+      expect(restartSync.reloaded, isTrue);
+      expect(restartSync.fullRestart, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false, true]);
+      expect(fakeLiveServer.prewarmCount, 5);
     });
   });
 
@@ -3428,4 +3510,35 @@ class _FakeWatcher extends Fake implements Watcher {
   Future<void> get ready => Future<void>.value();
 }
 
-class _FakeFlutterDevice extends Fake implements FlutterDevice {}
+class _FakeFlutterDevice extends Fake implements FlutterDevice {
+  _FakeFlutterDevice({this.devFS});
+
+  @override
+  DevFS? devFS;
+}
+
+class _FakePrewarmLiveServer extends Fake implements WidgetPreviewLiveServer {
+  int prewarmCount = 0;
+
+  @override
+  void prewarmBundle() {
+    prewarmCount++;
+  }
+}
+
+class _FakeWebAssetServer extends Fake implements WebAssetServer {
+  _FakeWebAssetServer({required this.liveServer, required this.webMemoryFS});
+
+  @override
+  final WidgetPreviewLiveServer? liveServer;
+
+  @override
+  final WebMemoryFS webMemoryFS;
+}
+
+class _FakeWebDevFS extends Fake implements WebDevFS {
+  _FakeWebDevFS({required this.webAssetServer});
+
+  @override
+  late WebAssetServer webAssetServer;
+}

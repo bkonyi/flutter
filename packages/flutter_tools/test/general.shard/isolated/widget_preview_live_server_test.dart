@@ -97,8 +97,7 @@ void main() {
         modules: modules,
         renderFlutterBootstrapJs: () =>
             'window._flutter.buildConfig = {"builds":[{"mainJsPath":"main.dart.js"}]};',
-        renderIndexHtml: () =>
-            '<html><body><script src="flutter_bootstrap.js" async></script></body></html>',
+        renderIndexHtml: () => '<html><head></head><body><script src="flutter_bootstrap.js" async></script></body></html>',
         webMemoryFS: webMemoryFS,
       );
     });
@@ -122,6 +121,8 @@ void main() {
       expect(embedRoot.headers.containsKey('access-control-allow-origin'), isFalse);
       final String embedHtml = await embedRoot.readAsString();
       expect(embedHtml, contains('__embed_flutter_bootstrap.js'));
+      expect(embedHtml, contains('id="wp-live-bg"'));
+      expect(embedHtml, contains('background:#121212'));
       expect(embedHtml, isNot(contains('"flutter_bootstrap.js"')));
 
       final shelf.Response embedBootstrap = await server.handler(
@@ -171,6 +172,7 @@ void main() {
         expect(first.headers.containsKey('access-control-allow-origin'), isFalse);
 
         final String body = await first.readAsString();
+        expect(body, startsWith('self.__wpLiveRevision=1;\n'));
         expect(body, contains('console.log("app");'));
         expect(body, contains('console.log("entry");'));
         expect(body, isNot(contains('//# sourceMappingURL=')));
@@ -415,6 +417,8 @@ void main() {
         expect(live.headers['cross-origin-resource-policy'], 'same-site');
         final String liveHtml = await live.readAsString();
         expect(liveHtml, contains('__embed_flutter_bootstrap.js'));
+        expect(liveHtml, contains('id="wp-live-bg"'));
+        expect(liveHtml, contains('background:#121212'));
         expect(liveHtml, isNot(contains('<iframe')));
 
         final shelf.Response liveSlash = await server.handler(
@@ -455,6 +459,106 @@ void main() {
         expect(sync.statusCode, io.HttpStatus.ok);
         final syncJson = jsonDecode(await sync.readAsString()) as Map<String, Object?>;
         expect(syncJson['compileSuccess'], isTrue);
+      },
+    );
+
+    testWithoutContext(
+      'GET /__api/hot-reload returns changed module descriptors and serves cache-busted module JS',
+      () async {
+        final shelf.Response missingSince = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/hot-reload')),
+        );
+        expect(missingSince.statusCode, io.HttpStatus.badRequest);
+
+        final shelf.Response negativeSince = await server.handler(
+          shelf.Request('GET', Uri.parse('http://localhost:8080/__api/hot-reload?since=-1')),
+        );
+        expect(negativeSince.statusCode, io.HttpStatus.badRequest);
+
+        final int initialRevision = webMemoryFS.revision;
+        final shelf.Response unchanged = await server.handler(
+          shelf.Request(
+            'GET',
+            Uri.parse('http://localhost:8080/__api/hot-reload?since=$initialRevision'),
+          ),
+        );
+        expect(unchanged.statusCode, io.HttpStatus.ok);
+        expect(jsonDecode(await unchanged.readAsString()), <String, Object?>{
+          'revision': initialRevision,
+          'modules': const <Object?>[],
+        });
+
+        // Update only packages/my_app/main.dart.lib.js with ModuleMetadata.
+        webMemoryFS.metadataFiles['packages/my_app/main.dart.lib.js.metadata'] = Uint8List.fromList(
+          utf8.encode(
+            jsonEncode(<String, Object?>{
+              'version': '2.0.0',
+              'name': 'packages/my_app/main.dart',
+              'closureName': 'load__main',
+              'sourceMapUri': 'packages/my_app/main.dart.lib.js.map',
+              'moduleUri': 'packages/my_app/main.dart.lib.js',
+              'libraries': <Map<String, Object?>>[
+                <String, Object?>{
+                  'name': 'main',
+                  'importUri': 'package:my_app/main.dart',
+                  'partUris': const <String>[],
+                },
+              ],
+            }),
+          ),
+        );
+        webMemoryFS.writeFileBytes(
+          'packages/my_app/main.dart.lib.js',
+          Uint8List.fromList(
+            utf8.encode('console.log("app v2");\n//# sourceMappingURL=main.dart.lib.js.map\n'),
+          ),
+        );
+        final int updatedRevision = webMemoryFS.revision;
+        expect(updatedRevision, initialRevision + 1);
+
+        final shelf.Response delta = await server.handler(
+          shelf.Request(
+            'GET',
+            Uri.parse('http://localhost:8080/__api/hot-reload?since=$initialRevision'),
+          ),
+        );
+        expect(delta.statusCode, io.HttpStatus.ok);
+        expect(jsonDecode(await delta.readAsString()), <String, Object?>{
+          'revision': updatedRevision,
+          'modules': <Map<String, Object?>>[
+            <String, Object?>{
+              'src': 'packages/my_app/main.dart.lib.js?rev=$updatedRevision',
+              'id': 'packages/my_app/main.dart',
+              'libraries': const <String>['package:my_app/main.dart'],
+            },
+          ],
+        });
+
+        // Serves the cache-busted module JS directly with security headers and stripped sourceMappingURL.
+        final shelf.Response moduleJs = await server.handler(
+          shelf.Request(
+            'GET',
+            Uri.parse(
+              'http://localhost:8080/packages/my_app/main.dart.lib.js?rev=$updatedRevision',
+            ),
+          ),
+        );
+        expect(moduleJs.statusCode, io.HttpStatus.ok);
+        expect(moduleJs.headers['cross-origin-resource-policy'], 'same-site');
+        expect(moduleJs.headers['cache-control'], 'no-store');
+        final String moduleBody = await moduleJs.readAsString();
+        expect(moduleBody, 'console.log("app v2");');
+        expect(moduleBody, isNot(contains('//# sourceMappingURL=')));
+
+        // Missing DDC ModuleMetadata returns 500 so the viewer falls back to a full reload.
+        webMemoryFS.metadataFiles.remove('packages/my_app/main.dart.lib.js.metadata');
+        final shelf.Response missingMeta = await server.handler(
+          shelf.Request(
+            'GET',
+            Uri.parse('http://localhost:8080/__api/hot-reload?since=$initialRevision'),
+          ),
+        );
+        expect(missingMeta.statusCode, io.HttpStatus.internalServerError);
       },
     );
 

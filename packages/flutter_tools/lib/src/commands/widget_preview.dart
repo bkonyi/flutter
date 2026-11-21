@@ -26,11 +26,13 @@ import '../dart/analysis.dart';
 import '../devfs.dart';
 import '../device.dart';
 import '../features.dart';
+import '../isolated/devfs_web.dart';
 import '../isolated/resident_web_runner.dart';
 import '../isolated/widget_preview_live_server.dart';
 import '../migrations/widget_preview_gitignore_migration.dart';
 import '../project.dart';
 import '../resident_runner.dart';
+import '../run_hot.dart';
 import '../runner/flutter_command.dart';
 import '../web/chrome.dart';
 import '../web/web_device.dart';
@@ -574,6 +576,54 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   }
 
   static const _kDefaultCompileErrorMessage = 'Failed to reload widget preview.';
+  static const _kSafeMtimeMargin = Duration(milliseconds: 1100);
+
+  WebDevFS? get _webDevFS {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app == null) {
+      return null;
+    }
+    for (final FlutterDevice? device in app.flutterDevices) {
+      if (device?.devFS case final WebDevFS webDevFS) {
+        return webDevFS;
+      }
+    }
+    return null;
+  }
+
+  bool _assetBundleNeedsBuild(ResidentRunner app) {
+    if (app is! ResidentWebRunner) {
+      return false;
+    }
+    return app.assetBundle.needsBuild(manifestPath: app.flutterProject.pubspecFile.path);
+  }
+
+  Future<bool> _hasNoInvalidatedInputs() async {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app is! ResidentWebRunner || !_dtdService.scaffoldConnected) {
+      return false;
+    }
+    final WebDevFS? webDevFS = _webDevFS;
+    final DateTime? lastCompiled = webDevFS?.lastCompiled;
+    if (webDevFS == null ||
+        lastCompiled == null ||
+        DateTime.now().difference(lastCompiled) < _kSafeMtimeMargin) {
+      return false;
+    }
+    if (_assetBundleNeedsBuild(app)) {
+      return false;
+    }
+    final PackageConfig packageConfig =
+        webDevFS.lastPackageConfig ?? app.debuggingOptions.buildInfo.packageConfig;
+    final invalidator = ProjectFileInvalidator(fileSystem: fs, platform: platform, logger: logger);
+    final InvalidationResult invalidation = await invalidator.findInvalidated(
+      lastCompiled: lastCompiled,
+      urisToMonitor: webDevFS.sources,
+      packagesPath: app.packagesFilePath,
+      packageConfig: packageConfig,
+    );
+    return invalidation.uris?.isEmpty ?? false;
+  }
 
   Future<OperationResult?> _performFullRestart() async {
     final ResidentRunner? app = _widgetPreviewApp;
@@ -585,6 +635,9 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     OperationResult? result;
     try {
       result = await app.restart(fullRestart: true);
+      if (result.isOk) {
+        _webDevFS?.webAssetServer.liveServer?.prewarmBundle();
+      }
       return result;
     } finally {
       if (wasConnected &&
@@ -596,11 +649,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     }
   }
 
-  Future<({OperationResult? result, bool fullRestart})> _performReload() async {
+  Future<({OperationResult? result, bool fullRestart, bool didChange})> _performReload() async {
     final ResidentRunner? app = _widgetPreviewApp;
     if (app == null) {
-      return (result: null, fullRestart: false);
+      return (result: null, fullRestart: false, didChange: false);
     }
+    final WebDevFS? webDevFS = _webDevFS;
+    final int? revisionBefore = webDevFS?.webAssetServer.webMemoryFS.revision;
+    final bool assetChanged = _assetBundleNeedsBuild(app);
     final OperationResult result = await app.restart();
     if (result case OperationResult(
       isOk: false,
@@ -608,17 +664,27 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     )) {
       logger.printStatus(kHotReloadRejectedMessage);
       final OperationResult? restartResult = await _performFullRestart();
-      return (result: restartResult, fullRestart: restartResult != null);
+      return (
+        result: restartResult,
+        fullRestart: restartResult != null,
+        didChange: restartResult != null && restartResult.isOk,
+      );
     }
-    return (result: result, fullRestart: false);
+    if (result.isOk) {
+      webDevFS?.webAssetServer.liveServer?.prewarmBundle();
+    }
+    final int? revisionAfter = webDevFS?.webAssetServer.webMemoryFS.revision;
+    final bool didChange =
+        result.isOk && (revisionBefore == null || revisionAfter != revisionBefore || assetChanged);
+    return (result: result, fullRestart: false, didChange: didChange);
   }
 
   /// Hot reloads the previewer, falling back to a hot restart if the reload is
   /// rejected due to unsupported changes.
   @visibleForTesting
   Future<OperationResult?> handleReload() async {
-    final (:OperationResult? result, :bool fullRestart) = await _performReload();
-    if (result != null && result.isOk && !shutdownHooks.isShuttingDown) {
+    final (:OperationResult? result, :bool fullRestart, :bool didChange) = await _performReload();
+    if (result != null && result.isOk && didChange && !shutdownHooks.isShuttingDown) {
       await _dtdService.postPreviewReloaded(fullRestart: fullRestart);
     }
     return result;
@@ -686,6 +752,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     }
 
     var errorPreviewCount = 0;
+    var didUpdateGeneratedPreviews = false;
     final bool legacyDetection = argResults != null && boolArg(kLegacyPreviewDetection);
     if (!legacyDetection) {
       final FlutterWidgetPreviews? latestPreviews = await _lspPreviewDetector.syncPreviews();
@@ -704,26 +771,40 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
           )
           .length;
       if (latestPreviews != _lastGeneratedPreviews) {
+        didUpdateGeneratedPreviews = true;
         _lastGeneratedPreviews = latestPreviews;
         _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(latestPreviews);
       }
     }
 
-    final (:OperationResult? reloadResult, :bool fullRestart) = await _reloadMutex.runGuarded(
-      () async {
-        final _PendingReload? pending = _pendingReload;
-        _pendingReload = null;
-        if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
-          return (reloadResult: null, fullRestart: false);
-        }
-        if (pending == .hotRestart) {
-          final OperationResult? restartResult = await _performFullRestart();
-          return (reloadResult: restartResult, fullRestart: restartResult != null);
-        }
-        final (:OperationResult? result, :bool fullRestart) = await _performReload();
-        return (reloadResult: result, fullRestart: fullRestart);
-      },
-    );
+    final (
+      :OperationResult? reloadResult,
+      :bool fullRestart,
+      :bool didChange,
+    ) = await _reloadMutex.runGuarded(() async {
+      final _PendingReload? pending = _pendingReload;
+      _pendingReload = null;
+      if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return (reloadResult: null, fullRestart: false, didChange: false);
+      }
+      if (pending == .hotRestart) {
+        final OperationResult? restartResult = await _performFullRestart();
+        return (
+          reloadResult: restartResult,
+          fullRestart: restartResult != null,
+          didChange: restartResult != null && restartResult.isOk,
+        );
+      }
+      if (pending == null && !didUpdateGeneratedPreviews && await _hasNoInvalidatedInputs()) {
+        return (reloadResult: OperationResult.ok, fullRestart: false, didChange: false);
+      }
+      final (:OperationResult? result, :bool fullRestart, :bool didChange) = await _performReload();
+      return (
+        reloadResult: result,
+        fullRestart: fullRestart,
+        didChange: didChange || (result != null && result.isOk && didUpdateGeneratedPreviews),
+      );
+    });
 
     if (reloadResult == null) {
       return SyncPreviewsResponse(
@@ -751,7 +832,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       await _dtdService.waitForScaffoldConnected(timeout: timeout);
     }
 
-    if (compileSuccess) {
+    if (compileSuccess && didChange) {
       if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
         return SyncPreviewsResponse(
           compileSuccess: true,
@@ -768,7 +849,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       compileSuccess: compileSuccess,
       errorPreviewCount: errorPreviewCount,
       fullRestart: fullRestart,
-      reloaded: compileSuccess,
+      reloaded: compileSuccess && didChange,
     );
   }
 

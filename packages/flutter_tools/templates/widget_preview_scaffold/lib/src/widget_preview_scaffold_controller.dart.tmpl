@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
@@ -70,7 +71,8 @@ class WidgetPreviewScaffoldController {
     _refreshPreviewsSnapshot();
     dtdServices
       ..onGetPreviews = getPreviews
-      ..onCapturePreview = capturePreview;
+      ..onCapturePreview = capturePreview
+      ..onInPlaceHotReload = _handleLiveInPlaceHotReload;
   }
 
   static const _kDefaultCapturePixelRatio = 1.0;
@@ -141,6 +143,11 @@ class WidgetPreviewScaffoldController {
     clearAllDiagnostics();
     _updateFilteredPreviewSet();
     _previewsRevision.value++;
+  }
+
+  Future<void> _handleLiveInPlaceHotReload() async {
+    await WidgetsBinding.instance.reassembleApplication();
+    onHotReload();
   }
 
   /// The active DTD connection used to communicate with other developer tooling.

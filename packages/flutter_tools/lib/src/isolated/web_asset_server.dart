@@ -180,7 +180,11 @@ class WebAssetServer implements AssetReader {
         'libraries': libraries,
       });
     }
-    writeFile(reloadedSourcesUri.path, json.encode(moduleToLibrary));
+    _webMemoryFS.writeFileBytes(
+      reloadedSourcesUri.path,
+      const Utf8Encoder().convert(json.encode(moduleToLibrary)),
+      trackRevision: false,
+    );
   }
 
   @visibleForTesting
@@ -435,6 +439,7 @@ class WebAssetServer implements AssetReader {
   late Directory entrypointCacheDirectory;
   var _dwdsInit = false;
   WidgetPreviewLiveServer? _liveServer;
+  WidgetPreviewLiveServer? get liveServer => _liveServer;
   WebMemoryFS get webMemoryFS => _webMemoryFS;
 
   @visibleForTesting
@@ -625,8 +630,7 @@ class WebAssetServer implements AssetReader {
   }
 
   void writeBytes(String filePath, Uint8List contents) {
-    _webMemoryFS.files[filePath] = contents;
-    _webMemoryFS.incrementRevision();
+    _webMemoryFS.writeFileBytes(filePath, contents);
   }
 
   /// Determines what rendering backed to use.

@@ -185,6 +185,9 @@ class FakeCustomBrowserDevice extends Fake implements ChromiumDevice {
 class FakeResidentRunner extends Fake implements ResidentRunner {
   FakeResidentRunner({this.waitForAppToFinishCompleter});
 
+  @override
+  List<FlutterDevice> flutterDevices = const <FlutterDevice>[];
+
   final Completer<int>? waitForAppToFinishCompleter;
   int restartCount = 0;
   int concurrentRestarts = 0;

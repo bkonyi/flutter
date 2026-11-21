@@ -19,6 +19,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   WidgetPreviewScaffoldDtdServices({
     this.onCapturePreview,
     this.onGetPreviews,
+    this.onInPlaceHotReload,
     this.onPreviewReloaded,
     this.scaffoldServiceName = kWidgetPreviewScaffoldService,
   });
@@ -82,11 +83,17 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
   onCapturePreview;
 
+  /// Callback invoked after changed DDC modules have been hot-reloaded in-place
+  /// in viewer-only mode.
+  FutureOr<void> Function()? onInPlaceHotReload;
+
   /// Callback invoked when [kPreviewReloadedEvent] is received on
   /// [kWidgetPreviewScaffoldStream] in viewer-only mode.
   VoidCallback? onPreviewReloaded;
 
   StreamSubscription<DTDEvent>? _scaffoldStreamSubscription;
+  Future<void>? _activeViewerReload;
+  int? _liveRevision;
   Timer? _reconnectTimer;
   var _reconnectAttempt = 0;
   var _disposed = false;
@@ -96,8 +103,9 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   ///
   /// When [readOnly] is `true` (or the current URL fragment sets `embed=1`), the
   /// scaffold connects as a viewer-only client without registering scaffold RPCs
-  /// or posting [kWidgetPreviewConnectedEvent], and reloads the page when
-  /// [kPreviewReloadedEvent] arrives on [kWidgetPreviewScaffoldStream].
+  /// or posting [kWidgetPreviewConnectedEvent], and reloads in-place (falling
+  /// back to a page reload) when [kPreviewReloadedEvent] arrives on
+  /// [kWidgetPreviewScaffoldStream].
   Future<void> connect({Uri? dtdUri, bool readOnly = false}) async {
     final EmbedPreviewParams embedParams = EmbedPreviewParams.fromCurrentUrl();
     final bool isViewerOnly = readOnly || embedParams.isEmbed;
@@ -123,6 +131,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     _dtd = connectedDtd;
     _reconnectAttempt = 0;
     if (isViewerOnly) {
+      _liveRevision ??= initialLiveRevision;
       await _subscribeToScaffoldReloadEvents();
       unawaited(
         connectedDtd.done.whenComplete(() {
@@ -182,14 +191,43 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         .onEvent(kWidgetPreviewScaffoldStream)
         .listen((DTDEvent event) {
           if (event.kind == kPreviewReloadedEvent) {
-            if (onPreviewReloaded case final VoidCallback callback) {
-              callback();
-            } else {
-              reloadWindow();
-            }
+            unawaited(_enqueueViewerReload(event));
           }
         });
     await dtd.safeStreamListen(kWidgetPreviewScaffoldStream);
+  }
+
+  Future<void> _enqueueViewerReload(DTDEvent event) {
+    final Future<void> previous = _activeViewerReload ?? Future<void>.value();
+    final Future<void> current = previous.whenComplete(() async {
+      if (_disposed) {
+        return;
+      }
+      await _handleViewerReloadEvent(event);
+    });
+    _activeViewerReload = current;
+    return current;
+  }
+
+  Future<void> _handleViewerReloadEvent(DTDEvent event) async {
+    if (onPreviewReloaded case final VoidCallback callback) {
+      callback();
+      return;
+    }
+    final int? sinceRevision = _liveRevision;
+    if (event.data[kFullRestart] != true && sinceRevision != null) {
+      final int? nextRevision = await hotReloadLiveModules(
+        sinceRevision: sinceRevision,
+      );
+      if (nextRevision != null) {
+        _liveRevision = nextRevision;
+        if (!_disposed) {
+          await onInPlaceHotReload?.call();
+        }
+        return;
+      }
+    }
+    reloadWindow();
   }
 
   Future<Map<String, Object?>> _getPreviews(Parameters params) async {

@@ -327,6 +327,44 @@ void main() {
       await guardedFuture;
       expect(queuedRanAfterPubspec, isTrue);
     });
+
+    testWithoutContext(
+      'syncPreviews skips analysis debounce delay when Dart files are unchanged',
+      () async {
+        final File dartFile = fs.file(_kDartFilePath)..createSync(recursive: true);
+        dartFile
+          ..writeAsStringSync('void main() {}')
+          ..setLastModifiedSync(DateTime.now().subtract(const Duration(seconds: 5)));
+
+        // Initial sync has no prior snapshot, but records one after waiting.
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, Duration.zero);
+
+        // Subsequent no-op sync skips the 100ms debounce delay.
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, Duration.zero);
+
+        // Same-size edit with mtime = now (within the 1100ms coarse-mtime window)
+        // preserves the 100ms debounce delay.
+        dartFile
+          ..writeAsStringSync('void main() { }')
+          ..setLastModifiedSync(DateTime.now());
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+
+        // Modifying a Dart file with a size change also restores the 100ms debounce delay.
+        dartFile
+          ..writeAsStringSync('void main() { print(1); }')
+          ..setLastModifiedSync(DateTime.now().subtract(const Duration(seconds: 4)));
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+
+        // Deleting the Dart file also restores the 100ms debounce delay.
+        dartFile.deleteSync();
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+      },
+    );
   });
 }
 
@@ -359,6 +397,7 @@ class FakeWatcher extends Fake implements Watcher {
 
 class FakeAnalysisServer extends Fake implements AnalysisServer {
   int waitForAnalysisCallCount = 0;
+  Duration? lastWaitForAnalysisDelay;
   bool shouldThrow = false;
   Completer<void>? waitForAnalysisGate;
 
@@ -373,6 +412,7 @@ class FakeAnalysisServer extends Fake implements AnalysisServer {
 
   @override
   Future<void> waitForAnalysis({Duration delay = const Duration(milliseconds: 100)}) async {
+    lastWaitForAnalysisDelay = delay;
     if (waitForAnalysisGate case final Completer<void> gate) {
       await gate.future;
     }

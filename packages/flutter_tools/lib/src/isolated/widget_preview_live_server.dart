@@ -17,6 +17,7 @@ import '../base/io.dart';
 import '../convert.dart';
 import '../web/bootstrap.dart';
 import '../web/memory_fs.dart';
+import '../web/module_metadata.dart';
 import '../widget_preview/dtd_services.dart';
 import '../widget_preview/dtd_types.dart';
 import 'web_server_utilities.dart';
@@ -64,6 +65,7 @@ class WidgetPreviewLiveServer {
     required this.webMemoryFS,
   });
 
+  static const _kApiHotReloadPath = '__api/hot-reload';
   static const _kApiStatusPath = '__api/status';
   static const _kApiSyncPath = '__api/sync';
   static const _kCorpHeader = 'cross-origin-resource-policy';
@@ -74,6 +76,8 @@ class WidgetPreviewLiveServer {
   static const _kEmbedMainDartJsPath = '__embed_main.dart.js';
   static const _kEmbedMainModuleBootstrapPath = '__embed_main_module.bootstrap.js';
   static const _kEntrypointExtensionMarker = '/* ENTRYPOINT_EXTENTION_MARKER */';
+  static const _kLiveBgStyleTag =
+      '<style id="wp-live-bg">html,body{margin:0;background:#121212;color:#e4e4e7}</style>';
   static const _kLivePath = 'live';
   static const _kLiveSlashPath = 'live/';
   static const _kMainModuleBootstrapPath = 'main_module.bootstrap.js';
@@ -81,9 +85,11 @@ class WidgetPreviewLiveServer {
   static const _kNoSniffHeader = 'x-content-type-options';
   static const _kNoSniffValue = 'nosniff';
   static const _kOriginHeader = 'origin';
+  static const _kRevQueryParam = 'rev';
   static const _kSecFetchSiteHeader = 'sec-fetch-site';
   static const _kSecFetchSiteNone = 'none';
   static const _kSecFetchSiteSameOrigin = 'same-origin';
+  static const _kSinceQueryParam = 'since';
   static const _kStreamListenMethod = 'streamListen';
   static const _kStreamCancelMethod = 'streamCancel';
   static const _kStreamIdKey = 'streamId';
@@ -143,15 +149,21 @@ class WidgetPreviewLiveServer {
       return _serveEmbedIndexHtml();
     }
 
+    final bool isHotReloadModule =
+        request.method == 'GET' &&
+        request.url.queryParameters.containsKey(_kRevQueryParam) &&
+        requestPath.endsWith('.js') &&
+        webMemoryFS.files.containsKey(requestPath);
     final bool isProtectedRoute = switch (requestPath) {
       _kEmbedFlutterBootstrapPath ||
       _kEmbedMainDartJsPath ||
       _kEmbedMainModuleBootstrapPath ||
       _kDdcBundlePath ||
+      _kApiHotReloadPath ||
       _kApiStatusPath ||
       _kApiSyncPath ||
       _kDtdWsPath => true,
-      _ => false,
+      _ => isHotReloadModule,
     };
     if (!isProtectedRoute) {
       return shelf.Response.notFound('');
@@ -164,16 +176,27 @@ class WidgetPreviewLiveServer {
       );
     }
 
+    if (isHotReloadModule) {
+      return _serveHotReloadModule(requestPath);
+    }
+
     return switch ((request.method, requestPath)) {
       ('GET', _kEmbedFlutterBootstrapPath) => _serveEmbedFlutterBootstrapJs(),
       ('GET', _kEmbedMainDartJsPath) => _serveEmbedMainDartJs(),
       ('GET', _kEmbedMainModuleBootstrapPath) => _serveEmbedMainModuleBootstrapJs(),
       ('GET', _kDdcBundlePath) => _serveDdcBundle(request),
+      ('GET', _kApiHotReloadPath) => _serveApiHotReload(request),
       ('GET', _kApiStatusPath) => _serveApiStatus(),
       ('POST', _kApiSyncPath) => _serveApiSync(),
       ('GET', _kDtdWsPath) => _serveDtdWebSocket(request),
       _ => shelf.Response.notFound(''),
     };
+  }
+
+  /// Pre-builds the concatenated DDC bundle and warms its gzip cache in the
+  /// background for the current [WebMemoryFS.revision].
+  void prewarmBundle() {
+    unawaited(_getOrBuildBundle().getGzipBytes());
   }
 
   /// Closes all active `/dtd_ws` WebSocket connections.
@@ -202,7 +225,8 @@ class WidgetPreviewLiveServer {
   shelf.Response _serveEmbedIndexHtml() {
     final String html = renderIndexHtml()
         .replaceAll('flutter_bootstrap.js', _rootRelativePath(_kEmbedFlutterBootstrapPath))
-        .replaceAll('main.dart.js', _rootRelativePath(_kEmbedMainDartJsPath));
+        .replaceAll('main.dart.js', _rootRelativePath(_kEmbedMainDartJsPath))
+        .replaceFirst('</head>', '$_kLiveBgStyleTag</head>');
     return shelf.Response.ok(
       html,
       encoding: utf8,
@@ -284,7 +308,8 @@ window.\$dartLoader.loader.nextAttempt();''');
     if (existing != null && existing.revision == revision) {
       return existing;
     }
-    final builder = BytesBuilder(copy: false);
+    final builder = BytesBuilder(copy: false)
+      ..add(utf8.encode('self.__wpLiveRevision=$revision;\n'));
     var wroteModule = false;
     for (final String path in modules.values) {
       final Uint8List? fileBytes = webMemoryFS.files['$path.js'];
@@ -405,6 +430,75 @@ window.\$dartLoader.loader.nextAttempt();''');
       return true;
     }
     return ifNoneMatch.split(',').any((String part) => part.trim() == etag);
+  }
+
+  shelf.Response _serveHotReloadModule(String requestPath) {
+    final Uint8List? fileBytes = webMemoryFS.files[requestPath];
+    if (fileBytes == null) {
+      return shelf.Response.notFound('');
+    }
+    return shelf.Response.ok(
+      _stripTrailingSourceMappingUrlBytes(fileBytes),
+      headers: _securityHeaders(
+        contentType: 'application/javascript; charset=utf-8',
+        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
+      ),
+    );
+  }
+
+  shelf.Response _serveApiHotReload(shelf.Request request) {
+    final String? rawSince = request.url.queryParameters[_kSinceQueryParam];
+    final int? since = rawSince != null ? int.tryParse(rawSince) : null;
+    if (since == null || since < 0) {
+      return _jsonErrorResponse(
+        HttpStatus.badRequest,
+        'Query parameter "$_kSinceQueryParam" must be a non-negative integer.',
+      );
+    }
+    final int currentRevision = webMemoryFS.revision;
+    final changedModules = <Map<String, Object?>>[];
+    if (since < currentRevision) {
+      for (final MapEntry(key: id, value: path) in modules.entries) {
+        final fileName = '$path.js';
+        final int? moduleRev = webMemoryFS.moduleRevisions[fileName];
+        if (moduleRev == null || moduleRev <= since || !webMemoryFS.files.containsKey(fileName)) {
+          continue;
+        }
+        final List<String>? libraries = _librariesForModule(fileName);
+        if (libraries == null) {
+          return _jsonErrorResponse(
+            HttpStatus.internalServerError,
+            'Missing DDC module metadata for "$fileName".',
+          );
+        }
+        changedModules.add(<String, Object?>{
+          'src': '$fileName?$_kRevQueryParam=$moduleRev',
+          'id': id,
+          'libraries': libraries,
+        });
+      }
+    }
+    return shelf.Response.ok(
+      jsonEncode(<String, Object?>{'revision': currentRevision, 'modules': changedModules}),
+      encoding: utf8,
+      headers: _securityHeaders(
+        contentType: 'application/json; charset=utf-8',
+        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
+      ),
+    );
+  }
+
+  List<String>? _librariesForModule(String fileName) {
+    final Uint8List? metadataBytes = webMemoryFS.metadataFiles['$fileName.metadata'];
+    if (metadataBytes == null) {
+      return null;
+    }
+    final Object? decoded = json.decode(utf8.decode(metadataBytes));
+    if (decoded is! Map<String, Object?>) {
+      return null;
+    }
+    final metadata = ModuleMetadata.fromJson(decoded);
+    return metadata.libraries.isEmpty ? null : metadata.libraries.keys.toList();
   }
 
   shelf.Response _serveApiStatus() {

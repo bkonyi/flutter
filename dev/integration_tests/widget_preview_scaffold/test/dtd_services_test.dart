@@ -8,6 +8,9 @@ import 'dart:io'
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
+import 'package:flutter/widget_previews.dart';
+import 'package:flutter/widgets.dart'
+    show Brightness, Size, SizedBox, WidgetsFlutterBinding;
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -21,8 +24,6 @@ import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
 import 'package:flutter_tools/src/widget_preview/persistent_preferences.dart';
-import 'package:flutter/widget_previews.dart';
-import 'package:flutter/widgets.dart' show Brightness, Size, SizedBox;
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/fake.dart';
@@ -108,6 +109,8 @@ String _resolveDartBinaryPath() {
 }
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
   late WidgetPreviewDtdServices dtdServer;
   late Logger logger;
   WidgetPreviewScaffoldDtdServices? scaffoldDtd;
@@ -770,6 +773,95 @@ void main() {
         await pumpEventQueue();
         expect(viewerReloadCallbacks, 2);
         expect(debugReloadCount, 1);
+      },
+    );
+
+    testWithoutContext(
+      'viewer-only mode hot-reloads modules in-place and refreshes controller without reloadWindow, falling back on fullRestart or error',
+      () async {
+        dtdServer = await launchDtdServer();
+        dtdServer.setDevToolsServerAddress(
+          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
+          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
+        );
+
+        debugSetUrlFragment(
+          'embed=1&previewId=*',
+          baseUri: Uri.parse('http://localhost:8080/live'),
+        );
+        var currentTitle = 'Before Reload';
+        var serverRevision = 4;
+        var shouldFailHotReload = false;
+        final observedSinceRevisions = <int>[];
+
+        debugSetInitialLiveRevision(serverRevision);
+        debugSetHotReloadHandler((int sinceRevision) async {
+          observedSinceRevisions.add(sinceRevision);
+          if (shouldFailHotReload) {
+            return null;
+          }
+          return serverRevision;
+        });
+
+        final viewerDtd = WidgetPreviewScaffoldDtdServices();
+        addTearDown(viewerDtd.dispose);
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: viewerDtd,
+          previews: () => <scaffold_preview.WidgetPreview>[
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'liveCard',
+              libraryUri: 'package:my_app/card.dart',
+              line: 10,
+              packageName: 'my_app',
+              previewFunction: () => const SizedBox(),
+              scriptUri: 'file:///project/lib/card.dart',
+              transformedPreview: Preview(name: currentTitle),
+            ),
+          ],
+        );
+
+        await viewerDtd.connect(dtdUri: dtdServer.dtdUri, readOnly: true);
+        expect(controller.previews.single.name, 'Before Reload');
+        expect(controller.previewsRevisionListenable.value, 0);
+
+        // Incremental reload (fullRestart: false) updates in-place with zero window reloads.
+        currentTitle = 'After In-Place Reload';
+        serverRevision = 5;
+        await dtdServer.postPreviewReloaded(fullRestart: false);
+        await pumpEventQueue();
+
+        expect(observedSinceRevisions, <int>[4]);
+        expect(debugHotReloadCount, 1);
+        expect(debugReloadCount, 0);
+        expect(controller.previewsRevisionListenable.value, 1);
+        expect(controller.previews.single.name, 'After In-Place Reload');
+
+        // Subsequent incremental reload advances sinceRevision to 5 -> 6.
+        currentTitle = 'Second In-Place Reload';
+        serverRevision = 6;
+        await dtdServer.postPreviewReloaded(fullRestart: false);
+        await pumpEventQueue();
+
+        expect(observedSinceRevisions, <int>[4, 5]);
+        expect(debugHotReloadCount, 2);
+        expect(debugReloadCount, 0);
+        expect(controller.previewsRevisionListenable.value, 2);
+        expect(controller.previews.single.name, 'Second In-Place Reload');
+
+        // fullRestart: true bypasses in-place hot reload and triggers reloadWindow().
+        await dtdServer.postPreviewReloaded(fullRestart: true);
+        await pumpEventQueue();
+        expect(debugHotReloadCount, 2);
+        expect(debugReloadCount, 1);
+
+        // Failed in-place hot reload (returning null) falls back cleanly to reloadWindow().
+        shouldFailHotReload = true;
+        await dtdServer.postPreviewReloaded(fullRestart: false);
+        await pumpEventQueue();
+        expect(observedSinceRevisions, <int>[4, 5, 6]);
+        expect(debugHotReloadCount, 3);
+        expect(debugReloadCount, 2);
       },
     );
 

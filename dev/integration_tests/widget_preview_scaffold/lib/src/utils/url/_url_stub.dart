@@ -30,7 +30,10 @@ final _debugFragmentChangeController = StreamController<String>.broadcast(
   sync: true,
 );
 var _debugReloadCount = 0;
+var _debugHotReloadCount = 0;
+int? _debugInitialLiveRevision;
 VoidCallback? _debugOnReloadCallback;
+Future<int?> Function(int sinceRevision)? _debugHotReloadHandler;
 Future<LiveSyncResult> Function()? _debugTriggerSyncHandler;
 LiveSendSelectionHandler? _debugSendSelectionHandler;
 
@@ -102,6 +105,20 @@ void notifyEmbedZoomChanged(double zoom) {
 /// Whether a host selection handler is registered.
 bool get canSendLiveSelection => _debugSendSelectionHandler != null;
 
+/// Returns the initial [WebMemoryFS] revision (stub returns `null` unless
+/// overridden in tests).
+int? get initialLiveRevision => _debugInitialLiveRevision;
+
+/// Hot-reloads changed DDC modules in-place since [sinceRevision] (stub returns
+/// `null` unless overridden in tests).
+Future<int?> hotReloadLiveModules({required int sinceRevision}) async {
+  _debugHotReloadCount++;
+  if (_debugHotReloadHandler case final handler?) {
+    return handler(sinceRevision);
+  }
+  return null;
+}
+
 /// Triggers a preview sync/reload via `POST __api/sync` (stub succeeds).
 Future<LiveSyncResult> triggerLiveSync() async {
   if (_debugTriggerSyncHandler case final handler?) {
@@ -141,6 +158,10 @@ Future<void> sendLiveSelectionToHost({
 @visibleForTesting
 int get debugReloadCount => _debugReloadCount;
 
+/// Number of times [hotReloadLiveModules] has been invoked in tests.
+@visibleForTesting
+int get debugHotReloadCount => _debugHotReloadCount;
+
 /// Updates the simulated URL fragment (and optional [baseUri]) for tests and
 /// notifies [onUrlFragmentChange] listeners.
 @visibleForTesting
@@ -156,6 +177,20 @@ void debugSetUrlFragment(String fragment, {Uri? baseUri}) {
 @visibleForTesting
 void debugSetReloadHandler(VoidCallback? onReload) {
   _debugOnReloadCallback = onReload;
+}
+
+/// Overrides [initialLiveRevision] during tests.
+@visibleForTesting
+void debugSetInitialLiveRevision(int? revision) {
+  _debugInitialLiveRevision = revision;
+}
+
+/// Registers an optional test handler for [hotReloadLiveModules].
+@visibleForTesting
+void debugSetHotReloadHandler(
+  Future<int?> Function(int sinceRevision)? handler,
+) {
+  _debugHotReloadHandler = handler;
 }
 
 /// Registers an optional test handler for [triggerLiveSync].
@@ -176,7 +211,10 @@ void debugResetUrlTestState() {
   _debugUrlFragmentOverride = null;
   _debugBaseUriOverride = null;
   _debugReloadCount = 0;
+  _debugHotReloadCount = 0;
+  _debugInitialLiveRevision = null;
   _debugOnReloadCallback = null;
+  _debugHotReloadHandler = null;
   _debugTriggerSyncHandler = null;
   _debugSendSelectionHandler = null;
 }

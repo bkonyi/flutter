@@ -15,22 +15,39 @@ import 'package:web/web.dart';
 
 import 'url.dart';
 
+const _kApiHotReloadPath = '__api/hot-reload';
 const _kApiSyncPath = '__api/sync';
 const _kBrightnessKey = 'brightness';
 const _kCacheNoStore = 'no-store';
 const _kCompileSuccessKey = 'compileSuccess';
+const _kDartDevEmbedderKey = 'dartDevEmbedder';
 const _kErrorKey = 'error';
 const _kErrorMessageKey = 'errorMessage';
 const _kHostKey = 'flutterWidgetPreviewHost';
+const _kHotReloadMethod = 'hotReload';
+const _kHotReloadTimeout = Duration(seconds: 5);
+const _kLibrariesKey = 'libraries';
+const _kLiveRevisionKey = '__wpLiveRevision';
 const _kMessageKey = 'message';
 const _kMethodPost = 'POST';
+const _kModulesKey = 'modules';
 const _kPreviewIdKey = 'previewId';
 const _kPreviewNameKey = 'previewName';
+const _kRevisionKey = 'revision';
 const _kSelectionsKey = 'selections';
 const _kSendSelectionMethod = 'sendSelection';
+const _kSinceParam = 'since';
+const _kSrcKey = 'src';
 const _kTextScaleKey = 'textScale';
 const _kViewportKey = 'viewport';
 const _kZoomKey = 'zoom';
+
+extension type _DartDevEmbedder._(JSObject _) implements JSObject {
+  external JSPromise<JSAny?> hotReload(
+    JSArray<JSString> filesToLoad,
+    JSArray<JSString> librariesToReload,
+  );
+}
 
 typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
 typedef LiveSendSelectionHandler =
@@ -72,7 +89,10 @@ final StreamController<String> _urlFragmentChangeController =
       },
     );
 var _debugReloadCount = 0;
+var _debugHotReloadCount = 0;
+int? _debugInitialLiveRevision;
 VoidCallback? _debugOnReloadCallback;
+Future<int?> Function(int sinceRevision)? _debugHotReloadHandler;
 Future<LiveSyncResult> Function()? _debugTriggerSyncHandler;
 LiveSendSelectionHandler? _debugSendSelectionHandler;
 
@@ -193,6 +213,103 @@ JSObject? _resolveHostObject() {
 bool get canSendLiveSelection =>
     _debugSendSelectionHandler != null || _resolveHostObject() != null;
 
+_DartDevEmbedder? _resolveDartDevEmbedder() {
+  try {
+    final JSObject globalWindow = window as JSObject;
+    final JSAny? embedder = globalWindow.getProperty<JSAny?>(
+      _kDartDevEmbedderKey.toJS,
+    );
+    if (embedder == null || !embedder.isA<JSObject>()) {
+      return null;
+    }
+    final embedderObj = embedder as JSObject;
+    final JSAny? hotReloadFn = embedderObj.getProperty<JSAny?>(
+      _kHotReloadMethod.toJS,
+    );
+    if (hotReloadFn == null || !hotReloadFn.isA<JSFunction>()) {
+      return null;
+    }
+    return _DartDevEmbedder._(embedderObj);
+  } on Object {
+    return null;
+  }
+}
+
+/// Returns the initial [WebMemoryFS] revision embedded in `__ddc_bundle.js`, or
+/// `null` if unavailable.
+int? get initialLiveRevision {
+  if (_debugInitialLiveRevision case final int rev) {
+    return rev;
+  }
+  final JSAny? raw = (window as JSObject).getProperty<JSAny?>(
+    _kLiveRevisionKey.toJS,
+  );
+  return raw != null && raw.isA<JSNumber>()
+      ? (raw as JSNumber).toDartInt
+      : null;
+}
+
+/// Fetches changed DDC modules since [sinceRevision] via
+/// `GET __api/hot-reload?since=<rev>` and hot-reloads them in-place using
+/// `window.dartDevEmbedder.hotReload`, returning the updated server revision or
+/// `null` if in-place hot reload is unavailable or fails.
+Future<int?> hotReloadLiveModules({required int sinceRevision}) async {
+  _debugHotReloadCount++;
+  if (_debugHotReloadHandler case final handler?) {
+    return handler(sinceRevision);
+  }
+  final _DartDevEmbedder? embedder = _resolveDartDevEmbedder();
+  if (embedder == null) {
+    return null;
+  }
+  try {
+    final Uri rootUri = resolveLiveRootUri(getBaseUri());
+    final Uri hotReloadUri = rootUri.resolve(
+      '$_kApiHotReloadPath?$_kSinceParam=$sinceRevision',
+    );
+    final Response response = await window
+        .fetch(hotReloadUri.toString().toJS, RequestInit(cache: _kCacheNoStore))
+        .toDart;
+    if (!response.ok) {
+      return null;
+    }
+    final Object? decoded = jsonDecode((await response.text().toDart).toDart);
+    if (decoded case {
+      _kRevisionKey: final int nextRevision,
+      _kModulesKey: final List<Object?> rawModules,
+    } when nextRevision >= sinceRevision) {
+      final filesToLoad = <JSString>[];
+      final librariesToReload = <JSString>[];
+      final seenLibraries = <String>{};
+      for (final Object? entry in rawModules) {
+        if (entry case {
+          _kSrcKey: final String rawSrc,
+          _kLibrariesKey: final List<Object?> rawLibraries,
+        } when rawSrc.isNotEmpty && rawLibraries.isNotEmpty) {
+          filesToLoad.add(rootUri.resolve(rawSrc).toString().toJS);
+          for (final Object? lib in rawLibraries) {
+            if (lib is String && lib.isNotEmpty && seenLibraries.add(lib)) {
+              librariesToReload.add(lib.toJS);
+            }
+          }
+        } else {
+          return null;
+        }
+      }
+      if (filesToLoad.isNotEmpty) {
+        await embedder
+            .hotReload(filesToLoad.toJS, librariesToReload.toJS)
+            .toDart
+            .timeout(_kHotReloadTimeout);
+      }
+      return nextRevision;
+    }
+    return null;
+  } on Object {
+    return null;
+  }
+}
+
 /// Triggers a preview sync/reload via `POST __api/sync` on the live server.
 Future<LiveSyncResult> triggerLiveSync() async {
   if (_debugTriggerSyncHandler case final handler?) {
@@ -287,6 +404,10 @@ Future<void> sendLiveSelectionToHost({
 @visibleForTesting
 int get debugReloadCount => _debugReloadCount;
 
+/// Number of times [hotReloadLiveModules] has been invoked in tests.
+@visibleForTesting
+int get debugHotReloadCount => _debugHotReloadCount;
+
 /// Updates the simulated URL fragment (and optional [baseUri]) for tests and
 /// notifies [onUrlFragmentChange] listeners.
 @visibleForTesting
@@ -302,6 +423,20 @@ void debugSetUrlFragment(String fragment, {Uri? baseUri}) {
 @visibleForTesting
 void debugSetReloadHandler(VoidCallback? onReload) {
   _debugOnReloadCallback = onReload;
+}
+
+/// Overrides [initialLiveRevision] during tests.
+@visibleForTesting
+void debugSetInitialLiveRevision(int? revision) {
+  _debugInitialLiveRevision = revision;
+}
+
+/// Registers an optional test handler for [hotReloadLiveModules].
+@visibleForTesting
+void debugSetHotReloadHandler(
+  Future<int?> Function(int sinceRevision)? handler,
+) {
+  _debugHotReloadHandler = handler;
 }
 
 /// Registers an optional test handler for [triggerLiveSync].
@@ -322,7 +457,10 @@ void debugResetUrlTestState() {
   _debugUrlFragmentOverride = null;
   _debugBaseUriOverride = null;
   _debugReloadCount = 0;
+  _debugHotReloadCount = 0;
+  _debugInitialLiveRevision = null;
   _debugOnReloadCallback = null;
+  _debugHotReloadHandler = null;
   _debugTriggerSyncHandler = null;
   _debugSendSelectionHandler = null;
 }
