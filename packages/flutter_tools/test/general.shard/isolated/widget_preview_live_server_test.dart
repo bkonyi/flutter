@@ -135,7 +135,8 @@ void main() {
       );
       expect(embedMain.statusCode, io.HttpStatus.ok);
       final String mainJs = await embedMain.readAsString();
-      expect(mainJs, contains('__embed_main_module.bootstrap.js'));
+      expect(mainJs, contains('"src": "__embed_main_module.bootstrap.js"'));
+      expect(mainJs, isNot(contains('"src": "/__embed_main_module.bootstrap.js"')));
       expect(
         mainJs.indexOf('dart_sdk.js'),
         lessThan(mainJs.indexOf('__embed_main_module.bootstrap.js')),
@@ -149,7 +150,8 @@ void main() {
       final String moduleBootstrap = await embedMainModule.readAsString();
       expect(moduleBootstrap, contains('"id":"packages/my_app/main.dart"'));
       expect(moduleBootstrap, contains('"id":"web_entrypoint.dart"'));
-      expect(moduleBootstrap, contains('src: "/__ddc_bundle.js"'));
+      expect(moduleBootstrap, contains('src: "__ddc_bundle.js"'));
+      expect(moduleBootstrap, isNot(contains('src: "/__ddc_bundle.js"')));
       expect(moduleBootstrap, isNot(contains('{src: "on_load_end_bootstrap.js"')));
       expect(moduleBootstrap, contains(r'window.$dartLoader.loader.nextAttempt();'));
     });
@@ -734,10 +736,9 @@ void main() {
           shelf.Request('GET', Uri.parse('http://localhost:8080/subapp/__embed_main.dart.js')),
         );
         expect(mainJsResponse.statusCode, io.HttpStatus.ok);
-        expect(
-          await mainJsResponse.readAsString(),
-          contains('/subapp/__embed_main_module.bootstrap.js'),
-        );
+        final String subappMainJs = await mainJsResponse.readAsString();
+        expect(subappMainJs, contains('"src": "__embed_main_module.bootstrap.js"'));
+        expect(subappMainJs, isNot(contains('/subapp/__embed_main_module.bootstrap.js')));
 
         webMemoryFS.files['main_module.bootstrap.js'] = utf8.encode('console.log("no marker");');
         await expectLater(

@@ -228,7 +228,7 @@ class WidgetPreviewLiveServer {
       mapperUrl: 'stack_trace_mapper.js',
       generateLoadingIndicator: false,
       isWindows: isWindows,
-    ).replaceAll('main_module.bootstrap.js', _rootRelativePath(_kEmbedMainModuleBootstrapPath));
+    ).replaceAll('main_module.bootstrap.js', _kEmbedMainModuleBootstrapPath);
     return shelf.Response.ok(
       js,
       encoding: utf8,
@@ -270,7 +270,7 @@ class WidgetPreviewLiveServer {
     buffer.writeln('''
 window.\$dartLoader.loadConfig.loadScriptFn = function(loader) {
   loader.addScriptsToQueue([
-    {src: "${_rootRelativePath(_kDdcBundlePath)}", id: "__ddc_bundle__"}
+    {src: "$_kDdcBundlePath", id: "__ddc_bundle__"}
   ], null);
   loader.loadEnqueuedModules();
 };
