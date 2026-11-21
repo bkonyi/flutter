@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,13 @@ import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
+
+const _kDarkPreviewSurfaceColor = Color(0xFF18181B);
+const _kLightPreviewSurfaceColor = Color(0xFFFAFAFA);
+
+Color _surfaceColorFor(Brightness brightness) => brightness == Brightness.dark
+    ? _kDarkPreviewSurfaceColor
+    : _kLightPreviewSurfaceColor;
 
 /// Chromeless single-preview or all-previews gallery canvas for `#embed=1` mode,
 /// or interactive `/live` viewer when [EmbedPreviewParams.showControls] is set.
@@ -45,10 +53,13 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   static const _kBadgeHorizontalPadding = 6.0;
   static const _kBadgeVerticalPadding = 2.0;
   static const _kCardContentPadding = 12.0;
+  static const _kCardHeaderChevronSize = 18.0;
+  static const _kCardHeaderHoverAlpha = 0.06;
   static const _kCardHeaderVerticalPadding = 8.0;
   static const _kCardSpacing = 12.0;
   static const _kDefaultWindowSize = Size(800.0, 600.0);
   static const _kGalleryPadding = 16.0;
+  static const _kGallerySplitSubHeaderVerticalPadding = 6.0;
   static const _kGroupHeaderSpacing = 8.0;
   static const _kGroupSpacing = 24.0;
   static const _kMaxStatusCardWidth = 480.0;
@@ -281,11 +292,21 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                           preview: preview,
                         );
                       }
+                      final BoxConstraints stageConstraints =
+                          params.showControls
+                          ? EmbedLiveResizableFrame.deflateStageConstraints(
+                              constraints,
+                            )
+                          : constraints;
                       return _buildPreviewSubtree(
                         context: context,
-                        outerConstraints: constraints,
+                        onParamsChanged: params.showControls
+                            ? _handleParamsChanged
+                            : null,
+                        outerConstraints: stageConstraints,
+                        params: params,
                         preview: preview,
-                        viewportConstraints: constraints,
+                        viewportConstraints: stageConstraints,
                       );
                     }
                     final (String title, String message) = _lookupStatusDetails(
@@ -323,10 +344,12 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                     });
                                   },
                                   onParamsChanged: _handleParamsChanged,
-                                  onSplitBrightnessToggled: () {
-                                    setState(() {
-                                      _isSplitBrightness = !_isSplitBrightness;
-                                    });
+                                  onSplitBrightnessChanged: (bool enabled) {
+                                    if (_isSplitBrightness != enabled) {
+                                      setState(() {
+                                        _isSplitBrightness = enabled;
+                                      });
+                                    }
                                   },
                                   onSyncPressed: _handleSyncPressed,
                                   onZoomChanged: _emitZoom,
@@ -396,85 +419,132 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     );
   }
 
+  (Widget, Widget) _buildLightDarkPanes({
+    required Key darkKey,
+    required bool expandVertically,
+    required Key lightKey,
+    required WidgetPreview preview,
+    required ThemeData theme,
+    String? badgeLabel,
+    EdgeInsets bodyPadding = EdgeInsets.zero,
+    double? fallbackWindowHeight,
+  }) {
+    Widget buildOne(Brightness brightness, String label, Key key) {
+      final Widget body = ColoredBox(
+        color: _surfaceColorFor(brightness),
+        child: Padding(
+          padding: bodyPadding,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints paneConstraints) {
+              return _buildPreviewSubtree(
+                brightnessOverride: brightness,
+                context: context,
+                fallbackWindowHeight: fallbackWindowHeight,
+                outerConstraints: paneConstraints,
+                preview: preview,
+                viewportConstraints: paneConstraints,
+              );
+            },
+          ),
+        ),
+      );
+      return Card.outlined(
+        key: key,
+        clipBehavior: Clip.antiAlias,
+        margin: EdgeInsets.zero,
+        child: Column(
+          mainAxisSize: expandVertically ? MainAxisSize.max : MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: _kCardContentPadding,
+                vertical: expandVertically
+                    ? _kCardHeaderVerticalPadding
+                    : _kGallerySplitSubHeaderVerticalPadding,
+              ),
+              child: Row(
+                children: <Widget>[
+                  Text(
+                    label,
+                    style: expandVertically
+                        ? theme.textTheme.titleSmall
+                        : theme.textTheme.labelMedium,
+                  ),
+                  if (badgeLabel != null) ...<Widget>[
+                    const Spacer(),
+                    _buildBadge(theme: theme, label: badgeLabel),
+                  ],
+                ],
+              ),
+            ),
+            const Divider(height: 1.0),
+            if (expandVertically) Expanded(child: body) else body,
+          ],
+        ),
+      );
+    }
+
+    return (
+      buildOne(Brightness.light, 'Light', lightKey),
+      buildOne(Brightness.dark, 'Dark', darkKey),
+    );
+  }
+
   Widget _buildSplitBrightnessView({
     required BuildContext context,
     required BoxConstraints outerConstraints,
     required WidgetPreview preview,
   }) {
     final ThemeData theme = Theme.of(context);
-    final double paneWidth = outerConstraints.hasBoundedWidth
-        ? (outerConstraints.maxWidth - _kGalleryPadding * 2 - _kCardSpacing) / 2
-        : _kDefaultWindowSize.width / 2;
-    final double paneHeight = outerConstraints.hasBoundedHeight
-        ? outerConstraints.maxHeight - _kGalleryPadding * 2
-        : _kDefaultWindowSize.height;
-    final BoxConstraints paneConstraints = BoxConstraints(
-      maxWidth: paneWidth > _kMinSplitPaneExtent
-          ? paneWidth
-          : _kDefaultWindowSize.width / 2,
-      maxHeight: paneHeight > _kMinSplitPaneExtent
-          ? paneHeight
-          : _kDefaultWindowSize.height,
+    final double availableWidth =
+        (outerConstraints.hasBoundedWidth
+            ? outerConstraints.maxWidth
+            : _kDefaultWindowSize.width) -
+        _kGalleryPadding * 2;
+    final double paneHeight = math.max(
+      _kMinSplitPaneExtent,
+      (outerConstraints.hasBoundedHeight
+              ? outerConstraints.maxHeight
+              : _kDefaultWindowSize.height) -
+          _kGalleryPadding * 2,
     );
-
-    Widget buildPane(Brightness brightness, String label, Key key) {
-      return Card.outlined(
-        key: key,
-        clipBehavior: Clip.antiAlias,
-        margin: EdgeInsets.zero,
-        child: SizedBox(
-          width: paneConstraints.maxWidth,
-          height: paneConstraints.maxHeight,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: _kCardContentPadding,
-                  vertical: _kCardHeaderVerticalPadding,
-                ),
-                child: Row(
-                  children: <Widget>[
-                    Text(label, style: theme.textTheme.titleSmall),
-                    const Spacer(),
-                    _buildBadge(
-                      theme: theme,
-                      label: preview.name ?? preview.functionName,
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1.0),
-              Expanded(
-                child: LayoutBuilder(
-                  builder:
-                      (BuildContext context, BoxConstraints cardConstraints) {
-                        return _buildPreviewSubtree(
-                          brightnessOverride: brightness,
-                          context: context,
-                          outerConstraints: outerConstraints,
-                          preview: preview,
-                          viewportConstraints: cardConstraints,
-                        );
-                      },
-                ),
-              ),
-            ],
-          ),
-        ),
+    final bool canPlaceSideBySide =
+        availableWidth >= _kMinSplitPaneExtent * 2 + _kCardSpacing;
+    final (Widget lightPane, Widget darkPane) = _buildLightDarkPanes(
+      badgeLabel: preview.name ?? preview.functionName,
+      darkKey: const Key('embed-split-dark'),
+      expandVertically: true,
+      lightKey: const Key('embed-split-light'),
+      preview: preview,
+      theme: theme,
+    );
+    final sideBySideRow = Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Expanded(child: lightPane),
+        const SizedBox(width: _kCardSpacing),
+        Expanded(child: darkPane),
+      ],
+    );
+    if (canPlaceSideBySide && outerConstraints.hasBoundedHeight) {
+      return Padding(
+        padding: const EdgeInsets.all(_kGalleryPadding),
+        child: sideBySideRow,
       );
     }
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(_kGalleryPadding),
-      child: Wrap(
-        spacing: _kCardSpacing,
-        runSpacing: _kCardSpacing,
-        children: <Widget>[
-          buildPane(Brightness.light, 'Light', const Key('embed-split-light')),
-          buildPane(Brightness.dark, 'Dark', const Key('embed-split-dark')),
-        ],
-      ),
+      child: canPlaceSideBySide
+          ? SizedBox(height: paneHeight, child: sideBySideRow)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                SizedBox(height: paneHeight, child: lightPane),
+                const SizedBox(height: _kCardSpacing),
+                SizedBox(height: paneHeight, child: darkPane),
+              ],
+            ),
     );
   }
 
@@ -485,6 +555,8 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     required BoxConstraints viewportConstraints,
     Brightness? brightnessOverride,
     double? fallbackWindowHeight,
+    ValueChanged<EmbedPreviewParams>? onParamsChanged,
+    EmbedPreviewParams? params,
   }) {
     final (
       :Brightness resolvedBrightness,
@@ -527,6 +599,8 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         key: ValueKey<String>(preview.id),
         brightness: appliedBrightness,
         controller: widget.controller,
+        onParamsChanged: onParamsChanged,
+        params: params,
         preview: preview,
         previewerConstraints: windowConstraints,
         resolvedHeight: resolvedHeight,
@@ -634,25 +708,40 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: _kCardContentPadding,
-              vertical: _kCardHeaderVerticalPadding,
+          InkWell(
+            key: Key('embed-gallery-header-${preview.id}'),
+            mouseCursor: SystemMouseCursors.click,
+            hoverColor: theme.colorScheme.onSurface.withValues(
+              alpha: _kCardHeaderHoverAlpha,
             ),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    preview.name ?? preview.functionName,
-                    style: theme.textTheme.titleSmall,
-                    overflow: TextOverflow.ellipsis,
+            onTap: () =>
+                _handleParamsChanged(_params.copyWith(previewId: preview.id)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: _kCardContentPadding,
+                vertical: _kCardHeaderVerticalPadding,
+              ),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      preview.name ?? preview.functionName,
+                      style: theme.textTheme.titleSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                if (sizeLabel != null) ...<Widget>[
+                  if (sizeLabel != null) ...<Widget>[
+                    const SizedBox(width: _kGroupHeaderSpacing),
+                    _buildBadge(theme: theme, label: sizeLabel),
+                  ],
                   const SizedBox(width: _kGroupHeaderSpacing),
-                  _buildBadge(theme: theme, label: sizeLabel),
+                  Icon(
+                    Icons.chevron_right,
+                    size: _kCardHeaderChevronSize,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ],
-              ],
+              ),
             ),
           ),
           const Divider(height: 1.0),
@@ -668,12 +757,52 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                 : LayoutBuilder(
                     builder:
                         (BuildContext context, BoxConstraints cardConstraints) {
-                          return _buildPreviewSubtree(
-                            context: context,
+                          if (!_isSplitBrightness) {
+                            return _buildPreviewSubtree(
+                              context: context,
+                              fallbackWindowHeight: fallbackWindowHeight,
+                              outerConstraints: outerConstraints,
+                              preview: preview,
+                              viewportConstraints: cardConstraints,
+                            );
+                          }
+                          final (
+                            Widget lightPane,
+                            Widget darkPane,
+                          ) = _buildLightDarkPanes(
+                            bodyPadding: const EdgeInsets.all(
+                              _kCardContentPadding,
+                            ),
+                            darkKey: Key(
+                              'embed-gallery-split-dark-${preview.id}',
+                            ),
+                            expandVertically: false,
                             fallbackWindowHeight: fallbackWindowHeight,
-                            outerConstraints: outerConstraints,
+                            lightKey: Key(
+                              'embed-gallery-split-light-${preview.id}',
+                            ),
                             preview: preview,
-                            viewportConstraints: cardConstraints,
+                            theme: theme,
+                          );
+                          if (cardConstraints.maxWidth <
+                              _kMinSplitPaneExtent * 2 + _kCardSpacing) {
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                lightPane,
+                                const SizedBox(height: _kCardSpacing),
+                                darkPane,
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Expanded(child: lightPane),
+                              const SizedBox(width: _kCardSpacing),
+                              Expanded(child: darkPane),
+                            ],
                           );
                         },
                   ),
@@ -775,6 +904,8 @@ class _EmbedPreviewContent extends StatefulWidget {
     required this.textScale,
     required this.viewportConstraints,
     required this.zoom,
+    this.onParamsChanged,
+    this.params,
     this.resolvedHeight,
     this.resolvedWidth,
     this.showBounds = false,
@@ -783,6 +914,8 @@ class _EmbedPreviewContent extends StatefulWidget {
 
   final Brightness brightness;
   final WidgetPreviewScaffoldController controller;
+  final ValueChanged<EmbedPreviewParams>? onParamsChanged;
+  final EmbedPreviewParams? params;
   final WidgetPreview preview;
   final BoxConstraints previewerConstraints;
   final double? resolvedHeight;
@@ -798,6 +931,7 @@ class _EmbedPreviewContent extends StatefulWidget {
 }
 
 class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
+  final _frameBoxKey = GlobalKey();
   final _previewContentKey = GlobalKey();
   ({Object error, StackTrace stackTrace})? _layoutError;
 
@@ -835,6 +969,8 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
   Widget _buildSizedPreviewFrame(Widget child) {
     final _EmbedPreviewContent(
       :Brightness brightness,
+      :ValueChanged<EmbedPreviewParams>? onParamsChanged,
+      :EmbedPreviewParams? params,
       :WidgetPreview preview,
       :BoxConstraints previewerConstraints,
       :double? resolvedHeight,
@@ -868,10 +1004,13 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       ),
       child: wrapped,
     );
-    final Widget boundedContent = _PreviewBoundsOverlay(
-      key: const Key('embed-bounds-overlay'),
-      enabled: widget.showBounds,
-      child: constrained,
+    final Widget boundedContent = KeyedSubtree(
+      key: _frameBoxKey,
+      child: _PreviewBoundsOverlay(
+        key: const Key('embed-bounds-overlay'),
+        enabled: widget.showBounds,
+        child: constrained,
+      ),
     );
     final selectable = EmbedSelectablePreviewSurface(
       brightness: brightness,
@@ -889,12 +1028,27 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
     final double minHeight = viewportConstraints.hasBoundedHeight
         ? viewportConstraints.maxHeight
         : 0.0;
-    return ScaledScrollablePreview(
-      scale: zoom,
+    if (onParamsChanged == null || params == null) {
+      return ScaledScrollablePreview(
+        scale: zoom,
+        includeVerticalScroll: viewportConstraints.hasBoundedHeight,
+        minWidth: minWidth,
+        minHeight: minHeight,
+        child: selectable,
+      );
+    }
+    return EmbedLiveResizableFrame(
+      defaultSize: _EmbedPreviewScaffoldState._kDefaultWindowSize,
       includeVerticalScroll: viewportConstraints.hasBoundedHeight,
-      minWidth: minWidth,
+      logicalFrameKey: _frameBoxKey,
       minHeight: minHeight,
-      child: selectable,
+      minWidth: minWidth,
+      onParamsChanged: onParamsChanged,
+      params: params,
+      resolvedHeight: resolvedHeight,
+      resolvedWidth: resolvedWidth,
+      zoom: zoom,
+      child: ScaledPreviewLayout(scale: zoom, child: selectable),
     );
   }
 

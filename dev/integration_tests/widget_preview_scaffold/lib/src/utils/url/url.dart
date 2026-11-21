@@ -229,6 +229,7 @@ class EmbedPreviewParams {
   /// Returns a copy of this configuration with the specified fields updated.
   EmbedPreviewParams copyWith({
     Brightness? brightness,
+    bool clearBrightness = false,
     bool clearHeight = false,
     bool clearPreviewId = false,
     bool clearWidth = false,
@@ -243,7 +244,7 @@ class EmbedPreviewParams {
     double? zoom,
   }) {
     return EmbedPreviewParams(
-      brightness: brightness ?? this.brightness,
+      brightness: clearBrightness ? null : (brightness ?? this.brightness),
       dtdProxy: dtdProxy ?? this.dtdProxy,
       height: clearHeight ? null : (height ?? this.height),
       isEmbed: isEmbed ?? this.isEmbed,

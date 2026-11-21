@@ -1513,10 +1513,13 @@ void main() {
           findsOneWidget,
         );
 
-        // Toggle brightness -> updates params to dark.
-        await tester.tap(find.byKey(const Key('embed-live-brightness-toggle')));
+        // Select Dark brightness -> updates params to dark; tapping active Dark clears back to auto.
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
         await tester.pump();
         expect(getUrlFragment(), contains('brightness=dark'));
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('brightness=')));
 
         // Select 375px width preset, then Responsive to clear.
         await tester.tap(find.byKey(const Key('embed-live-width-375')));
@@ -1760,7 +1763,7 @@ void main() {
       },
     );
 
-    testWidgets('dropdown matches shorthand previewId', (
+    testWidgets('preview selector pill matches shorthand previewId', (
       WidgetTester tester,
     ) async {
       final WidgetPreview interactivePreview = buildWidgetPreview(
@@ -1793,10 +1796,22 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final DropdownButton<String> dropdown = tester.widget(
-        find.byKey(const Key('embed-live-preview-selector')),
+      final Finder selectorFinder = find.byKey(
+        const Key('embed-live-preview-selector'),
       );
-      expect(dropdown.value, interactivePreview.id);
+      expect(tester.widget(selectorFinder), isA<OutlinedButton>());
+      expect(find.byType(DropdownButton<String>), findsNothing);
+      expect(
+        find.descendant(
+          of: selectorFinder,
+          matching: find.textContaining('ShorthandBtn'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('embed-live-all-previews-button')),
+        findsOneWidget,
+      );
     });
 
     testWidgets(
@@ -1897,6 +1912,32 @@ void main() {
       final Finder darkPane = find.byKey(const Key('embed-split-dark'));
       expect(lightPane, findsOneWidget);
       expect(darkPane, findsOneWidget);
+      expect(
+        tester.getTopLeft(lightPane).dy,
+        equals(tester.getTopLeft(darkPane).dy),
+      );
+      expect(
+        tester.getTopLeft(lightPane).dx,
+        lessThan(tester.getTopLeft(darkPane).dx),
+      );
+      expect(
+        find.descendant(
+          of: lightPane,
+          matching: find.byWidgetPredicate(
+            (Widget w) => w is ColoredBox && w.color == const Color(0xFFFAFAFA),
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: darkPane,
+          matching: find.byWidgetPredicate(
+            (Widget w) => w is ColoredBox && w.color == const Color(0xFF18181B),
+          ),
+        ),
+        findsOneWidget,
+      );
       final WidgetPreviewEnvironment lightEnv = tester.widget(
         find.descendant(
           of: lightPane,
@@ -1975,6 +2016,307 @@ void main() {
       await tester.pump();
       expect(copiedId, 'package:my_app/alpha.dart::alphaPreview');
     });
+
+    testWidgets(
+      'Light + Dark renders side-by-side in All Previews gallery and exits cleanly via Light or Dark',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(900, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        debugSetUrlFragment('live=1&previewId=*');
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildGroupedTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('embed-live-split-brightness')));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        const primaryId = 'package:my_app/buttons.dart::primaryButtonPreview';
+        final Finder galleryLight = find.byKey(
+          const Key('embed-gallery-split-light-$primaryId'),
+        );
+        final Finder galleryDark = find.byKey(
+          const Key('embed-gallery-split-dark-$primaryId'),
+        );
+        expect(galleryLight, findsOneWidget);
+        expect(galleryDark, findsOneWidget);
+        expect(
+          tester.getTopLeft(galleryLight).dy,
+          equals(tester.getTopLeft(galleryDark).dy),
+        );
+        expect(
+          find.descendant(
+            of: galleryLight,
+            matching: find.byWidgetPredicate(
+              (Widget w) =>
+                  w is ColoredBox && w.color == const Color(0xFFFAFAFA),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: galleryDark,
+            matching: find.byWidgetPredicate(
+              (Widget w) =>
+                  w is ColoredBox && w.color == const Color(0xFF18181B),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<WidgetPreviewEnvironment>(
+                find.descendant(
+                  of: galleryLight,
+                  matching: find.byType(WidgetPreviewEnvironment),
+                ),
+              )
+              .brightness,
+          Brightness.light,
+        );
+        expect(
+          tester
+              .widget<WidgetPreviewEnvironment>(
+                find.descendant(
+                  of: galleryDark,
+                  matching: find.byType(WidgetPreviewEnvironment),
+                ),
+              )
+              .brightness,
+          Brightness.dark,
+        );
+        // Error card continues displaying compile error text cleanly.
+        expect(
+          find.text('package:my_app/broken_button.dart has errors!'),
+          findsOneWidget,
+        );
+
+        // Clicking Dark exits split mode and sets brightness=dark.
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
+        await tester.pump();
+        expect(galleryLight, findsNothing);
+        expect(galleryDark, findsNothing);
+        expect(getUrlFragment(), contains('brightness=dark'));
+
+        // Re-entering split while brightness=dark is already set, then clicking
+        // Dark again, still exits split mode instead of getting stuck.
+        await tester.tap(find.byKey(const Key('embed-live-split-brightness')));
+        await tester.pump();
+        expect(galleryLight, findsOneWidget);
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
+        await tester.pump();
+        expect(galleryLight, findsNothing);
+        expect(getUrlFragment(), contains('brightness=dark'));
+
+        // Clicking Light switches to brightness=light; clicking Light again clears to auto.
+        await tester.tap(find.byKey(const Key('embed-live-brightness-light')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('brightness=light'));
+        await tester.tap(find.byKey(const Key('embed-live-brightness-light')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('brightness=')));
+      },
+    );
+
+    testWidgets(
+      'clicking gallery card header focuses preview, selector menu switches previews, and All Previews returns in 1 click',
+      (WidgetTester tester) async {
+        debugSetUrlFragment('live=1');
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildGroupedTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('embed-live-all-previews-button')),
+          findsNothing,
+        );
+        final Finder alphaHeader = find.byKey(
+          const Key('embed-gallery-header-$_kAlphaId'),
+        );
+        expect(alphaHeader, findsOneWidget);
+        expect(
+          tester.widget<InkWell>(alphaHeader).mouseCursor,
+          SystemMouseCursors.click,
+        );
+
+        await tester.tap(alphaHeader);
+        await tester.pump();
+        expect(getUrlFragment(), contains(Uri.encodeQueryComponent(_kAlphaId)));
+        expect(find.text('Alpha: count=0'), findsOneWidget);
+        expect(find.text('Buttons'), findsNothing);
+        expect(
+          find.byKey(const Key('embed-live-all-previews-button')),
+          findsOneWidget,
+        );
+
+        // Switch via pill MenuAnchor selector to Beta Card [Cards].
+        await tester.tap(find.byKey(const Key('embed-live-preview-selector')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Beta Card [Cards]').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Beta: count=0'), findsOneWidget);
+
+        // 1-click All Previews button returns to gallery.
+        await tester.tap(
+          find.byKey(const Key('embed-live-all-previews-button')),
+        );
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('previewId=')));
+        expect(find.text('Buttons'), findsOneWidget);
+        expect(
+          find.byKey(const Key('embed-live-all-previews-button')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'custom WxH inputs and drag-resize handles resize single preview with zoom scaling, min clamp, and double-tap reset',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(900, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        // Chromeless #embed=1 omits live resize handles.
+        debugSetUrlFragment(
+          'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+        );
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+          previews: _buildTestPreviews,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-resize-width')), findsNothing);
+
+        // Switch to /live single-preview mode.
+        debugSetUrlFragment(
+          'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+        );
+        await tester.pump();
+
+        final Finder widthInput = find.byKey(
+          const Key('embed-live-width-input'),
+        );
+        final Finder heightInput = find.byKey(
+          const Key('embed-live-height-input'),
+        );
+        final Finder widthHandle = find.byKey(
+          const Key('embed-live-resize-width'),
+        );
+        final Finder heightHandle = find.byKey(
+          const Key('embed-live-resize-height'),
+        );
+        final Finder cornerHandle = find.byKey(
+          const Key('embed-live-resize-corner'),
+        );
+        expect(tester.widget<TextField>(widthInput).controller!.text, isEmpty);
+        expect(tester.widget<TextField>(heightInput).controller!.text, isEmpty);
+        expect(
+          tester.widget<MouseRegion>(widthHandle).cursor,
+          SystemMouseCursors.resizeLeftRight,
+        );
+        expect(
+          tester.widget<MouseRegion>(heightHandle).cursor,
+          SystemMouseCursors.resizeUpDown,
+        );
+        expect(
+          tester.widget<MouseRegion>(cornerHandle).cursor,
+          SystemMouseCursors.resizeDownRight,
+        );
+
+        // Enter custom W on submit and custom H on blur.
+        await tester.enterText(widthInput, '420');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+        expect(getUrlFragment(), contains('width=420'));
+
+        await tester.tap(heightInput);
+        await tester.pump();
+        await tester.enterText(heightInput, '520');
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump();
+        expect(getUrlFragment(), contains('height=520'));
+        expect(find.textContaining('media=420x520'), findsOneWidget);
+
+        // Invalid input reverts cleanly; preset syncs W and clears H.
+        await tester.enterText(widthInput, '-10');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+        expect(tester.widget<TextField>(widthInput).controller!.text, '420');
+
+        await tester.tap(find.byKey(const Key('embed-live-width-768')));
+        await tester.pump();
+        expect(tester.widget<TextField>(widthInput).controller!.text, '768');
+        expect(tester.widget<TextField>(heightInput).controller!.text, isEmpty);
+
+        // Empty submission clears width back to auto.
+        await tester.enterText(widthInput, '');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('width=')));
+
+        // Drag-resize at zoom=0.5 scales pointer delta by 1/zoom and clamps min 120px.
+        debugSetUrlFragment(
+          'live=1&previewId=Expanding&width=300&height=260&zoom=0.5',
+        );
+        await tester.pump();
+
+        await tester.drag(widthHandle, const Offset(50, 0));
+        await tester.pump();
+        expect(getUrlFragment(), contains('width=400'));
+        expect(tester.widget<TextField>(widthInput).controller!.text, '400');
+
+        await tester.drag(heightHandle, const Offset(0, -200));
+        await tester.pump();
+        expect(getUrlFragment(), contains('height=120'));
+
+        await tester.drag(cornerHandle, const Offset(25, 40));
+        await tester.pump();
+        expect(getUrlFragment(), contains('width=450'));
+        expect(getUrlFragment(), contains('height=200'));
+
+        // Double-tap width handle resets width to auto while keeping height=200.
+        await tester.tap(widthHandle);
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.tap(widthHandle);
+        await tester.pump(kDoubleTapTimeout);
+        expect(getUrlFragment(), isNot(contains('width=')));
+        expect(getUrlFragment(), contains('height=200'));
+
+        // Double-tap corner handle resets remaining dimensions to auto.
+        await tester.tap(cornerHandle);
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.tap(cornerHandle);
+        await tester.pump(kDoubleTapTimeout);
+        expect(getUrlFragment(), isNot(contains('width=')));
+        expect(getUrlFragment(), isNot(contains('height=')));
+      },
+    );
   });
 }
 
