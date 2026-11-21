@@ -1460,8 +1460,8 @@ void main() {
         final Directory realDir = fs.directory('/real/app/lib')..createSync(recursive: true);
         final File realFile = realDir.childFile('main.dart')..writeAsStringSync('');
         final Directory linkDir = fs.directory('/link/app/lib')..createSync(recursive: true);
-        final symlinkFile = linkDir.childFile('main.dart') as Link;
-        fs.link(symlinkFile.path).createSync(realFile.path);
+        final Link symlinkFile = fs.link(linkDir.childFile('main.dart').path)
+          ..createSync(realFile.path);
 
         final services = WidgetPreviewDtdServices(
           addUuidToServiceName: false,
