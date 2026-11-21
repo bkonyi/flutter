@@ -208,7 +208,11 @@ enum PreviewDiagnosticKind {
   compileError('compile_error'),
   exception('exception'),
   unconstrained('unconstrained'),
-  overflow('overflow');
+  overflow('overflow'),
+  zeroSize('zero_size'),
+  textTruncated('text_truncated'),
+  smallTapTarget('small_tap_target'),
+  pendingFrame('pending_frame');
 
   const PreviewDiagnosticKind(this.wireValue);
 
@@ -219,7 +223,27 @@ enum PreviewDiagnosticKind {
     'exception' => .exception,
     'unconstrained' => .unconstrained,
     'overflow' => .overflow,
+    'zero_size' => .zeroSize,
+    'text_truncated' => .textTruncated,
+    'small_tap_target' => .smallTapTarget,
+    'pending_frame' => .pendingFrame,
     _ => throw FormatException('Unknown PreviewDiagnosticKind: $value'),
+  };
+}
+
+/// Severity level of a [PreviewDiagnostic].
+enum PreviewDiagnosticSeverity {
+  error('error'),
+  warning('warning');
+
+  const PreviewDiagnosticSeverity(this.wireValue);
+
+  final String wireValue;
+
+  static PreviewDiagnosticSeverity fromJson(String value) => switch (value) {
+    'error' => .error,
+    'warning' => .warning,
+    _ => throw FormatException('Unknown PreviewDiagnosticSeverity: $value'),
   };
 }
 
@@ -234,6 +258,7 @@ class PreviewDiagnostic {
     this.overflowAxis,
     this.overflowPixels,
     this.overflowSide,
+    this.severity = .error,
     this.targetType,
   });
 
@@ -242,6 +267,7 @@ class PreviewDiagnostic {
   static const kOverflowPixels = 'overflowPixels';
   static const kOverflowSide = 'overflowSide';
   static const kPhase = 'phase';
+  static const kSeverity = 'severity';
   static const kSummary = 'summary';
   static const kTargetType = 'targetType';
 
@@ -259,6 +285,7 @@ class PreviewDiagnostic {
   final double? overflowPixels;
   final String? overflowSide;
   final PreviewDiagnosticPhase phase;
+  final PreviewDiagnosticSeverity severity;
   final String summary;
   final String? targetType;
 
@@ -319,6 +346,7 @@ class PreviewDiagnostic {
     overflowPixels,
     overflowSide,
     phase,
+    severity,
     summary,
     targetType,
   );
@@ -332,6 +360,7 @@ class PreviewDiagnostic {
         overflowPixels == other.overflowPixels &&
         overflowSide == other.overflowSide &&
         phase == other.phase &&
+        severity == other.severity &&
         summary == other.summary &&
         targetType == other.targetType;
   }
@@ -340,6 +369,7 @@ class PreviewDiagnostic {
     return <String, Object?>{
       kPhase: phase.name,
       kKind: kind.wireValue,
+      kSeverity: severity.wireValue,
       kSummary: summary,
       kOverflowPixels: ?overflowPixels,
       kOverflowSide: ?overflowSide,
@@ -358,6 +388,10 @@ class PreviewDiagnostic {
       overflowPixels: (json[kOverflowPixels] as num?)?.toDouble(),
       overflowSide: json[kOverflowSide] as String?,
       phase: PreviewDiagnosticPhase.fromJson(json[kPhase]! as String),
+      severity: switch (json[kSeverity]) {
+        final String value => PreviewDiagnosticSeverity.fromJson(value),
+        _ => .error,
+      },
       summary: json[kSummary]! as String,
       targetType: json[kTargetType] as String?,
     );
@@ -571,6 +605,7 @@ class PreviewCaptureRequest {
     this.height,
     this.includeImage = true,
     this.pixelRatio,
+    this.pumpMs,
     this.textScaleFactor,
     this.width,
   });
@@ -580,6 +615,7 @@ class PreviewCaptureRequest {
   final bool includeImage;
   final double? pixelRatio;
   final String previewId;
+  final int? pumpMs;
   final double? textScaleFactor;
   final double? width;
 }

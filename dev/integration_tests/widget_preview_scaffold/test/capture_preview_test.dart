@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert'
     show base64Decode, base64Encode, jsonDecode, jsonEncode, utf8;
 import 'dart:ui' as ui;
 
 import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
@@ -1618,5 +1620,302 @@ void main() {
       expect(observedSize?.height, 600.0);
       expect(observedSize?.height.isFinite, isTrue);
     },
+  );
+
+  testWidgets('capturePreview emits zeroSize error for 0x0 preview', (
+    WidgetTester tester,
+  ) async {
+    final dtd = FakeWidgetPreviewScaffoldDtdServices();
+    final controller = WidgetPreviewScaffoldController(
+      dtdServicesOverride: dtd,
+      previews: () => <WidgetPreview>[
+        buildWidgetPreview(
+          column: 1,
+          functionName: 'zeroPreview',
+          libraryUri: 'package:app/widgets.dart',
+          line: 10,
+          packageName: 'app',
+          previewFunction: () => const SizedBox.shrink(),
+          scriptUri: 'file:///app/lib/widgets.dart',
+          transformedPreview: const Preview(name: 'zeroPreview').transform(),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(TestWidgetPreviewScaffold(controller: controller));
+
+    final CapturePreviewResponse response = await dtd.onCapturePreview!(
+      const PreviewCaptureRequest(
+        previewId: 'package:app/widgets.dart::zeroPreview',
+      ),
+    );
+
+    expect(response.hasErrors, isTrue);
+    expect(
+      response.diagnostics.any(
+        (PreviewDiagnostic d) => d.kind == .zeroSize && d.severity == .error,
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets(
+    'capturePreview emits textTruncated warning without failing hasErrors',
+    (WidgetTester tester) async {
+      final dtd = FakeWidgetPreviewScaffoldDtdServices();
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: dtd,
+        previews: () => <WidgetPreview>[
+          buildWidgetPreview(
+            column: 1,
+            functionName: 'truncatedText',
+            libraryUri: 'package:app/widgets.dart',
+            line: 10,
+            packageName: 'app',
+            previewFunction: () => const Directionality(
+              textDirection: TextDirection.ltr,
+              child: SizedBox(
+                width: 60,
+                child: Text(
+                  'Very long text that definitely overflows this narrow box',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            scriptUri: 'file:///app/lib/widgets.dart',
+            transformedPreview: const Preview(
+              name: 'truncatedText',
+              size: Size(80, 40),
+            ).transform(),
+          ),
+        ],
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+
+      final CapturePreviewResponse response = await dtd.onCapturePreview!(
+        const PreviewCaptureRequest(
+          previewId: 'package:app/widgets.dart::truncatedText',
+        ),
+      );
+
+      expect(response.hasErrors, isFalse);
+      expect(
+        response.diagnostics.any(
+          (PreviewDiagnostic d) =>
+              d.kind == .textTruncated && d.severity == .warning,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'capturePreview emits smallTapTarget warning on mobile targets only',
+    (WidgetTester tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        final dtd = FakeWidgetPreviewScaffoldDtdServices();
+        final controller = WidgetPreviewScaffoldController(
+          dtdServicesOverride: dtd,
+          previews: () => <WidgetPreview>[
+            buildWidgetPreview(
+              column: 1,
+              functionName: 'smallButton',
+              libraryUri: 'package:app/widgets.dart',
+              line: 10,
+              packageName: 'app',
+              previewFunction: () => Center(
+                child: Semantics(
+                  onTap: () {},
+                  child: const SizedBox(width: 24, height: 24),
+                ),
+              ),
+              scriptUri: 'file:///app/lib/widgets.dart',
+              transformedPreview: const Preview(
+                name: 'smallButton',
+                size: Size(120, 80),
+              ).transform(),
+            ),
+          ],
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await tester.pumpWidget(
+          TestWidgetPreviewScaffold(controller: controller),
+        );
+
+        final CapturePreviewResponse response = await dtd.onCapturePreview!(
+          const PreviewCaptureRequest(
+            previewId: 'package:app/widgets.dart::smallButton',
+          ),
+        );
+
+        expect(response.hasErrors, isFalse);
+        expect(
+          response.diagnostics.any(
+            (PreviewDiagnostic d) =>
+                d.kind == .smallTapTarget && d.severity == .warning,
+          ),
+          isTrue,
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
+  testWidgets('capturePreview emits pendingFrame warning for active ticker', (
+    WidgetTester tester,
+  ) async {
+    final dtd = FakeWidgetPreviewScaffoldDtdServices();
+    final controller = WidgetPreviewScaffoldController(
+      dtdServicesOverride: dtd,
+      previews: () => <WidgetPreview>[
+        buildWidgetPreview(
+          column: 1,
+          functionName: 'animatingPreview',
+          libraryUri: 'package:app/widgets.dart',
+          line: 10,
+          packageName: 'app',
+          previewFunction: () => const _ActiveTickerWidget(),
+          scriptUri: 'file:///app/lib/widgets.dart',
+          transformedPreview: const Preview(
+            name: 'animatingPreview',
+            size: Size(120, 80),
+          ).transform(),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(TestWidgetPreviewScaffold(controller: controller));
+
+    final CapturePreviewResponse response = await dtd.onCapturePreview!(
+      const PreviewCaptureRequest(
+        previewId: 'package:app/widgets.dart::animatingPreview',
+      ),
+    );
+
+    expect(response.hasErrors, isFalse);
+    expect(
+      response.diagnostics.any(
+        (PreviewDiagnostic d) =>
+            d.kind == .pendingFrame && d.severity == .warning,
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('capturePreview pumpMs settles delayed state and clamps at max', (
+    WidgetTester tester,
+  ) async {
+    final dtd = FakeWidgetPreviewScaffoldDtdServices();
+    final controller = WidgetPreviewScaffoldController(
+      dtdServicesOverride: dtd,
+      previews: () => <WidgetPreview>[
+        buildWidgetPreview(
+          column: 1,
+          functionName: 'delayedPreview',
+          libraryUri: 'package:app/widgets.dart',
+          line: 10,
+          packageName: 'app',
+          previewFunction: () => const _DelayedSettlingWidget(),
+          scriptUri: 'file:///app/lib/widgets.dart',
+          transformedPreview: const Preview(
+            name: 'delayedPreview',
+            size: Size(200, 100),
+          ).transform(),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(TestWidgetPreviewScaffold(controller: controller));
+
+    final CapturePreviewResponse settled = await dtd.onCapturePreview!(
+      const PreviewCaptureRequest(
+        previewId: 'package:app/widgets.dart::delayedPreview',
+        pumpMs: 30,
+      ),
+    );
+    expect(settled.hasErrors, isFalse);
+    expect(settled.imageBase64, isNotNull);
+
+    final stopwatch = Stopwatch()..start();
+    final CapturePreviewResponse clamped = await dtd.onCapturePreview!(
+      const PreviewCaptureRequest(
+        previewId: 'package:app/widgets.dart::delayedPreview',
+        pumpMs: 5000,
+      ),
+    );
+    stopwatch.stop();
+    expect(clamped.hasErrors, isFalse);
+    expect(stopwatch.elapsedMilliseconds, lessThan(3500));
+  });
+}
+
+class _DelayedSettlingWidget extends StatefulWidget {
+  const _DelayedSettlingWidget();
+
+  @override
+  State<_DelayedSettlingWidget> createState() => _DelayedSettlingWidgetState();
+}
+
+class _DelayedSettlingWidgetState extends State<_DelayedSettlingWidget> {
+  var _settled = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(milliseconds: 10), () {
+      if (mounted) {
+        setState(() {
+          _settled = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Text(_settled ? 'Ready' : 'Loading');
+}
+
+class _ActiveTickerWidget extends StatefulWidget {
+  const _ActiveTickerWidget();
+
+  @override
+  State<_ActiveTickerWidget> createState() => _ActiveTickerWidgetState();
+}
+
+class _ActiveTickerWidgetState extends State<_ActiveTickerWidget>
+    with SingleTickerProviderStateMixin {
+  late final _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 1),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: _controller,
+    child: const SizedBox(width: 20, height: 20),
   );
 }

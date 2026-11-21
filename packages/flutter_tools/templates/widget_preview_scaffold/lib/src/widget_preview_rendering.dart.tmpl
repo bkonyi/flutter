@@ -1758,6 +1758,16 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
             session.boundaryKey.currentContext?.findRenderObject()
                 as RenderRepaintBoundary?;
       }
+      if (request.pumpMs case final int rawPumpMs when rawPumpMs > 0) {
+        final int clampedPumpMs = rawPumpMs.clamp(0, kMaxCapturePumpMs);
+        await Future<void>.delayed(Duration(milliseconds: clampedPumpMs));
+        _checkMountedForCapture();
+        await _pumpStageFrame();
+        _checkMountedForCapture();
+        boundary =
+            session.boundaryKey.currentContext?.findRenderObject()
+                as RenderRepaintBoundary?;
+      }
       final bool hasErrorBox =
           boundary == null || _hasDescendantRenderErrorBox(boundary);
       if (hasErrorBox && !session.hasBuildError && !session.hasLayoutError) {
@@ -1778,6 +1788,32 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
       final double renderedHeight = layoutAndBuildSucceeded && boundary.hasSize
           ? boundary.size.height
           : 0.0;
+
+      if (layoutAndBuildSucceeded) {
+        if (renderedWidth <= 0 || renderedHeight <= 0) {
+          session.recordDiagnostic(
+            PreviewDiagnostic(
+              kind: .zeroSize,
+              phase: .layout,
+              summary:
+                  'Preview rendered with zero size (${renderedWidth}x$renderedHeight).',
+            ),
+          );
+        } else {
+          _auditRenderedSubtree(boundary, session);
+        }
+        if (SchedulerBinding.instance.transientCallbackCount > 0) {
+          session.recordDiagnostic(
+            const PreviewDiagnostic(
+              kind: .pendingFrame,
+              phase: .paint,
+              severity: .warning,
+              summary:
+                  'Preview still has an active animation/frame callback after pump; pass pumpMs to settle.',
+            ),
+          );
+        }
+      }
 
       String? imageBase64;
       double reportedPixelRatio = resolvedPixelRatio;
@@ -1822,9 +1858,12 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
 
       final List<PreviewDiagnostic> diagnostics =
           List<PreviewDiagnostic>.unmodifiable(session.diagnostics);
+      final bool hasErrors = diagnostics.any(
+        (PreviewDiagnostic d) => d.severity == .error,
+      );
       return CapturePreviewResponse(
         diagnostics: diagnostics,
-        hasErrors: diagnostics.isNotEmpty,
+        hasErrors: hasErrors,
         imageBase64: imageBase64,
         name: preview.name,
         pixelRatio: reportedPixelRatio,
@@ -2210,8 +2249,86 @@ class WidgetPreviews extends StatelessWidget {
   }
 }
 
-const _kOverflowingRenderFlexSuffix = ' OVERFLOWING';
+/// Suffix appended by Flutter's `DebugOverflowIndicatorMixin` on overflowing
+/// `RenderFlex` instances.
+const kOverflowingRenderFlexSuffix = ' OVERFLOWING';
 const _kBuildingContextPrefix = 'building ';
+
+/// Maximum allowed `pumpMs` delay for off-screen preview capture.
+const kMaxCapturePumpMs = 2000;
+const _kMaxSubtreeWarnings = 5;
+const _kMaxTruncatedTextChars = 40;
+const _kMinTapTargetSize = 48.0;
+
+void _auditRenderedSubtree(
+  RenderRepaintBoundary root,
+  _StageCaptureSession session,
+) {
+  var truncatedCount = 0;
+  var smallTapCount = 0;
+  final seenTapBoxes = <Rect>{};
+  final bool checkSmallTapTargets =
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  void visit(RenderObject node) {
+    if (truncatedCount >= _kMaxSubtreeWarnings &&
+        (!checkSmallTapTargets || smallTapCount >= _kMaxSubtreeWarnings)) {
+      return;
+    }
+    if (node is RenderParagraph &&
+        node.didExceedMaxLines &&
+        truncatedCount < _kMaxSubtreeWarnings) {
+      truncatedCount++;
+      final String plainText = node.text.toPlainText();
+      final String snippet = plainText.length > _kMaxTruncatedTextChars
+          ? '${plainText.substring(0, _kMaxTruncatedTextChars)}...'
+          : plainText;
+      session.recordDiagnostic(
+        PreviewDiagnostic(
+          kind: .textTruncated,
+          phase: .layout,
+          severity: .warning,
+          targetType: 'RenderParagraph',
+          summary: 'Text truncated ("$snippet").',
+        ),
+      );
+    } else if (checkSmallTapTargets &&
+        node is RenderSemanticsAnnotations &&
+        node.hasSize &&
+        smallTapCount < _kMaxSubtreeWarnings &&
+        (node.properties.onTap != null ||
+            node.properties.onLongPress != null)) {
+      final Size s = node.size;
+      if (s.width.isFinite &&
+          s.height.isFinite &&
+          s.width > 0 &&
+          s.height > 0 &&
+          (s.width < _kMinTapTargetSize || s.height < _kMinTapTargetSize)) {
+        final Rect rect = MatrixUtils.transformRect(
+          node.getTransformTo(root),
+          Offset.zero & s,
+        );
+        if (seenTapBoxes.add(rect)) {
+          smallTapCount++;
+          session.recordDiagnostic(
+            PreviewDiagnostic(
+              kind: .smallTapTarget,
+              phase: .layout,
+              severity: .warning,
+              targetType: node.runtimeType.toString(),
+              summary:
+                  'Tap target ${s.width.round()}x${s.height.round()} is smaller than 48x48dp.',
+            ),
+          );
+        }
+      }
+    }
+    node.visitChildren(visit);
+  }
+
+  root.visitChildren(visit);
+}
 
 bool _hasDescendantRenderErrorBox(RenderObject root) {
   if (root is RenderErrorBox) {
@@ -2228,7 +2345,7 @@ bool _hasDescendantRenderErrorBox(RenderObject root) {
 
 bool _hasOverflowingRenderFlex(RenderObject root) {
   if (root is RenderFlex &&
-      root.toStringShort().endsWith(_kOverflowingRenderFlexSuffix)) {
+      root.toStringShort().endsWith(kOverflowingRenderFlexSuffix)) {
     return true;
   }
   var found = false;

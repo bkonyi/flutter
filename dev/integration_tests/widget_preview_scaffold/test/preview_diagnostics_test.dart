@@ -570,4 +570,31 @@ void main() {
       );
     },
   );
+
+  test('PreviewDiagnostic round-trips severity and new kinds', () {
+    for (final PreviewDiagnosticKind kind in <PreviewDiagnosticKind>[
+      .zeroSize,
+      .textTruncated,
+      .smallTapTarget,
+      .pendingFrame,
+    ]) {
+      final diagnostic = PreviewDiagnostic(
+        kind: kind,
+        phase: .layout,
+        severity: .warning,
+        summary: 'summary-${kind.wireValue}',
+      );
+      final Map<String, Object?> json = diagnostic.toJson();
+      expect(json[PreviewDiagnostic.kSeverity], 'warning');
+      expect(PreviewDiagnostic.fromJson(json), equals(diagnostic));
+    }
+
+    final PreviewDiagnostic defaulted =
+        PreviewDiagnostic.fromJson(const <String, Object?>{
+          PreviewDiagnostic.kKind: 'zero_size',
+          PreviewDiagnostic.kPhase: 'layout',
+          PreviewDiagnostic.kSummary: 'zero',
+        });
+    expect(defaulted.severity, PreviewDiagnosticSeverity.error);
+  });
 }

@@ -67,6 +67,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   static const kIncludeImage = 'includeImage';
   static const kPixelRatio = 'pixelRatio';
   static const kPreviewId = 'previewId';
+  static const kPumpMs = 'pumpMs';
   static const kTextScaleFactor = 'textScaleFactor';
   static const kUrl = 'url';
   static const kWidth = 'width';
@@ -230,6 +231,10 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         params.value == null ||
         params[kIncludeImage].valueOr(null) == null ||
         params[kIncludeImage].asBool;
+    final int? pumpMs =
+        params.value == null || params[kPumpMs].valueOr(null) == null
+        ? null
+        : params[kPumpMs].asInt;
     final Future<CapturePreviewResponse> Function(PreviewCaptureRequest)?
     captureCallback = onCapturePreview;
     if (captureCallback == null) {
@@ -245,6 +250,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         includeImage: includeImage,
         pixelRatio: pixelRatio,
         previewId: previewId,
+        pumpMs: pumpMs,
         textScaleFactor: textScaleFactor,
         width: width,
       ),
