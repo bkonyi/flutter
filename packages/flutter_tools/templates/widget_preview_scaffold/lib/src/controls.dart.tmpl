@@ -846,3 +846,58 @@ class _CopyFeedbackButtonState extends State<CopyFeedbackButton> {
     return OutlinedButton(onPressed: _copy, style: widget.style, child: child);
   }
 }
+
+/// Starter `@Preview` snippet shown in empty-state views.
+const kStarterPreviewSnippet = '''
+@Preview(name: 'My Widget')
+Widget myWidgetPreview() => const Text('Hello Preview');''';
+
+/// Compact copyable starter `@Preview` card for empty-state views.
+class StarterPreviewSnippetCard extends StatelessWidget {
+  const StarterPreviewSnippetCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 440),
+      child: Container(
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: theme.dividerColor),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Add a top-level public @Preview function:',
+              style: theme.textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                kStarterPreviewSnippet,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const CopyFeedbackButton(
+              key: Key('copy-starter-preview-snippet'),
+              copiedLabel: 'Copied!',
+              icon: Icons.copy,
+              label: 'Copy @Preview Snippet',
+              textToCopy: kStarterPreviewSnippet,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

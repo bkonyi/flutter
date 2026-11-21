@@ -261,6 +261,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                           context: context,
                           constraints: constraints,
                           message: _kNoPreviewsMessage,
+                          showStarterSnippet: true,
                           title: _kNoPreviewsTitle,
                         );
                       }
@@ -732,6 +733,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     required BoxConstraints constraints,
     required String message,
     required String title,
+    bool showStarterSnippet = false,
   }) {
     final ThemeData theme = Theme.of(context);
     return WidgetPreviewerWindowConstraints(
@@ -751,6 +753,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                     Text(title, style: theme.textTheme.titleMedium),
                     const SizedBox(height: _kStatusSectionSpacing),
                     SelectableText(message, style: theme.textTheme.bodyMedium),
+                    if (showStarterSnippet) const StarterPreviewSnippetCard(),
                   ],
                 ),
               ),

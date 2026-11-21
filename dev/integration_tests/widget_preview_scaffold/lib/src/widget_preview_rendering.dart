@@ -182,6 +182,7 @@ class NoPreviewsDetectedWidget extends StatelessWidget {
                 },
             ),
           ),
+          const StarterPreviewSnippetCard(),
         ],
       ),
     );

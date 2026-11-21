@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart'
     hide PreviewWidget;
@@ -74,6 +76,40 @@ void main() {
       expect(documentationUrlFinder, findsNothing);
       expect(widgetPreviewWidgetFinder, findsOne);
       expect(widgetPreviewGroupWidgetFinder, findsOne);
+    },
+  );
+
+  testWidgets(
+    'StarterPreviewSnippetCard copies starter @Preview snippet to clipboard',
+    (WidgetTester tester) async {
+      String? copiedText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            final Map<Object?, Object?> args =
+                call.arguments! as Map<Object?, Object?>;
+            copiedText = args['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: NoPreviewsDetectedWidget())),
+      );
+
+      await tester.tap(find.byKey(const Key('copy-starter-preview-snippet')));
+      await tester.pump();
+
+      expect(copiedText, equals(kStarterPreviewSnippet));
+      expect(find.text('Copied!'), findsOneWidget);
     },
   );
 }
