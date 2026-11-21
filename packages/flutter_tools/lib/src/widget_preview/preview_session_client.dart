@@ -90,6 +90,7 @@ class WidgetPreviewSessionClient {
   static const _kMessageKey = 'message';
   static const _kParamsKey = 'params';
   static const _kPidKey = 'pid';
+  static const _kPumpMsKey = 'pumpMs';
   static const _kStartSubcommand = 'start';
   static const _kStartedEventName = 'widget_preview.started';
   static const _kTaskkillBinary = 'taskkill';
@@ -249,6 +250,7 @@ class WidgetPreviewSessionClient {
     String? brightness,
     double? height,
     double? pixelRatio,
+    int? pumpMs,
     double? textScaleFactor,
     double? width,
   }) async {
@@ -276,6 +278,7 @@ class WidgetPreviewSessionClient {
         PreviewEntry.kWidth: ?width,
         PreviewEntry.kHeight: ?height,
         CapturePreviewResponse.kPixelRatio: ?pixelRatio,
+        _kPumpMsKey: ?pumpMs,
         PreviewEntry.kBrightness: ?brightness,
         PreviewEntry.kTextScaleFactor: ?textScaleFactor,
       },

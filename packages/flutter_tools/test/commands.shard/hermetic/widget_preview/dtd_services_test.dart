@@ -28,7 +28,7 @@ class FakeWidgetPreviewAnalytics extends Fake implements WidgetPreviewAnalytics 
   int reportPreviewerConnectedCount = 0;
 
   @override
-  void reportPreviewerConnected() {
+  void reportPreviewerConnected({String? mode}) {
     reportPreviewerConnectedCount++;
   }
 }
@@ -321,6 +321,7 @@ void main() {
             'phase': 'paint',
             'kind': 'overflow',
             'summary': 'A RenderFlex overflowed by 48 pixels on the right.',
+            'severity': 'error',
             'overflowPixels': 48.0,
             'overflowSide': 'right',
             'overflowAxis': 'horizontal',
@@ -342,9 +343,27 @@ void main() {
             'phase': 'compile',
             'kind': 'compile_error',
             'summary': 'package:my_app/card.dart has errors!',
+            'severity': 'error',
           }),
         );
         expect(PreviewDiagnostic.fromJson(compileJson), equals(compileDiag));
+
+        const warningDiag = PreviewDiagnostic(
+          kind: .textTruncated,
+          phase: .layout,
+          severity: .warning,
+          summary: 'Text truncated with ellipsis.',
+        );
+        final Map<String, Object?> warningJson = warningDiag.toJson();
+        expect(warningJson['kind'], 'text_truncated');
+        expect(warningJson['severity'], 'warning');
+        expect(PreviewDiagnostic.fromJson(warningJson), equals(warningDiag));
+        expect(PreviewDiagnosticKind.fromJson('zero_size'), PreviewDiagnosticKind.zeroSize);
+        expect(
+          PreviewDiagnosticKind.fromJson('small_tap_target'),
+          PreviewDiagnosticKind.smallTapTarget,
+        );
+        expect(PreviewDiagnosticKind.fromJson('pending_frame'), PreviewDiagnosticKind.pendingFrame);
 
         const entry = PreviewEntry(
           brightness: 'light',

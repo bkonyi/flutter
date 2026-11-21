@@ -32,9 +32,12 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
   static const kImage = 'image';
   static const kOutput = 'output';
   static const kPixelRatio = 'pixel-ratio';
+  static const kPumpMs = 'pump-ms';
   static const kSync = 'sync';
   static const kTextScaleFactor = 'text-scale-factor';
   static const kWidth = 'width';
+
+  static const _kMaxPumpMs = 2000;
 
   static const _kCodeKey = 'code';
   static const _kDarkBrightness = 'dark';
@@ -84,6 +87,11 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     help: 'Override the device pixel ratio used when rendering the snapshot.',
   );
 
+  static const pumpMsOption = StringOptionDescriptor(
+    name: kPumpMs,
+    help: 'Optional settle delay in milliseconds (0-2000) before capturing the snapshot.',
+  );
+
   static const textScaleFactorOption = StringOptionDescriptor(
     name: kTextScaleFactor,
     help: 'Override the text scale factor used when rendering the preview.',
@@ -117,6 +125,7 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     heightOption,
     brightnessOption,
     pixelRatioOption,
+    pumpMsOption,
     textScaleFactorOption,
     imageOption,
     syncOption,
@@ -185,6 +194,21 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
       throwToolExit(
         'Invalid value for "--${descriptor.name}": "$raw". '
         'Must be a positive finite number.',
+      );
+    }
+    return parsed;
+  }
+
+  static int? _parsePumpMsOption(FlutterCommand command) {
+    final String? raw = command.getValue(pumpMsOption);
+    if (raw == null) {
+      return null;
+    }
+    final int? parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0 || parsed > _kMaxPumpMs) {
+      throwToolExit(
+        'Invalid value for "--$kPumpMs": "$raw". '
+        'Must be an integer between 0 and $_kMaxPumpMs.',
       );
     }
     return parsed;
@@ -361,6 +385,7 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
         this,
         _WidgetPreviewCliSubCommand.pixelRatioOption,
       );
+      final int? pumpMs = _WidgetPreviewCliSubCommand._parsePumpMsOption(this);
       final double? textScaleFactor = _WidgetPreviewCliSubCommand._parsePositiveDoubleOption(
         this,
         _WidgetPreviewCliSubCommand.textScaleFactorOption,
@@ -391,6 +416,7 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
           includeImage: requestImageFromScaffold,
           pixelRatio: pixelRatio,
           previewId: previewId,
+          pumpMs: pumpMs,
           session: session,
           sync: sync,
           textScaleFactor: textScaleFactor,
