@@ -1849,6 +1849,132 @@ void main() {
         expect(find.byType(WidgetPreviewErrorWidget), findsNothing);
       },
     );
+
+    testWidgets('/live 1280px preset sets width=1280 without height', (
+      WidgetTester tester,
+    ) async {
+      debugSetUrlFragment(
+        'live=1&previewId=${Uri.encodeQueryComponent('package:my_app/alpha.dart::alphaPreview')}',
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: _buildGroupedTestPreviews,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+
+      await tester.tap(find.byKey(const Key('embed-live-width-1280')));
+      await tester.pump();
+      expect(getUrlFragment(), contains('width=1280'));
+      expect(getUrlFragment(), isNot(contains('height=')));
+    });
+
+    testWidgets('/live Light + Dark split renders Light and Dark panes', (
+      WidgetTester tester,
+    ) async {
+      debugSetUrlFragment(
+        'live=1&previewId=${Uri.encodeQueryComponent('package:my_app/alpha.dart::alphaPreview')}',
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: _buildGroupedTestPreviews,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+
+      await tester.tap(find.byKey(const Key('embed-live-split-brightness')));
+      await tester.pump();
+
+      final Finder lightPane = find.byKey(const Key('embed-split-light'));
+      final Finder darkPane = find.byKey(const Key('embed-split-dark'));
+      expect(lightPane, findsOneWidget);
+      expect(darkPane, findsOneWidget);
+      final WidgetPreviewEnvironment lightEnv = tester.widget(
+        find.descendant(
+          of: lightPane,
+          matching: find.byType(WidgetPreviewEnvironment),
+        ),
+      );
+      final WidgetPreviewEnvironment darkEnv = tester.widget(
+        find.descendant(
+          of: darkPane,
+          matching: find.byType(WidgetPreviewEnvironment),
+        ),
+      );
+      expect(lightEnv.brightness, Brightness.light);
+      expect(darkEnv.brightness, Brightness.dark);
+    });
+
+    testWidgets('/live Bounds toggle enables bounds overlay', (
+      WidgetTester tester,
+    ) async {
+      debugSetUrlFragment(
+        'live=1&previewId=${Uri.encodeQueryComponent('package:my_app/alpha.dart::alphaPreview')}',
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: _buildGroupedTestPreviews,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+
+      await tester.tap(find.byKey(const Key('embed-live-bounds-toggle')));
+      await tester.pump();
+      expect(find.byKey(const Key('embed-bounds-overlay')), findsOneWidget);
+    });
+
+    testWidgets('/live copy previewId button copies canonical ID', (
+      WidgetTester tester,
+    ) async {
+      String? copiedId;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            final Map<Object?, Object?> args =
+                call.arguments! as Map<Object?, Object?>;
+            copiedId = args['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      debugSetUrlFragment(
+        'live=1&previewId=${Uri.encodeQueryComponent('package:my_app/alpha.dart::alphaPreview')}',
+      );
+      final controller = WidgetPreviewScaffoldController(
+        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+        previews: _buildGroupedTestPreviews,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await tester.pumpWidget(
+        TestWidgetPreviewScaffold(controller: controller),
+      );
+
+      await tester.tap(find.byKey(const Key('embed-live-copy-preview-id')));
+      await tester.pump();
+      expect(copiedId, 'package:my_app/alpha.dart::alphaPreview');
+    });
   });
 }
 

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
@@ -773,5 +775,74 @@ class BrightnessToggleButton extends StatelessWidget {
 
   void _toggleBrightness() {
     brightnessListenable.value = brightnessListenable.value.invert;
+  }
+}
+
+/// A button that copies [textToCopy] to the clipboard and temporarily displays
+/// [copiedLabel] as feedback.
+class CopyFeedbackButton extends StatefulWidget {
+  const CopyFeedbackButton({
+    required this.copiedLabel,
+    required this.label,
+    required this.textToCopy,
+    this.icon,
+    this.style,
+    super.key,
+  });
+
+  final String copiedLabel;
+  final IconData? icon;
+  final String label;
+  final ButtonStyle? style;
+  final String textToCopy;
+
+  @override
+  State<CopyFeedbackButton> createState() => _CopyFeedbackButtonState();
+}
+
+class _CopyFeedbackButtonState extends State<CopyFeedbackButton> {
+  static const _kResetDelay = Duration(seconds: 2);
+
+  var _copied = false;
+  Timer? _resetTimer;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.textToCopy));
+    if (!mounted) {
+      return;
+    }
+    _resetTimer?.cancel();
+    setState(() {
+      _copied = true;
+    });
+    _resetTimer = Timer(_kResetDelay, () {
+      if (mounted) {
+        setState(() {
+          _copied = false;
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String text = _copied ? widget.copiedLabel : widget.label;
+    final Widget child = widget.icon != null
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(_copied ? Icons.check : widget.icon, size: 14),
+              const SizedBox(width: 6),
+              Flexible(child: Text(text, overflow: TextOverflow.ellipsis)),
+            ],
+          )
+        : Text(text);
+    return OutlinedButton(onPressed: _copy, style: widget.style, child: child);
   }
 }

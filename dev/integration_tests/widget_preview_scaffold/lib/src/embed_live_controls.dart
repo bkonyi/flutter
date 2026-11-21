@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
@@ -13,6 +14,7 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 const _kBarBackgroundColor = Color(0xFF1E1E1E);
 const _kBarBorderColor = Color(0xFF333333);
 const _kCopiedResetDelay = Duration(seconds: 2);
+const _kDesktopPresetWidth = 1280.0;
 const _kErrorBannerBackground = Color(0xFF451A1A);
 const _kErrorBannerBorder = Color(0xFF991B1B);
 const _kErrorTextColor = Color(0xFFFCA5A5);
@@ -21,32 +23,40 @@ const _kSelectedAccentColor = Color(0xFF2563EB);
 const _kTabletPresetWidth = 768.0;
 
 /// Top toolbar for `/live` and `#live=1` embed mode, providing preview
-/// selection, brightness, viewport width presets, zoom, select-mode toggle,
-/// and live reload/sync with an optional compile error banner.
+/// selection, brightness, Light+Dark split, viewport presets, zoom, bounds
+/// overlay, select-mode toggle, canonical `previewId` copy, and live reload.
 class EmbedLiveTopBar extends StatelessWidget {
   const EmbedLiveTopBar({
+    required this.isSplitBrightness,
     required this.isSyncing,
+    required this.onBoundsToggled,
     required this.onParamsChanged,
+    required this.onSplitBrightnessToggled,
     required this.onSyncPressed,
     required this.onZoomChanged,
     required this.params,
     required this.previews,
     required this.resolvedPreviewId,
     required this.selectionController,
+    required this.showBounds,
     this.onDismissSyncError,
     this.syncErrorMessage,
     super.key,
   });
 
+  final bool isSplitBrightness;
   final bool isSyncing;
+  final VoidCallback onBoundsToggled;
   final VoidCallback? onDismissSyncError;
   final ValueChanged<EmbedPreviewParams> onParamsChanged;
+  final VoidCallback onSplitBrightnessToggled;
   final VoidCallback onSyncPressed;
   final ValueChanged<double> onZoomChanged;
   final EmbedPreviewParams params;
   final List<WidgetPreview> previews;
   final String? resolvedPreviewId;
   final EmbedSelectionController selectionController;
+  final bool showBounds;
   final String? syncErrorMessage;
 
   @override
@@ -65,7 +75,10 @@ class EmbedLiveTopBar extends StatelessWidget {
         params.width == _kMobilePresetWidth && params.height == null;
     final bool isTablet =
         params.width == _kTabletPresetWidth && params.height == null;
-    final bool hasCustomViewport = !isResponsive && !isMobile && !isTablet;
+    final bool isDesktop =
+        params.width == _kDesktopPresetWidth && params.height == null;
+    final bool hasCustomViewport =
+        !isResponsive && !isMobile && !isTablet && !isDesktop;
 
     return Theme(
       data: ThemeData.dark(),
@@ -91,7 +104,7 @@ class EmbedLiveTopBar extends StatelessWidget {
                     label: activeBrightness == Brightness.dark
                         ? 'Dark'
                         : 'Light',
-                    selected: params.brightness != null,
+                    selected: !isSplitBrightness && params.brightness != null,
                     onPressed: () {
                       final Brightness nextBrightness =
                           activeBrightness == Brightness.dark
@@ -101,6 +114,12 @@ class EmbedLiveTopBar extends StatelessWidget {
                         params.copyWith(brightness: nextBrightness),
                       );
                     },
+                  ),
+                  _buildToggleButton(
+                    key: const Key('embed-live-split-brightness'),
+                    label: 'Light + Dark',
+                    selected: isSplitBrightness,
+                    onPressed: onSplitBrightnessToggled,
                   ),
                   _buildToggleButton(
                     key: const Key('embed-live-width-responsive'),
@@ -132,6 +151,17 @@ class EmbedLiveTopBar extends StatelessWidget {
                       ),
                     ),
                   ),
+                  _buildToggleButton(
+                    key: const Key('embed-live-width-1280'),
+                    label: '1280px',
+                    selected: isDesktop,
+                    onPressed: () => onParamsChanged(
+                      params.copyWith(
+                        width: _kDesktopPresetWidth,
+                        clearHeight: true,
+                      ),
+                    ),
+                  ),
                   if (hasCustomViewport)
                     Chip(
                       key: const Key('embed-live-custom-viewport'),
@@ -147,6 +177,12 @@ class EmbedLiveTopBar extends StatelessWidget {
                     canZoomOut: canZoomOut,
                     canZoomIn: canZoomIn,
                   ),
+                  _buildToggleButton(
+                    key: const Key('embed-live-bounds-toggle'),
+                    label: 'Bounds',
+                    selected: showBounds,
+                    onPressed: onBoundsToggled,
+                  ),
                   ListenableBuilder(
                     listenable: selectionController,
                     builder: (BuildContext context, Widget? _) {
@@ -160,6 +196,14 @@ class EmbedLiveTopBar extends StatelessWidget {
                       );
                     },
                   ),
+                  if (resolvedPreviewId case final String previewId)
+                    CopyFeedbackButton(
+                      key: const Key('embed-live-copy-preview-id'),
+                      copiedLabel: 'Copied ID!',
+                      label: previewId.split('/').last,
+                      style: _compactButtonStyle(),
+                      textToCopy: previewId,
+                    ),
                   OutlinedButton(
                     key: const Key('embed-live-sync-button'),
                     onPressed: isSyncing ? null : onSyncPressed,

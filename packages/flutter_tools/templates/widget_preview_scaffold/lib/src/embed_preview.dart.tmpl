@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
@@ -51,6 +52,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   static const _kGroupHeaderSpacing = 8.0;
   static const _kGroupSpacing = 24.0;
   static const _kMaxStatusCardWidth = 480.0;
+  static const _kMinSplitPaneExtent = 160.0;
   static const _kNoPreviewsMessage =
       'No widget previews were detected in this project.';
   static const _kNoPreviewsTitle = 'No widget previews detected';
@@ -61,7 +63,9 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   late final _selectionController = EmbedSelectionController(
     initialParams: widget.params,
   );
+  var _isSplitBrightness = false;
   var _isSyncing = false;
+  var _showBounds = false;
   String? _syncErrorMessage;
 
   EmbedPreviewParams get _params => widget.params;
@@ -269,6 +273,13 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                     if (lookup case PreviewLookupMatch(
                       :final WidgetPreview preview,
                     ) when !preview.hasError) {
+                      if (_isSplitBrightness) {
+                        return _buildSplitBrightnessView(
+                          context: context,
+                          outerConstraints: constraints,
+                          preview: preview,
+                        );
+                      }
                       return _buildPreviewSubtree(
                         context: context,
                         outerConstraints: constraints,
@@ -298,13 +309,24 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: <Widget>[
                                 EmbedLiveTopBar(
+                                  isSplitBrightness: _isSplitBrightness,
                                   isSyncing: _isSyncing,
+                                  onBoundsToggled: () {
+                                    setState(() {
+                                      _showBounds = !_showBounds;
+                                    });
+                                  },
                                   onDismissSyncError: () {
                                     setState(() {
                                       _syncErrorMessage = null;
                                     });
                                   },
                                   onParamsChanged: _handleParamsChanged,
+                                  onSplitBrightnessToggled: () {
+                                    setState(() {
+                                      _isSplitBrightness = !_isSplitBrightness;
+                                    });
+                                  },
                                   onSyncPressed: _handleSyncPressed,
                                   onZoomChanged: _emitZoom,
                                   params: params,
@@ -318,6 +340,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                       ? lookup.preview.id
                                       : null,
                                   selectionController: _selectionController,
+                                  showBounds: _showBounds,
                                   syncErrorMessage: _syncErrorMessage,
                                 ),
                                 Expanded(child: previewStage),
@@ -372,11 +395,94 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     );
   }
 
+  Widget _buildSplitBrightnessView({
+    required BuildContext context,
+    required BoxConstraints outerConstraints,
+    required WidgetPreview preview,
+  }) {
+    final ThemeData theme = Theme.of(context);
+    final double paneWidth = outerConstraints.hasBoundedWidth
+        ? (outerConstraints.maxWidth - _kGalleryPadding * 2 - _kCardSpacing) / 2
+        : _kDefaultWindowSize.width / 2;
+    final double paneHeight = outerConstraints.hasBoundedHeight
+        ? outerConstraints.maxHeight - _kGalleryPadding * 2
+        : _kDefaultWindowSize.height;
+    final BoxConstraints paneConstraints = BoxConstraints(
+      maxWidth: paneWidth > _kMinSplitPaneExtent
+          ? paneWidth
+          : _kDefaultWindowSize.width / 2,
+      maxHeight: paneHeight > _kMinSplitPaneExtent
+          ? paneHeight
+          : _kDefaultWindowSize.height,
+    );
+
+    Widget buildPane(Brightness brightness, String label, Key key) {
+      return Card.outlined(
+        key: key,
+        clipBehavior: Clip.antiAlias,
+        margin: EdgeInsets.zero,
+        child: SizedBox(
+          width: paneConstraints.maxWidth,
+          height: paneConstraints.maxHeight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: _kCardContentPadding,
+                  vertical: _kCardHeaderVerticalPadding,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Text(label, style: theme.textTheme.titleSmall),
+                    const Spacer(),
+                    _buildBadge(
+                      theme: theme,
+                      label: preview.name ?? preview.functionName,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1.0),
+              Expanded(
+                child: LayoutBuilder(
+                  builder:
+                      (BuildContext context, BoxConstraints cardConstraints) {
+                        return _buildPreviewSubtree(
+                          brightnessOverride: brightness,
+                          context: context,
+                          outerConstraints: outerConstraints,
+                          preview: preview,
+                          viewportConstraints: cardConstraints,
+                        );
+                      },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(_kGalleryPadding),
+      child: Wrap(
+        spacing: _kCardSpacing,
+        runSpacing: _kCardSpacing,
+        children: <Widget>[
+          buildPane(Brightness.light, 'Light', const Key('embed-split-light')),
+          buildPane(Brightness.dark, 'Dark', const Key('embed-split-dark')),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPreviewSubtree({
     required BuildContext context,
     required BoxConstraints outerConstraints,
     required WidgetPreview preview,
     required BoxConstraints viewportConstraints,
+    Brightness? brightnessOverride,
     double? fallbackWindowHeight,
   }) {
     final (
@@ -388,6 +494,8 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       context,
       preview,
     );
+    final Brightness appliedBrightness =
+        brightnessOverride ?? resolvedBrightness;
 
     final double constraintWidth =
         resolvedWidth ??
@@ -408,7 +516,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0);
 
     return WidgetPreviewEnvironment(
-      brightness: resolvedBrightness,
+      brightness: appliedBrightness,
       height: resolvedHeight,
       preview: preview,
       textScaleFactor: resolvedTextScale,
@@ -416,13 +524,14 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       windowConstraints: windowConstraints,
       child: _EmbedPreviewContent(
         key: ValueKey<String>(preview.id),
-        brightness: resolvedBrightness,
+        brightness: appliedBrightness,
         controller: widget.controller,
         preview: preview,
         previewerConstraints: windowConstraints,
         resolvedHeight: resolvedHeight,
         resolvedWidth: resolvedWidth,
         selectionController: _selectionController,
+        showBounds: _showBounds,
         textScale: appliedTextScale,
         viewportConstraints: viewportConstraints,
         zoom: _zoom,
@@ -665,6 +774,7 @@ class _EmbedPreviewContent extends StatefulWidget {
     required this.zoom,
     this.resolvedHeight,
     this.resolvedWidth,
+    this.showBounds = false,
     super.key,
   });
 
@@ -675,6 +785,7 @@ class _EmbedPreviewContent extends StatefulWidget {
   final double? resolvedHeight;
   final double? resolvedWidth;
   final EmbedSelectionController selectionController;
+  final bool showBounds;
   final double textScale;
   final BoxConstraints viewportConstraints;
   final double zoom;
@@ -754,6 +865,11 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       ),
       child: wrapped,
     );
+    final Widget boundedContent = _PreviewBoundsOverlay(
+      key: const Key('embed-bounds-overlay'),
+      enabled: widget.showBounds,
+      child: constrained,
+    );
     final selectable = EmbedSelectablePreviewSurface(
       brightness: brightness,
       previewContentKey: _previewContentKey,
@@ -762,7 +878,7 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       selectionController: selectionController,
       textScale: textScale,
       zoom: zoom,
-      child: constrained,
+      child: boundedContent,
     );
     final double minWidth = viewportConstraints.hasBoundedWidth
         ? viewportConstraints.maxWidth
@@ -844,4 +960,79 @@ final class _GalleryPreviewItem extends _GalleryItem {
   const _GalleryPreviewItem({required this.preview});
 
   final WidgetPreview preview;
+}
+
+class _PreviewBoundsOverlay extends SingleChildRenderObjectWidget {
+  const _PreviewBoundsOverlay({
+    required this.enabled,
+    required super.child,
+    super.key,
+  });
+
+  final bool enabled;
+
+  @override
+  _RenderPreviewBoundsOverlay createRenderObject(BuildContext context) {
+    return _RenderPreviewBoundsOverlay(enabled: enabled);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderPreviewBoundsOverlay renderObject,
+  ) {
+    renderObject.enabled = enabled;
+  }
+}
+
+class _RenderPreviewBoundsOverlay extends RenderProxyBox {
+  _RenderPreviewBoundsOverlay({required this._enabled});
+
+  static const _boundsStrokeColor = Color(0x993B82F6);
+  static const _overflowStrokeColor = Color(0xFFEF4444);
+
+  bool _enabled;
+
+  bool get enabled => _enabled;
+
+  set enabled(bool value) {
+    if (_enabled == value) {
+      return;
+    }
+    _enabled = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    super.paint(context, offset);
+    if (!_enabled) {
+      return;
+    }
+    final Canvas canvas = context.canvas;
+    final boundsPaint = Paint()
+      ..color = _boundsStrokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    final overflowPaint = Paint()
+      ..color = _overflowStrokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    void visit(RenderObject node) {
+      if (node is RenderBox && node.hasSize && !node.size.isEmpty) {
+        final Rect rect = MatrixUtils.transformRect(
+          node.getTransformTo(this),
+          Offset.zero & node.size,
+        ).shift(offset);
+        final bool isOverflowing =
+            node is RenderFlex &&
+            node.toStringShort().endsWith(kOverflowingRenderFlexSuffix);
+        canvas.drawRect(rect, isOverflowing ? overflowPaint : boundsPaint);
+      }
+      node.visitChildren(visit);
+    }
+
+    visitChildren(visit);
+  }
 }
