@@ -109,6 +109,8 @@ class WidgetPreviewLiveServer {
       '${Random.secure().nextInt(0x7fffffff).toRadixString(36)}';
   final _activeChannels = <WebSocketChannel>{};
   _CachedDdcBundle? _cachedBundle;
+  var _reportedEmbedOpen = false;
+  var _reportedLiveOpen = false;
 
   static const _kBaseSecurityHeaders = <String, String>{
     _kCorpHeader: _kCorpSameSite,
@@ -126,10 +128,18 @@ class WidgetPreviewLiveServer {
     if (request.method == 'GET' &&
         (requestPath == '/' || requestPath.isEmpty) &&
         request.url.queryParameters['embed'] == '1') {
+      if (!_reportedEmbedOpen) {
+        _reportedEmbedOpen = true;
+        config.dtdServices.previewAnalytics.reportLiveViewOpened(isEmbed: true);
+      }
       return _serveEmbedIndexHtml();
     }
 
     if (request.method == 'GET' && (requestPath == _kLivePath || requestPath == _kLiveSlashPath)) {
+      if (!_reportedLiveOpen) {
+        _reportedLiveOpen = true;
+        config.dtdServices.previewAnalytics.reportLiveViewOpened(isEmbed: false);
+      }
       return _serveEmbedIndexHtml();
     }
 

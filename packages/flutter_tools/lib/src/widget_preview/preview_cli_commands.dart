@@ -15,6 +15,7 @@ import '../convert.dart';
 import '../project.dart';
 import '../runner/flutter_command.dart';
 import '../web/web_options.dart';
+import 'analytics.dart';
 import 'dtd_types.dart';
 import 'preview_session_client.dart';
 import 'utils.dart';
@@ -265,6 +266,7 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
     final bool machine = getValue(CommonOptions.machine);
     final ToolContext(:Logger logger, :Stdio stdio) = toolContext;
     final WidgetPreviewSessionClient client = _createOrGetClient();
+    final stopwatch = Stopwatch()..start();
     try {
       final (:Directory? explicitProjectDirectory, :FlutterProject rootProject) = client
           .resolveRootProject(this, allowPositionalDirectory: true);
@@ -281,6 +283,10 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
         fileUri: fileUri,
         rootProject: rootProject,
         sync: sync,
+      );
+      WidgetPreviewAnalytics(analytics: analytics).reportListCompleted(
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+        previewCount: response.previews.length,
       );
 
       if (machine) {
@@ -358,6 +364,7 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
     final List<String> rest = argResults?.rest ?? const <String>[];
     final String? previewIdCandidate = rest.firstOrNull;
     final WidgetPreviewSessionClient client = _createOrGetClient();
+    final stopwatch = Stopwatch()..start();
 
     try {
       if (rest.isEmpty) {
@@ -445,6 +452,11 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
           response: outputResponse,
         );
       }
+
+      WidgetPreviewAnalytics(analytics: analytics).reportSnapshotCompleted(
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+        hasErrors: outputResponse.hasErrors,
+      );
 
       return outputResponse.hasErrors
           ? FlutterCommandResult.fail()

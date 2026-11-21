@@ -409,6 +409,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   /// [_PendingReload.hotRestart] if a full restart is requested) without
   /// queueing duplicate tasks on [_reloadMutex].
   _PendingReload? _pendingReload;
+
   @override
   Future<FlutterCommandResult> runCommand() async {
     assert(toolContext.logger is WidgetPreviewMachineAwareLogger);
@@ -1026,7 +1027,12 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     logger.printStatus('Done loading previews.');
 
     // Send an analytics event reporting how long it took for the widget previewer to start.
-    previewAnalytics.reportLaunchTiming();
+    final WidgetPreviewLaunchMode launchMode = boolArg(kHeadless)
+        ? .headless
+        : (boolArg(kWebServer) ? .webServer : .interactive);
+    previewAnalytics
+      ..reportLaunchTiming()
+      ..reportLaunchMode(launchMode);
 
     // If _widgetPreviewApp is null --no-launch-previewer was provided so return success.
     if (_widgetPreviewApp == null) {
