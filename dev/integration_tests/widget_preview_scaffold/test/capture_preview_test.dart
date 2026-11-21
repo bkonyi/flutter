@@ -1579,4 +1579,44 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'WidgetPreviewMediaQueryOverride keeps finite height for Size.fromWidth',
+    (WidgetTester tester) async {
+      Size? observedSize;
+      final preview = WidgetPreview(
+        scriptUri: 'file:///app/lib/widgets.dart',
+        libraryUri: 'package:app/widgets.dart',
+        functionName: 'widthOnly',
+        line: 10,
+        column: 1,
+        builder: () => Builder(
+          builder: (BuildContext context) {
+            observedSize = MediaQuery.sizeOf(context);
+            return const SizedBox(width: 100, height: 50);
+          },
+        ),
+        previewData: const Preview(
+          name: 'widthOnly',
+          size: Size.fromWidth(300),
+        ),
+        packageName: 'app',
+      );
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(800, 600)),
+          child: WidgetPreviewMediaQueryOverride(
+            preview: preview,
+            brightnessListenable: ValueNotifier<Brightness>(Brightness.light),
+            child: preview.previewBuilder(),
+          ),
+        ),
+      );
+
+      expect(observedSize?.width, 300.0);
+      expect(observedSize?.height, 600.0);
+      expect(observedSize?.height.isFinite, isTrue);
+    },
+  );
 }

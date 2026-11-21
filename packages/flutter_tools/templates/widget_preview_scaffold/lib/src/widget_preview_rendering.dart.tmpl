@@ -915,13 +915,17 @@ class WidgetPreviewMediaQueryOverride extends StatelessWidget {
       );
     }
 
-    var size = Size(
-      preview.size?.width ?? mediaQueryData.size.width,
-      preview.size?.height ?? mediaQueryData.size.height,
-    );
-
-    if (preview.size != null) {
-      mediaQueryData = mediaQueryData.copyWith(size: size);
+    if (preview.size case final Size previewSize) {
+      mediaQueryData = mediaQueryData.copyWith(
+        size: Size(
+          previewSize.width.isFinite
+              ? previewSize.width
+              : mediaQueryData.size.width,
+          previewSize.height.isFinite
+              ? previewSize.height
+              : mediaQueryData.size.height,
+        ),
+      );
     }
 
     return mediaQueryData;
