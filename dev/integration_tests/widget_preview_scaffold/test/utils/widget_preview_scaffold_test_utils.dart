@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
@@ -69,6 +71,9 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   @override
   Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
   onCapturePreview;
+
+  @override
+  FutureOr<void> Function()? onInPlaceHotReload;
 
   Uri? lastConnectDtdUri;
   bool? lastConnectReadOnly;
