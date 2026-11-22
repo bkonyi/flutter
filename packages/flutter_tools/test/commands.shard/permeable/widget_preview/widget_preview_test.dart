@@ -808,7 +808,7 @@ _i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',
@@ -865,7 +865,7 @@ _i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',
@@ -926,7 +926,7 @@ _i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',

@@ -2,22 +2,56 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// ignore_for_file: avoid_equals_and_hash_code_on_mutable_classes
-
 import 'package:collection/collection.dart';
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
+import 'package:meta/meta.dart';
 
 import '../convert.dart';
 
+const _kTypeKey = 'type';
+const _deepEquality = DeepCollectionEquality();
+
+void _expectDtdResponseType(DTDResponse response, String expectedType) {
+  if (response.result[_kTypeKey] != expectedType) {
+    throw RpcException.invalidParams(
+      'Expected $_kTypeKey param to be $expectedType, got: ${response.result[_kTypeKey]}',
+    );
+  }
+}
+
+@immutable
+abstract mixin class _JsonValue {
+  const _JsonValue();
+
+  Map<String, Object?> toJson();
+
+  @override
+  bool operator ==(Object other) =>
+      other is _JsonValue &&
+      other.runtimeType == runtimeType &&
+      _deepEquality.equals(toJson(), other.toJson());
+
+  @override
+  int get hashCode => Object.hash(runtimeType, _deepEquality.hash(toJson()));
+
+  @override
+  String toString() => json.encode(toJson());
+}
+
 /// The set of widget previews defined in a script of an analyzed Flutter
 /// project.
-class FlutterWidgetPreviews {
+@immutable
+class FlutterWidgetPreviews with _JsonValue {
   const FlutterWidgetPreviews({
     required this.namespaces,
     required this.previews,
     required this.scriptUris,
   });
+
+  static const _kNamespaces = 'namespaces';
+  static const _kPreviews = 'previews';
+  static const _kScriptUris = 'scriptUris';
 
   /// A set of library URIs and the prefixes used for types in
   /// "previewAnnotation" sources.
@@ -30,68 +64,53 @@ class FlutterWidgetPreviews {
   final List<Uri> scriptUris;
 
   @override
-  int get hashCode => Object.hash(
-    const DeepCollectionEquality().hash(namespaces),
-    const DeepCollectionEquality().hash(previews),
-    const DeepCollectionEquality().hash(scriptUris),
+  Map<String, Object?> toJson() => <String, Object?>{
+    _kNamespaces: namespaces,
+    _kPreviews: <Map<String, Object?>>[for (final item in previews) item.toJson()],
+    _kScriptUris: <String>[for (final uri in scriptUris) uri.toString()],
+  };
+
+  static FlutterWidgetPreviews fromJson(Map<String, Object?> json) => FlutterWidgetPreviews(
+    namespaces: (json[_kNamespaces]! as Map<Object?, Object?>).map(
+      (Object? k, Object? v) => MapEntry<String, String>(k! as String, v! as String),
+    ),
+    previews: <FlutterWidgetPreviewDetails>[
+      for (final Object? item in json[_kPreviews]! as List<Object?>)
+        FlutterWidgetPreviewDetails.fromJson(item! as Map<String, Object?>),
+    ],
+    scriptUris: <Uri>[
+      for (final Object? item in json[_kScriptUris]! as List<Object?>) Uri.parse(item! as String),
+    ],
   );
-
-  @override
-  bool operator ==(Object other) {
-    return other is FlutterWidgetPreviews &&
-        other.runtimeType == FlutterWidgetPreviews &&
-        const DeepCollectionEquality().equals(namespaces, other.namespaces) &&
-        const DeepCollectionEquality().equals(previews, other.previews) &&
-        const DeepCollectionEquality().equals(scriptUris, other.scriptUris);
-  }
-
-  Map<String, Object?> toJson() {
-    final result = <String, Object?>{};
-    result['namespaces'] = namespaces;
-    result['previews'] = previews.map((item) => item.toJson()).toList();
-    result['scriptUris'] = scriptUris.map((uri) => uri.toString()).toList();
-    return result;
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static FlutterWidgetPreviews fromJson(Map<String, Object?> json) {
-    final Object? namespacesJson = json['namespaces'];
-    final Map<String, String> namespaces = (namespacesJson! as Map<Object, Object?>).map(
-      (key, value) => MapEntry(key as String, value! as String),
-    );
-    final Object? previewsJson = json['previews'];
-    final List<FlutterWidgetPreviewDetails> previews = (previewsJson! as List<Object?>)
-        .map((item) => FlutterWidgetPreviewDetails.fromJson(item! as Map<String, Object?>))
-        .toList();
-    final Object? scriptUrisJson = json['scriptUris'];
-    final List<Uri> scriptUris = (scriptUrisJson! as List<Object?>)
-        .map((item) => Uri.parse(item! as String))
-        .toList();
-    return FlutterWidgetPreviews(
-      namespaces: namespaces,
-      previews: previews,
-      scriptUris: scriptUris,
-    );
-  }
 }
 
 /// A representation of a widget preview declaration containing all information
 /// needed to import the preview into the widget previewer.
-class FlutterWidgetPreviewDetails {
+@immutable
+class FlutterWidgetPreviewDetails with _JsonValue {
   const FlutterWidgetPreviewDetails({
+    required this.dependencyHasErrors,
     required this.functionName,
     required this.hasError,
-    required this.dependencyHasErrors,
     required this.isBuilder,
     required this.isMultiPreview,
-    this.packageName,
+    required this.libraryUri,
     required this.position,
     required this.previewAnnotation,
     required this.scriptUri,
-    required this.libraryUri,
+    this.packageName,
   });
+
+  static const _kDependencyHasErrors = 'dependencyHasErrors';
+  static const _kFunctionName = 'functionName';
+  static const _kHasError = 'hasError';
+  static const _kIsBuilder = 'isBuilder';
+  static const _kIsMultiPreview = 'isMultiPreview';
+  static const _kLibraryUri = 'libraryUri';
+  static const _kPackageName = 'packageName';
+  static const _kPosition = 'position';
+  static const _kPreviewAnnotation = 'previewAnnotation';
+  static const _kScriptUri = 'scriptUri';
 
   /// The name of the function returning the preview.
   final String functionName;
@@ -138,91 +157,40 @@ class FlutterWidgetPreviewDetails {
   final Uri libraryUri;
 
   @override
-  int get hashCode => Object.hash(
-    functionName,
-    hasError,
-    dependencyHasErrors,
-    isBuilder,
-    isMultiPreview,
-    packageName,
-    position,
-    previewAnnotation,
-    scriptUri,
-    libraryUri,
-  );
+  Map<String, Object?> toJson() => <String, Object?>{
+    _kFunctionName: functionName,
+    _kHasError: hasError,
+    _kDependencyHasErrors: dependencyHasErrors,
+    _kIsBuilder: isBuilder,
+    _kIsMultiPreview: isMultiPreview,
+    _kPackageName: packageName,
+    _kPosition: position.toJson(),
+    _kPreviewAnnotation: previewAnnotation,
+    _kScriptUri: scriptUri.toString(),
+    _kLibraryUri: libraryUri.toString(),
+  };
 
-  @override
-  bool operator ==(Object other) {
-    return other is FlutterWidgetPreviewDetails &&
-        other.runtimeType == FlutterWidgetPreviewDetails &&
-        functionName == other.functionName &&
-        hasError == other.hasError &&
-        dependencyHasErrors == other.dependencyHasErrors &&
-        isBuilder == other.isBuilder &&
-        isMultiPreview == other.isMultiPreview &&
-        packageName == other.packageName &&
-        position == other.position &&
-        previewAnnotation == other.previewAnnotation &&
-        scriptUri == other.scriptUri &&
-        libraryUri == other.libraryUri;
-  }
-
-  Map<String, Object?> toJson() {
-    final result = <String, Object?>{};
-    result['functionName'] = functionName;
-    result['hasError'] = hasError;
-    result['dependencyHasErrors'] = dependencyHasErrors;
-    result['isBuilder'] = isBuilder;
-    result['isMultiPreview'] = isMultiPreview;
-    result['packageName'] = packageName;
-    result['position'] = position.toJson();
-    result['previewAnnotation'] = previewAnnotation;
-    result['scriptUri'] = scriptUri.toString();
-    result['libraryUri'] = libraryUri.toString();
-    return result;
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static FlutterWidgetPreviewDetails fromJson(Map<String, Object?> json) {
-    final Object? functionNameJson = json['functionName'];
-    final functionName = functionNameJson! as String;
-    final Object? hasErrorJson = json['hasError'];
-    final hasError = hasErrorJson! as bool;
-    final Object? dependencyHasErrorsJson = json['dependencyHasErrors'];
-    final dependencyHasErrors = dependencyHasErrorsJson! as bool;
-    final Object? isBuilderJson = json['isBuilder'];
-    final isBuilder = isBuilderJson! as bool;
-    final Object? isMultiPreviewJson = json['isMultiPreview'];
-    final isMultiPreview = isMultiPreviewJson! as bool;
-    final Object? packageNameJson = json['packageName'];
-    final packageName = packageNameJson as String?;
-    final Object? positionJson = json['position'];
-    final Position position = Position.fromJson(positionJson! as Map<String, Object?>);
-    final Object? previewAnnotationJson = json['previewAnnotation'];
-    final previewAnnotation = previewAnnotationJson! as String;
-    final Object? scriptUriJson = json['scriptUri'];
-    final Uri scriptUri = Uri.parse(scriptUriJson! as String);
-    final Object? libraryUriJson = json['libraryUri'];
-    final Uri libraryUri = Uri.parse(libraryUriJson! as String);
-    return FlutterWidgetPreviewDetails(
-      functionName: functionName,
-      hasError: hasError,
-      dependencyHasErrors: dependencyHasErrors,
-      isBuilder: isBuilder,
-      isMultiPreview: isMultiPreview,
-      packageName: packageName,
-      position: position,
-      previewAnnotation: previewAnnotation,
-      scriptUri: scriptUri,
-      libraryUri: libraryUri,
-    );
-  }
+  static FlutterWidgetPreviewDetails fromJson(Map<String, Object?> json) =>
+      FlutterWidgetPreviewDetails(
+        dependencyHasErrors: json[_kDependencyHasErrors]! as bool,
+        functionName: json[_kFunctionName]! as String,
+        hasError: json[_kHasError]! as bool,
+        isBuilder: json[_kIsBuilder]! as bool,
+        isMultiPreview: json[_kIsMultiPreview]! as bool,
+        libraryUri: Uri.parse(json[_kLibraryUri]! as String),
+        packageName: json[_kPackageName] as String?,
+        position: Position.fromJson(json[_kPosition]! as Map<String, Object?>),
+        previewAnnotation: json[_kPreviewAnnotation]! as String,
+        scriptUri: Uri.parse(json[_kScriptUri]! as String),
+      );
 }
 
-class Position {
+@immutable
+class Position with _JsonValue {
   const Position({required this.character, required this.line});
+
+  static const _kCharacter = 'character';
+  static const _kLine = 'line';
 
   /// Character offset on a line in a document (zero-based).
   ///
@@ -241,112 +209,73 @@ class Position {
   final int line;
 
   @override
-  int get hashCode => Object.hash(character, line);
+  Map<String, Object?> toJson() => <String, Object?>{_kCharacter: character, _kLine: line};
 
-  @override
-  bool operator ==(Object other) {
-    return other is Position &&
-        other.runtimeType == Position &&
-        character == other.character &&
-        line == other.line;
-  }
-
-  Map<String, Object?> toJson() {
-    final result = <String, Object?>{};
-    result['character'] = character;
-    result['line'] = line;
-    return result;
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static Position fromJson(Map<String, Object?> json) {
-    final Object? characterJson = json['character'];
-    final character = characterJson! as int;
-    final Object? lineJson = json['line'];
-    final line = lineJson! as int;
-    return Position(character: character, line: line);
-  }
+  static Position fromJson(Map<String, Object?> json) =>
+      Position(character: json[_kCharacter]! as int, line: json[_kLine]! as int);
 }
 
 /// Information about the active web preview HTTP server.
-class WebPreviewUrlResult {
-  const WebPreviewUrlResult({required this.host, required this.port, required this.url});
+extension type WebPreviewUrlResult._(Map<String, Object?> _json) {
+  WebPreviewUrlResult({required String host, required int port, required String url})
+    : _json = <String, Object?>{kType: kTypeName, kHost: host, kPort: port, kUrl: url};
 
   factory WebPreviewUrlResult.fromDTDResponse(DTDResponse response) {
-    if (response.result[kType] != kTypeName) {
-      throw RpcException.invalidParams(
-        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
-      );
-    }
+    _expectDtdResponseType(response, kTypeName);
     return WebPreviewUrlResult.fromJson(response.result);
   }
 
-  static const kType = 'type';
+  static const String kType = _kTypeKey;
   static const kTypeName = 'WebPreviewUrlResult';
   static const kHost = 'host';
   static const kPort = 'port';
   static const kUrl = 'url';
 
   /// The host interface (e.g. `127.0.0.1` or `localhost`).
-  final String host;
+  String get host => _json[kHost]! as String;
 
   /// The port the web server is listening on.
-  final int port;
+  int get port => _json[kPort]! as int;
 
   /// The full HTTP URL string for embedding or browser navigation.
-  final String url;
+  String get url => _json[kUrl]! as String;
 
-  @override
-  int get hashCode => Object.hash(host, port, url);
+  Map<String, Object?> toJson() => _json;
 
-  @override
-  bool operator ==(Object other) {
-    return other is WebPreviewUrlResult &&
-        other.runtimeType == WebPreviewUrlResult &&
-        host == other.host &&
-        port == other.port &&
-        url == other.url;
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{kType: kTypeName, kHost: host, kPort: port, kUrl: url};
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static WebPreviewUrlResult fromJson(Map<String, Object?> json) {
-    final host = json[kHost]! as String;
-    final port = json[kPort]! as int;
-    final url = json[kUrl]! as String;
-    return WebPreviewUrlResult(host: host, port: port, url: url);
-  }
+  static WebPreviewUrlResult fromJson(Map<String, Object?> json) => WebPreviewUrlResult(
+    host: json[kHost]! as String,
+    port: json[kPort]! as int,
+    url: json[kUrl]! as String,
+  );
 }
 
 /// Metadata describing the active widget preview service and connected endpoints.
-class PreviewServiceInfo {
-  const PreviewServiceInfo({
-    required this.dtdUri,
-    required this.previewService,
-    required this.projectRoot,
-    required this.scaffoldConnected,
-    required this.scaffoldService,
-    required this.scaffoldStream,
-    this.webPreviewUri,
-  });
+extension type PreviewServiceInfo._(Map<String, Object?> _json) {
+  PreviewServiceInfo({
+    required String dtdUri,
+    required String previewService,
+    required String projectRoot,
+    required bool scaffoldConnected,
+    required String scaffoldService,
+    required String scaffoldStream,
+    String? webPreviewUri,
+  }) : _json = <String, Object?>{
+         kType: kTypeName,
+         kDtdUri: dtdUri,
+         kProjectRoot: projectRoot,
+         kPreviewService: previewService,
+         kScaffoldService: scaffoldService,
+         kScaffoldStream: scaffoldStream,
+         kWebPreviewUri: webPreviewUri,
+         kScaffoldConnected: scaffoldConnected,
+       };
 
   factory PreviewServiceInfo.fromDTDResponse(DTDResponse response) {
-    if (response.result[kType] != kTypeName) {
-      throw RpcException.invalidParams(
-        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
-      );
-    }
+    _expectDtdResponseType(response, kTypeName);
     return PreviewServiceInfo.fromJson(response.result);
   }
 
-  static const kType = 'type';
+  static const String kType = _kTypeKey;
   static const kTypeName = 'PreviewServiceInfo';
   static const kDtdUri = 'dtdUri';
   static const kPreviewService = 'previewService';
@@ -357,88 +286,42 @@ class PreviewServiceInfo {
   static const kWebPreviewUri = 'webPreviewUri';
 
   /// The WebSocket URI of the Dart Tooling Daemon.
-  final String dtdUri;
+  String get dtdUri => _json[kDtdUri]! as String;
 
   /// The registered DTD service name for the tool widget preview service.
-  final String previewService;
+  String get previewService => _json[kPreviewService]! as String;
 
   /// The absolute path to the root directory of the previewed Flutter project.
-  final String projectRoot;
+  String get projectRoot => _json[kProjectRoot]! as String;
 
   /// Whether the widget preview scaffold has connected to DTD.
-  final bool scaffoldConnected;
+  bool get scaffoldConnected => _json[kScaffoldConnected]! as bool;
 
   /// The registered DTD service name for the widget preview scaffold.
-  final String scaffoldService;
+  String get scaffoldService => _json[kScaffoldService]! as String;
 
   /// The DTD stream name posted to by the widget preview scaffold.
-  final String scaffoldStream;
+  String get scaffoldStream => _json[kScaffoldStream]! as String;
 
   /// The active web preview HTTP URI, if available.
-  final String? webPreviewUri;
+  String? get webPreviewUri => _json[kWebPreviewUri] as String?;
 
-  @override
-  int get hashCode => Object.hash(
-    dtdUri,
-    previewService,
-    projectRoot,
-    scaffoldConnected,
-    scaffoldService,
-    scaffoldStream,
-    webPreviewUri,
+  Map<String, Object?> toJson() => _json;
+
+  static PreviewServiceInfo fromJson(Map<String, Object?> json) => PreviewServiceInfo(
+    dtdUri: json[kDtdUri]! as String,
+    previewService: json[kPreviewService]! as String,
+    projectRoot: json[kProjectRoot]! as String,
+    scaffoldConnected: json[kScaffoldConnected]! as bool,
+    scaffoldService: json[kScaffoldService]! as String,
+    scaffoldStream: json[kScaffoldStream]! as String,
+    webPreviewUri: json[kWebPreviewUri] as String?,
   );
-
-  @override
-  bool operator ==(Object other) {
-    return other is PreviewServiceInfo &&
-        other.runtimeType == PreviewServiceInfo &&
-        dtdUri == other.dtdUri &&
-        previewService == other.previewService &&
-        projectRoot == other.projectRoot &&
-        scaffoldConnected == other.scaffoldConnected &&
-        scaffoldService == other.scaffoldService &&
-        scaffoldStream == other.scaffoldStream &&
-        webPreviewUri == other.webPreviewUri;
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kType: kTypeName,
-      kDtdUri: dtdUri,
-      kProjectRoot: projectRoot,
-      kPreviewService: previewService,
-      kScaffoldService: scaffoldService,
-      kScaffoldStream: scaffoldStream,
-      kWebPreviewUri: webPreviewUri,
-      kScaffoldConnected: scaffoldConnected,
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static PreviewServiceInfo fromJson(Map<String, Object?> json) {
-    final dtdUri = json[kDtdUri]! as String;
-    final previewService = json[kPreviewService]! as String;
-    final projectRoot = json[kProjectRoot]! as String;
-    final scaffoldConnected = json[kScaffoldConnected]! as bool;
-    final scaffoldService = json[kScaffoldService]! as String;
-    final scaffoldStream = json[kScaffoldStream]! as String;
-    final webPreviewUri = json[kWebPreviewUri] as String?;
-    return PreviewServiceInfo(
-      dtdUri: dtdUri,
-      previewService: previewService,
-      projectRoot: projectRoot,
-      scaffoldConnected: scaffoldConnected,
-      scaffoldService: scaffoldService,
-      scaffoldStream: scaffoldStream,
-      webPreviewUri: webPreviewUri,
-    );
-  }
 }
 
 /// Result of synchronizing on-disk preview edits and reloading the previewer.
-class SyncPreviewsResponse {
+@immutable
+class SyncPreviewsResponse with _JsonValue {
   const SyncPreviewsResponse({
     required this.compileSuccess,
     required this.errorPreviewCount,
@@ -448,15 +331,11 @@ class SyncPreviewsResponse {
   });
 
   factory SyncPreviewsResponse.fromDTDResponse(DTDResponse response) {
-    if (response.result[kType] != kTypeName) {
-      throw RpcException.invalidParams(
-        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
-      );
-    }
+    _expectDtdResponseType(response, kTypeName);
     return SyncPreviewsResponse.fromJson(response.result);
   }
 
-  static const kType = 'type';
+  static const String kType = _kTypeKey;
   static const kTypeName = 'SyncPreviewsResponse';
   static const kCompileError = 'compileError';
   static const kCompileSuccess = 'compileSuccess';
@@ -480,48 +359,22 @@ class SyncPreviewsResponse {
   final bool reloaded;
 
   @override
-  int get hashCode =>
-      Object.hash(compileError, compileSuccess, errorPreviewCount, fullRestart, reloaded);
+  Map<String, Object?> toJson() => <String, Object?>{
+    kType: kTypeName,
+    kReloaded: reloaded,
+    kFullRestart: fullRestart,
+    kCompileSuccess: compileSuccess,
+    kCompileError: compileError,
+    kErrorPreviewCount: errorPreviewCount,
+  };
 
-  @override
-  bool operator ==(Object other) {
-    return other is SyncPreviewsResponse &&
-        other.runtimeType == SyncPreviewsResponse &&
-        compileError == other.compileError &&
-        compileSuccess == other.compileSuccess &&
-        errorPreviewCount == other.errorPreviewCount &&
-        fullRestart == other.fullRestart &&
-        reloaded == other.reloaded;
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kType: kTypeName,
-      kReloaded: reloaded,
-      kFullRestart: fullRestart,
-      kCompileSuccess: compileSuccess,
-      kCompileError: compileError,
-      kErrorPreviewCount: errorPreviewCount,
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static SyncPreviewsResponse fromJson(Map<String, Object?> json) {
-    final compileError = json[kCompileError] as String?;
-    final compileSuccess = json[kCompileSuccess]! as bool;
-    final errorPreviewCount = json[kErrorPreviewCount]! as int;
-    final fullRestart = json[kFullRestart]! as bool;
-    final reloaded = json[kReloaded]! as bool;
-    return SyncPreviewsResponse(
-      compileError: compileError,
-      compileSuccess: compileSuccess,
-      errorPreviewCount: errorPreviewCount,
-      fullRestart: fullRestart,
-      reloaded: reloaded,
-    );
-  }
+  static SyncPreviewsResponse fromJson(Map<String, Object?> json) => SyncPreviewsResponse(
+    compileError: json[kCompileError] as String?,
+    compileSuccess: json[kCompileSuccess]! as bool,
+    errorPreviewCount: json[kErrorPreviewCount]! as int,
+    fullRestart: json[kFullRestart]! as bool,
+    reloaded: json[kReloaded]! as bool,
+  );
 }
 
 /// Lifecycle phase in which a [PreviewDiagnostic] was captured.
@@ -531,13 +384,10 @@ enum PreviewDiagnosticPhase {
   layout,
   paint;
 
-  static PreviewDiagnosticPhase fromJson(String value) => switch (value) {
-    'compile' => .compile,
-    'build' => .build,
-    'layout' => .layout,
-    'paint' => .paint,
-    _ => throw FormatException('Unknown PreviewDiagnosticPhase: $value'),
-  };
+  static PreviewDiagnosticPhase fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticPhase phase) => phase.name == value,
+    orElse: () => throw FormatException('Unknown PreviewDiagnosticPhase: $value'),
+  );
 }
 
 /// Classification of a [PreviewDiagnostic].
@@ -555,17 +405,10 @@ enum PreviewDiagnosticKind {
 
   final String wireValue;
 
-  static PreviewDiagnosticKind fromJson(String value) => switch (value) {
-    'compile_error' => .compileError,
-    'exception' => .exception,
-    'unconstrained' => .unconstrained,
-    'overflow' => .overflow,
-    'zero_size' => .zeroSize,
-    'text_truncated' => .textTruncated,
-    'small_tap_target' => .smallTapTarget,
-    'pending_frame' => .pendingFrame,
-    _ => throw FormatException('Unknown PreviewDiagnosticKind: $value'),
-  };
+  static PreviewDiagnosticKind fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticKind kind) => kind.wireValue == value,
+    orElse: () => throw FormatException('Unknown PreviewDiagnosticKind: $value'),
+  );
 }
 
 /// Severity level of a [PreviewDiagnostic].
@@ -577,16 +420,16 @@ enum PreviewDiagnosticSeverity {
 
   final String wireValue;
 
-  static PreviewDiagnosticSeverity fromJson(String value) => switch (value) {
-    'error' => .error,
-    'warning' => .warning,
-    _ => throw FormatException('Unknown PreviewDiagnosticSeverity: $value'),
-  };
+  static PreviewDiagnosticSeverity fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticSeverity severity) => severity.wireValue == value,
+    orElse: () => throw FormatException('Unknown PreviewDiagnosticSeverity: $value'),
+  );
 }
 
 /// Structured diagnostic captured while compiling, building, laying out, or
 /// painting a widget preview.
-class PreviewDiagnostic {
+@immutable
+class PreviewDiagnostic with _JsonValue {
   const PreviewDiagnostic({
     required this.kind,
     required this.phase,
@@ -617,84 +460,69 @@ class PreviewDiagnostic {
   final String? targetType;
 
   @override
-  int get hashCode => Object.hash(
-    kind,
-    overflowAxis,
-    overflowPixels,
-    overflowSide,
-    phase,
-    severity,
-    summary,
-    targetType,
+  Map<String, Object?> toJson() => <String, Object?>{
+    kPhase: phase.name,
+    kKind: kind.wireValue,
+    kSummary: summary,
+    kSeverity: severity.wireValue,
+    kOverflowPixels: ?overflowPixels,
+    kOverflowSide: ?overflowSide,
+    kOverflowAxis: ?overflowAxis,
+    kTargetType: ?targetType,
+  };
+
+  static PreviewDiagnostic fromJson(Map<String, Object?> json) => PreviewDiagnostic(
+    kind: PreviewDiagnosticKind.fromJson(json[kKind]! as String),
+    overflowAxis: json[kOverflowAxis] as String?,
+    overflowPixels: (json[kOverflowPixels] as num?)?.toDouble(),
+    overflowSide: json[kOverflowSide] as String?,
+    phase: PreviewDiagnosticPhase.fromJson(json[kPhase]! as String),
+    severity: switch (json[kSeverity]) {
+      final String raw => PreviewDiagnosticSeverity.fromJson(raw),
+      _ => .error,
+    },
+    summary: json[kSummary]! as String,
+    targetType: json[kTargetType] as String?,
   );
-
-  @override
-  bool operator ==(Object other) {
-    return other is PreviewDiagnostic &&
-        other.runtimeType == PreviewDiagnostic &&
-        kind == other.kind &&
-        overflowAxis == other.overflowAxis &&
-        overflowPixels == other.overflowPixels &&
-        overflowSide == other.overflowSide &&
-        phase == other.phase &&
-        severity == other.severity &&
-        summary == other.summary &&
-        targetType == other.targetType;
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kPhase: phase.name,
-      kKind: kind.wireValue,
-      kSummary: summary,
-      kSeverity: severity.wireValue,
-      kOverflowPixels: ?overflowPixels,
-      kOverflowSide: ?overflowSide,
-      kOverflowAxis: ?overflowAxis,
-      kTargetType: ?targetType,
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static PreviewDiagnostic fromJson(Map<String, Object?> json) {
-    return PreviewDiagnostic(
-      kind: PreviewDiagnosticKind.fromJson(json[kKind]! as String),
-      overflowAxis: json[kOverflowAxis] as String?,
-      overflowPixels: (json[kOverflowPixels] as num?)?.toDouble(),
-      overflowSide: json[kOverflowSide] as String?,
-      phase: PreviewDiagnosticPhase.fromJson(json[kPhase]! as String),
-      severity: switch (json[kSeverity]) {
-        final String raw => PreviewDiagnosticSeverity.fromJson(raw),
-        _ => .error,
-      },
-      summary: json[kSummary]! as String,
-      targetType: json[kTargetType] as String?,
-    );
-  }
 }
 
 /// Metadata and error summary for a single discovered widget preview instance.
-class PreviewEntry {
-  const PreviewEntry({
-    required this.column,
-    required this.functionName,
-    required this.group,
-    required this.hasError,
-    required this.id,
-    required this.libraryUri,
-    required this.line,
-    required this.packageName,
-    required this.scriptUri,
-    this.brightness,
-    this.errorMessage,
-    this.height,
-    this.multiPreviewIndex,
-    this.name,
-    this.textScaleFactor,
-    this.width,
-  });
+extension type PreviewEntry._(Map<String, Object?> _json) {
+  PreviewEntry({
+    required int column,
+    required String functionName,
+    required String group,
+    required bool hasError,
+    required String id,
+    required String libraryUri,
+    required int line,
+    required String packageName,
+    required String scriptUri,
+    String? brightness,
+    String? errorMessage,
+    double? height,
+    int? multiPreviewIndex,
+    String? name,
+    double? textScaleFactor,
+    double? width,
+  }) : _json = <String, Object?>{
+         kId: id,
+         kLibraryUri: libraryUri,
+         kScriptUri: scriptUri,
+         kPackageName: packageName,
+         kFunctionName: functionName,
+         kMultiPreviewIndex: multiPreviewIndex,
+         kLine: line,
+         kColumn: column,
+         kGroup: group,
+         kName: name,
+         kWidth: width,
+         kHeight: height,
+         kTextScaleFactor: textScaleFactor,
+         kBrightness: brightness,
+         kHasError: hasError,
+         kErrorMessage: errorMessage,
+       };
 
   static const kBrightness = 'brightness';
   static const kColumn = 'column';
@@ -713,167 +541,79 @@ class PreviewEntry {
   static const kTextScaleFactor = 'textScaleFactor';
   static const kWidth = 'width';
 
-  final String? brightness;
-  final int column;
-  final String? errorMessage;
-  final String functionName;
-  final String group;
-  final bool hasError;
-  final double? height;
-  final String id;
-  final String libraryUri;
-  final int line;
-  final int? multiPreviewIndex;
-  final String? name;
-  final String packageName;
-  final String scriptUri;
-  final double? textScaleFactor;
-  final double? width;
+  String? get brightness => _json[kBrightness] as String?;
+  int get column => (_json[kColumn]! as num).toInt();
+  String? get errorMessage => _json[kErrorMessage] as String?;
+  String get functionName => _json[kFunctionName]! as String;
+  String get group => _json[kGroup]! as String;
+  bool get hasError => _json[kHasError]! as bool;
+  double? get height => (_json[kHeight] as num?)?.toDouble();
+  String get id => _json[kId]! as String;
+  String get libraryUri => _json[kLibraryUri]! as String;
+  int get line => (_json[kLine]! as num).toInt();
+  int? get multiPreviewIndex => (_json[kMultiPreviewIndex] as num?)?.toInt();
+  String? get name => _json[kName] as String?;
+  String get packageName => _json[kPackageName]! as String;
+  String get scriptUri => _json[kScriptUri]! as String;
+  double? get textScaleFactor => (_json[kTextScaleFactor] as num?)?.toDouble();
+  double? get width => (_json[kWidth] as num?)?.toDouble();
 
-  @override
-  int get hashCode => Object.hash(
-    brightness,
-    column,
-    errorMessage,
-    functionName,
-    group,
-    hasError,
-    height,
-    id,
-    libraryUri,
-    line,
-    multiPreviewIndex,
-    name,
-    packageName,
-    scriptUri,
-    textScaleFactor,
-    width,
+  Map<String, Object?> toJson() => _json;
+
+  static PreviewEntry fromJson(Map<String, Object?> json) => PreviewEntry(
+    brightness: json[kBrightness] as String?,
+    column: (json[kColumn]! as num).toInt(),
+    errorMessage: json[kErrorMessage] as String?,
+    functionName: json[kFunctionName]! as String,
+    group: json[kGroup]! as String,
+    hasError: json[kHasError]! as bool,
+    height: (json[kHeight] as num?)?.toDouble(),
+    id: json[kId]! as String,
+    libraryUri: json[kLibraryUri]! as String,
+    line: (json[kLine]! as num).toInt(),
+    multiPreviewIndex: (json[kMultiPreviewIndex] as num?)?.toInt(),
+    name: json[kName] as String?,
+    packageName: json[kPackageName]! as String,
+    scriptUri: json[kScriptUri]! as String,
+    textScaleFactor: (json[kTextScaleFactor] as num?)?.toDouble(),
+    width: (json[kWidth] as num?)?.toDouble(),
   );
-
-  @override
-  bool operator ==(Object other) {
-    return other is PreviewEntry &&
-        other.runtimeType == PreviewEntry &&
-        brightness == other.brightness &&
-        column == other.column &&
-        errorMessage == other.errorMessage &&
-        functionName == other.functionName &&
-        group == other.group &&
-        hasError == other.hasError &&
-        height == other.height &&
-        id == other.id &&
-        libraryUri == other.libraryUri &&
-        line == other.line &&
-        multiPreviewIndex == other.multiPreviewIndex &&
-        name == other.name &&
-        packageName == other.packageName &&
-        scriptUri == other.scriptUri &&
-        textScaleFactor == other.textScaleFactor &&
-        width == other.width;
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kId: id,
-      kLibraryUri: libraryUri,
-      kScriptUri: scriptUri,
-      kPackageName: packageName,
-      kFunctionName: functionName,
-      kMultiPreviewIndex: multiPreviewIndex,
-      kLine: line,
-      kColumn: column,
-      kGroup: group,
-      kName: name,
-      kWidth: width,
-      kHeight: height,
-      kTextScaleFactor: textScaleFactor,
-      kBrightness: brightness,
-      kHasError: hasError,
-      kErrorMessage: errorMessage,
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static PreviewEntry fromJson(Map<String, Object?> json) {
-    return PreviewEntry(
-      brightness: json[kBrightness] as String?,
-      column: (json[kColumn]! as num).toInt(),
-      errorMessage: json[kErrorMessage] as String?,
-      functionName: json[kFunctionName]! as String,
-      group: json[kGroup]! as String,
-      hasError: json[kHasError]! as bool,
-      height: (json[kHeight] as num?)?.toDouble(),
-      id: json[kId]! as String,
-      libraryUri: json[kLibraryUri]! as String,
-      line: (json[kLine]! as num).toInt(),
-      multiPreviewIndex: (json[kMultiPreviewIndex] as num?)?.toInt(),
-      name: json[kName] as String?,
-      packageName: json[kPackageName]! as String,
-      scriptUri: json[kScriptUri]! as String,
-      textScaleFactor: (json[kTextScaleFactor] as num?)?.toDouble(),
-      width: (json[kWidth] as num?)?.toDouble(),
-    );
-  }
 }
 
 /// DTD response containing the list of widget previews in the workspace.
-class PreviewListResponse {
-  const PreviewListResponse({required this.previews});
+extension type PreviewListResponse._(Map<String, Object?> _json) {
+  PreviewListResponse({required List<PreviewEntry> previews})
+    : _json = <String, Object?>{
+        kType: kTypeName,
+        kPreviews: List<PreviewEntry>.unmodifiable(previews),
+      };
 
   factory PreviewListResponse.fromDTDResponse(DTDResponse response) {
-    if (response.result[kType] != kTypeName) {
-      throw RpcException.invalidParams(
-        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
-      );
-    }
+    _expectDtdResponseType(response, kTypeName);
     return PreviewListResponse.fromJson(response.result);
   }
 
   static const kPreviews = 'previews';
-  static const kType = 'type';
+  static const String kType = _kTypeKey;
   static const kTypeName = 'PreviewListResponse';
 
-  final List<PreviewEntry> previews;
+  List<PreviewEntry> get previews => _json[kPreviews]! as List<PreviewEntry>;
 
-  @override
-  int get hashCode => const ListEquality<PreviewEntry>().hash(previews);
+  Map<String, Object?> toJson() => _json;
 
-  @override
-  bool operator ==(Object other) {
-    return other is PreviewListResponse &&
-        other.runtimeType == PreviewListResponse &&
-        const ListEquality<PreviewEntry>().equals(previews, other.previews);
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kType: kTypeName,
-      kPreviews: <Map<String, Object?>>[
-        for (final PreviewEntry preview in previews) preview.toJson(),
-      ],
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static PreviewListResponse fromJson(Map<String, Object?> json) {
-    final previewsJson = json[kPreviews]! as List<Object?>;
-    return PreviewListResponse(
-      previews: <PreviewEntry>[
-        for (final Object? item in previewsJson)
-          PreviewEntry.fromJson(item! as Map<String, Object?>),
-      ],
-    );
-  }
+  static PreviewListResponse fromJson(Map<String, Object?> json) => PreviewListResponse(
+    previews: <PreviewEntry>[
+      for (final Object? item in json[kPreviews]! as List<Object?>)
+        PreviewEntry.fromJson(item! as Map<String, Object?>),
+    ],
+  );
 }
 
 /// DTD response returned by `PreviewScaffold.capturePreview` containing the
 /// rendered dimensions, optional base64-encoded PNG snapshot, and structured
 /// diagnostics for a single widget preview.
-class CapturePreviewResponse {
+@immutable
+class CapturePreviewResponse with _JsonValue {
   const CapturePreviewResponse({
     required this.diagnostics,
     required this.hasErrors,
@@ -886,11 +626,7 @@ class CapturePreviewResponse {
   });
 
   factory CapturePreviewResponse.fromDTDResponse(DTDResponse response) {
-    if (response.result[kType] != kTypeName) {
-      throw RpcException.invalidParams(
-        'Expected $kType param to be $kTypeName, got: ${response.result[kType]}',
-      );
-    }
+    _expectDtdResponseType(response, kTypeName);
     return CapturePreviewResponse.fromJson(response.result);
   }
 
@@ -902,7 +638,7 @@ class CapturePreviewResponse {
   static const kPreviewId = 'previewId';
   static const kRenderedHeight = 'renderedHeight';
   static const kRenderedWidth = 'renderedWidth';
-  static const kType = 'type';
+  static const String kType = _kTypeKey;
   static const kTypeName = 'CapturePreviewResponse';
 
   final List<PreviewDiagnostic> diagnostics;
@@ -914,65 +650,40 @@ class CapturePreviewResponse {
   final double renderedHeight;
   final double renderedWidth;
 
-  @override
-  int get hashCode => Object.hash(
-    const ListEquality<PreviewDiagnostic>().hash(diagnostics),
-    hasErrors,
-    imageBase64,
-    name,
-    pixelRatio,
-    previewId,
-    renderedHeight,
-    renderedWidth,
+  CapturePreviewResponse withoutImage() => CapturePreviewResponse(
+    diagnostics: diagnostics,
+    hasErrors: hasErrors,
+    name: name,
+    pixelRatio: pixelRatio,
+    previewId: previewId,
+    renderedHeight: renderedHeight,
+    renderedWidth: renderedWidth,
   );
 
   @override
-  bool operator ==(Object other) {
-    return other is CapturePreviewResponse &&
-        other.runtimeType == CapturePreviewResponse &&
-        const ListEquality<PreviewDiagnostic>().equals(diagnostics, other.diagnostics) &&
-        hasErrors == other.hasErrors &&
-        imageBase64 == other.imageBase64 &&
-        name == other.name &&
-        pixelRatio == other.pixelRatio &&
-        previewId == other.previewId &&
-        renderedHeight == other.renderedHeight &&
-        renderedWidth == other.renderedWidth;
-  }
+  Map<String, Object?> toJson() => <String, Object?>{
+    kType: kTypeName,
+    kPreviewId: previewId,
+    kName: name,
+    kRenderedWidth: renderedWidth,
+    kRenderedHeight: renderedHeight,
+    kPixelRatio: pixelRatio,
+    kImageBase64: imageBase64,
+    kHasErrors: hasErrors,
+    kDiagnostics: <Map<String, Object?>>[for (final d in diagnostics) d.toJson()],
+  };
 
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      kType: kTypeName,
-      kPreviewId: previewId,
-      kName: name,
-      kRenderedWidth: renderedWidth,
-      kRenderedHeight: renderedHeight,
-      kPixelRatio: pixelRatio,
-      kImageBase64: imageBase64,
-      kHasErrors: hasErrors,
-      kDiagnostics: <Map<String, Object?>>[
-        for (final PreviewDiagnostic diagnostic in diagnostics) diagnostic.toJson(),
-      ],
-    };
-  }
-
-  @override
-  String toString() => json.encode(toJson());
-
-  static CapturePreviewResponse fromJson(Map<String, Object?> json) {
-    final diagnosticsJson = json[kDiagnostics]! as List<Object?>;
-    return CapturePreviewResponse(
-      diagnostics: <PreviewDiagnostic>[
-        for (final Object? item in diagnosticsJson)
-          PreviewDiagnostic.fromJson(item! as Map<String, Object?>),
-      ],
-      hasErrors: json[kHasErrors]! as bool,
-      imageBase64: json[kImageBase64] as String?,
-      name: json[kName] as String?,
-      pixelRatio: (json[kPixelRatio]! as num).toDouble(),
-      previewId: json[kPreviewId]! as String,
-      renderedHeight: (json[kRenderedHeight]! as num).toDouble(),
-      renderedWidth: (json[kRenderedWidth]! as num).toDouble(),
-    );
-  }
+  static CapturePreviewResponse fromJson(Map<String, Object?> json) => CapturePreviewResponse(
+    diagnostics: <PreviewDiagnostic>[
+      for (final Object? item in json[kDiagnostics]! as List<Object?>)
+        PreviewDiagnostic.fromJson(item! as Map<String, Object?>),
+    ],
+    hasErrors: json[kHasErrors]! as bool,
+    imageBase64: json[kImageBase64] as String?,
+    name: json[kName] as String?,
+    pixelRatio: (json[kPixelRatio]! as num).toDouble(),
+    previewId: json[kPreviewId]! as String,
+    renderedHeight: (json[kRenderedHeight]! as num).toDouble(),
+    renderedWidth: (json[kRenderedWidth]! as num).toDouble(),
+  );
 }

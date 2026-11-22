@@ -68,6 +68,7 @@ class WidgetPreviewLiveServer {
   static const _kApiHotReloadPath = '__api/hot-reload';
   static const _kApiStatusPath = '__api/status';
   static const _kApiSyncPath = '__api/sync';
+  static const _kCodeKey = 'code';
   static const _kCorpHeader = 'cross-origin-resource-policy';
   static const _kCorpSameSite = 'same-site';
   static const _kDdcBundlePath = '__ddc_bundle.js';
@@ -76,20 +77,36 @@ class WidgetPreviewLiveServer {
   static const _kEmbedMainDartJsPath = '__embed_main.dart.js';
   static const _kEmbedMainModuleBootstrapPath = '__embed_main_module.bootstrap.js';
   static const _kEntrypointExtensionMarker = '/* ENTRYPOINT_EXTENTION_MARKER */';
+  static const _kErrorKey = 'error';
+  static const _kHtmlContentType = 'text/html; charset=utf-8';
+  static const _kIdKey = 'id';
+  static const _kJsContentType = 'application/javascript; charset=utf-8';
+  static const _kJsonContentType = 'application/json; charset=utf-8';
+  static const _kJsonRpcKey = 'jsonrpc';
+  static const _kJsonRpcVersion = '2.0';
   static const _kLiveBgStyleTag =
       '<style id="wp-live-bg">html,body{margin:0;background:#121212;color:#e4e4e7}</style>';
   static const _kLivePath = 'live';
   static const _kLiveSlashPath = 'live/';
   static const _kMainModuleBootstrapPath = 'main_module.bootstrap.js';
   static const int _kMaxRpcFrameBytes = 64 * 1024;
+  static const _kMessageKey = 'message';
+  static const _kMethodKey = 'method';
+  static const _kModulesKey = 'modules';
   static const _kNoSniffHeader = 'x-content-type-options';
   static const _kNoSniffValue = 'nosniff';
+  static const _kNoStoreHeaders = <String, String>{HttpHeaders.cacheControlHeader: 'no-store'};
   static const _kOriginHeader = 'origin';
+  static const _kParamsKey = 'params';
+  static const _kPlainContentType = 'text/plain; charset=utf-8';
+  static const _kResultKey = 'result';
   static const _kRevQueryParam = 'rev';
+  static const _kRevisionKey = 'revision';
   static const _kSecFetchSiteHeader = 'sec-fetch-site';
   static const _kSecFetchSiteNone = 'none';
   static const _kSecFetchSiteSameOrigin = 'same-origin';
   static const _kSinceQueryParam = 'since';
+  static const _kStatusKey = 'status';
   static const _kStreamListenMethod = 'streamListen';
   static const _kStreamCancelMethod = 'streamCancel';
   static const _kStreamIdKey = 'streamId';
@@ -172,7 +189,7 @@ class WidgetPreviewLiveServer {
     if (!_isRequestAuthorized(request)) {
       return shelf.Response.forbidden(
         'Cross-origin request rejected.',
-        headers: _securityHeaders(contentType: 'text/plain; charset=utf-8'),
+        headers: _securityHeaders(contentType: _kPlainContentType),
       );
     }
 
@@ -209,13 +226,39 @@ class WidgetPreviewLiveServer {
   Map<String, String> _securityHeaders({
     String? contentType,
     Map<String, String> extra = const <String, String>{},
+  }) => <String, String>{
+    ..._kBaseSecurityHeaders,
+    HttpHeaders.contentTypeHeader: ?contentType,
+    ...extra,
+  };
+
+  shelf.Response _jsOkResponse(
+    Object body, {
+    Map<String, String> extra = const <String, String>{},
   }) {
-    return <String, String>{
-      ..._kBaseSecurityHeaders,
-      HttpHeaders.contentTypeHeader: ?contentType,
-      ...extra,
-    };
+    return shelf.Response.ok(
+      body,
+      encoding: body is String ? utf8 : null,
+      headers: _securityHeaders(contentType: _kJsContentType, extra: extra),
+    );
   }
+
+  shelf.Response _jsonResponse(
+    Map<String, Object?> payload, {
+    int statusCode = HttpStatus.ok,
+    bool noStore = false,
+  }) => shelf.Response(
+    statusCode,
+    body: jsonEncode(payload),
+    encoding: utf8,
+    headers: _securityHeaders(
+      contentType: _kJsonContentType,
+      extra: noStore ? _kNoStoreHeaders : const <String, String>{},
+    ),
+  );
+
+  shelf.Response _jsonErrorResponse(int statusCode, String message) =>
+      _jsonResponse(<String, Object?>{_kErrorKey: message}, statusCode: statusCode);
 
   String _rootRelativePath(String subPath) {
     final String basePath = basePathProvider().replaceAll(RegExp(r'^/+|/+$'), '');
@@ -230,42 +273,29 @@ class WidgetPreviewLiveServer {
     return shelf.Response.ok(
       html,
       encoding: utf8,
-      headers: _securityHeaders(contentType: 'text/html; charset=utf-8'),
+      headers: _securityHeaders(contentType: _kHtmlContentType),
     );
   }
 
-  shelf.Response _serveEmbedFlutterBootstrapJs() {
-    final String js = renderFlutterBootstrapJs().replaceAll(
-      'main.dart.js',
-      _rootRelativePath(_kEmbedMainDartJsPath),
-    );
-    return shelf.Response.ok(
-      js,
-      encoding: utf8,
-      headers: _securityHeaders(contentType: 'application/javascript; charset=utf-8'),
-    );
-  }
+  shelf.Response _serveEmbedFlutterBootstrapJs() => _jsOkResponse(
+    renderFlutterBootstrapJs().replaceAll('main.dart.js', _rootRelativePath(_kEmbedMainDartJsPath)),
+  );
 
-  shelf.Response _serveEmbedMainDartJs() {
-    final String js = generateDDCLibraryBundleBootstrapScript(
+  shelf.Response _serveEmbedMainDartJs() => _jsOkResponse(
+    generateDDCLibraryBundleBootstrapScript(
       ddcModuleLoaderUrl: 'ddc_module_loader.js',
       mapperUrl: 'stack_trace_mapper.js',
       generateLoadingIndicator: false,
       isWindows: isWindows,
-    ).replaceAll('main_module.bootstrap.js', _kEmbedMainModuleBootstrapPath);
-    return shelf.Response.ok(
-      js,
-      encoding: utf8,
-      headers: _securityHeaders(contentType: 'application/javascript; charset=utf-8'),
-    );
-  }
+    ).replaceAll('main_module.bootstrap.js', _kEmbedMainModuleBootstrapPath),
+  );
 
   shelf.Response _serveEmbedMainModuleBootstrapJs() {
     final Uint8List? storedBootstrap = webMemoryFS.files[_kMainModuleBootstrapPath];
     if (storedBootstrap == null) {
       return shelf.Response.notFound(
         '$_kMainModuleBootstrapPath has not been compiled yet.',
-        headers: _securityHeaders(contentType: 'text/plain; charset=utf-8'),
+        headers: _securityHeaders(contentType: _kPlainContentType),
       );
     }
     final String decodedBootstrap = utf8.decode(storedBootstrap);
@@ -274,32 +304,28 @@ class WidgetPreviewLiveServer {
         '$_kMainModuleBootstrapPath is missing expected $_kEntrypointExtensionMarker marker.',
       );
     }
-    final String bootstrap = decodedBootstrap.replaceFirst(
-      _kEntrypointExtensionMarker,
-      _buildEmbedModuleRegistrationJs(),
-    );
-    return shelf.Response.ok(
-      bootstrap,
-      encoding: utf8,
-      headers: _securityHeaders(contentType: 'application/javascript; charset=utf-8'),
+    return _jsOkResponse(
+      decodedBootstrap.replaceFirst(_kEntrypointExtensionMarker, _buildEmbedModuleRegistrationJs()),
     );
   }
 
   String _buildEmbedModuleRegistrationJs() {
-    final buffer = StringBuffer();
-    for (final MapEntry(key: name, value: path) in modules.entries) {
-      final String scriptJson = jsonEncode(<String, String>{'src': '$path.js', 'id': name});
-      buffer.writeln('window.\$dartLoader.loader.registerScript($scriptJson);');
-    }
-    buffer.writeln('''
+    const registerCall = r'window.$dartLoader.loader.registerScript';
+    const tail =
+        '''
 window.\$dartLoader.loadConfig.loadScriptFn = function(loader) {
   loader.addScriptsToQueue([
     {src: "$_kDdcBundlePath", id: "__ddc_bundle__"}
   ], null);
   loader.loadEnqueuedModules();
 };
-window.\$dartLoader.loader.nextAttempt();''');
-    return buffer.toString();
+window.\$dartLoader.loader.nextAttempt();
+''';
+    return <String>[
+      for (final MapEntry(key: name, value: path) in modules.entries)
+        '$registerCall(${jsonEncode(<String, String>{'src': '$path.js', 'id': name})});',
+      tail,
+    ].join('\n');
   }
 
   _CachedDdcBundle _getOrBuildBundle() {
@@ -322,14 +348,11 @@ window.\$dartLoader.loader.nextAttempt();''');
       builder.add(_stripTrailingSourceMappingUrlBytes(fileBytes));
       wroteModule = true;
     }
-    final Uint8List utf8Bytes = builder.takeBytes();
-    final built = _CachedDdcBundle(
+    return _cachedBundle = _CachedDdcBundle(
       etag: '"ddc-$_serverNonce-rev-$revision"',
       revision: revision,
-      utf8Bytes: utf8Bytes,
+      utf8Bytes: builder.takeBytes(),
     );
-    _cachedBundle = built;
-    return built;
   }
 
   static Uint8List _stripTrailingSourceMappingUrlBytes(Uint8List bytes) {
@@ -387,17 +410,14 @@ window.\$dartLoader.loader.nextAttempt();''');
       request.headers[HttpHeaders.acceptEncodingHeader],
     );
     final Uint8List bodyBytes = acceptsGzip ? await bundle.getGzipBytes() : bundle.utf8Bytes;
-    return shelf.Response.ok(
+    return _jsOkResponse(
       bodyBytes,
-      headers: _securityHeaders(
-        contentType: 'application/javascript; charset=utf-8',
-        extra: <String, String>{
-          HttpHeaders.cacheControlHeader: 'max-age=0, must-revalidate',
-          HttpHeaders.etagHeader: bundle.etag,
-          HttpHeaders.varyHeader: HttpHeaders.acceptEncodingHeader,
-          if (acceptsGzip) HttpHeaders.contentEncodingHeader: 'gzip',
-        },
-      ),
+      extra: <String, String>{
+        HttpHeaders.cacheControlHeader: 'max-age=0, must-revalidate',
+        HttpHeaders.etagHeader: bundle.etag,
+        HttpHeaders.varyHeader: HttpHeaders.acceptEncodingHeader,
+        if (acceptsGzip) HttpHeaders.contentEncodingHeader: 'gzip',
+      },
     );
   }
 
@@ -422,28 +442,17 @@ window.\$dartLoader.loader.nextAttempt();''');
     return false;
   }
 
-  static bool _matchesEtag(String? ifNoneMatch, String etag) {
-    if (ifNoneMatch == null || ifNoneMatch.isEmpty) {
-      return false;
-    }
-    if (ifNoneMatch == etag) {
-      return true;
-    }
-    return ifNoneMatch.split(',').any((String part) => part.trim() == etag);
-  }
+  static bool _matchesEtag(String? ifNoneMatch, String etag) =>
+      ifNoneMatch != null &&
+      ifNoneMatch.isNotEmpty &&
+      (ifNoneMatch == etag || ifNoneMatch.split(',').any((String part) => part.trim() == etag));
 
   shelf.Response _serveHotReloadModule(String requestPath) {
     final Uint8List? fileBytes = webMemoryFS.files[requestPath];
     if (fileBytes == null) {
       return shelf.Response.notFound('');
     }
-    return shelf.Response.ok(
-      _stripTrailingSourceMappingUrlBytes(fileBytes),
-      headers: _securityHeaders(
-        contentType: 'application/javascript; charset=utf-8',
-        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
-      ),
-    );
+    return _jsOkResponse(_stripTrailingSourceMappingUrlBytes(fileBytes), extra: _kNoStoreHeaders);
   }
 
   shelf.Response _serveApiHotReload(shelf.Request request) {
@@ -478,14 +487,10 @@ window.\$dartLoader.loader.nextAttempt();''');
         });
       }
     }
-    return shelf.Response.ok(
-      jsonEncode(<String, Object?>{'revision': currentRevision, 'modules': changedModules}),
-      encoding: utf8,
-      headers: _securityHeaders(
-        contentType: 'application/json; charset=utf-8',
-        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
-      ),
-    );
+    return _jsonResponse(<String, Object?>{
+      _kRevisionKey: currentRevision,
+      _kModulesKey: changedModules,
+    }, noStore: true);
   }
 
   List<String>? _librariesForModule(String fileName) {
@@ -503,31 +508,15 @@ window.\$dartLoader.loader.nextAttempt();''');
 
   shelf.Response _serveApiStatus() {
     final WidgetPreviewDtdServices dtdServices = config.dtdServices;
-    final payload = <String, Object?>{
-      'status': 'ready',
-      'projectRoot': dtdServices.projectRootPath ?? dtdServices.project.directory.path,
-      'previewService': dtdServices.widgetPreviewService,
-      'scaffoldService': dtdServices.widgetPreviewScaffoldService,
-      'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
-      'scaffoldConnected': dtdServices.scaffoldConnected,
-    };
-    return shelf.Response.ok(
-      jsonEncode(payload),
-      encoding: utf8,
-      headers: _securityHeaders(
-        contentType: 'application/json; charset=utf-8',
-        extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
-      ),
-    );
-  }
-
-  shelf.Response _jsonErrorResponse(int statusCode, String message) {
-    return shelf.Response(
-      statusCode,
-      body: jsonEncode(<String, Object?>{'error': message}),
-      encoding: utf8,
-      headers: _securityHeaders(contentType: 'application/json; charset=utf-8'),
-    );
+    return _jsonResponse(<String, Object?>{
+      _kStatusKey: 'ready',
+      PreviewServiceInfo.kProjectRoot:
+          dtdServices.projectRootPath ?? dtdServices.project.directory.path,
+      PreviewServiceInfo.kPreviewService: dtdServices.widgetPreviewService,
+      PreviewServiceInfo.kScaffoldService: dtdServices.widgetPreviewScaffoldService,
+      PreviewServiceInfo.kScaffoldStream: dtdServices.widgetPreviewScaffoldStream,
+      PreviewServiceInfo.kScaffoldConnected: dtdServices.scaffoldConnected,
+    }, noStore: true);
   }
 
   Future<shelf.Response> _serveApiSync() async {
@@ -543,14 +532,7 @@ window.\$dartLoader.loader.nextAttempt();''');
       final SyncPreviewsResponse response = await onSyncPreviews(
         timeout: const Duration(milliseconds: WidgetPreviewDtdServices.kDefaultSyncTimeoutMs),
       );
-      return shelf.Response.ok(
-        jsonEncode(response.toJson()),
-        encoding: utf8,
-        headers: _securityHeaders(
-          contentType: 'application/json; charset=utf-8',
-          extra: const <String, String>{HttpHeaders.cacheControlHeader: 'no-store'},
-        ),
-      );
+      return _jsonResponse(response.toJson(), noStore: true);
     } on RpcException catch (e) {
       return _jsonErrorResponse(HttpStatus.serviceUnavailable, e.message);
     } on TimeoutException catch (e) {
@@ -567,7 +549,7 @@ window.\$dartLoader.loader.nextAttempt();''');
       return shelf.Response(
         HttpStatus.serviceUnavailable,
         body: 'DTD server URI is not available.',
-        headers: _securityHeaders(contentType: 'text/plain; charset=utf-8'),
+        headers: _securityHeaders(contentType: _kPlainContentType),
       );
     }
     final shelf.Handler wsHandler = webSocketHandler((WebSocketChannel clientChannel, String? _) {
@@ -623,72 +605,50 @@ window.\$dartLoader.loader.nextAttempt();''');
   }
 
   String? _sanitizeAndFilterRpc(Object? message, WebSocketChannel clientChannel) {
-    if (message is! String) {
-      _sendRpcError(
-        clientChannel,
-        id: null,
-        code: _kJsonRpcInvalidRequest,
-        message: 'JSON-RPC requests must be text frames.',
-      );
+    String? fail(int code, String errorMessage, {Object? id}) {
+      _sendRpcError(clientChannel, id: id, code: code, message: errorMessage);
       return null;
+    }
+
+    if (message is! String) {
+      return fail(_kJsonRpcInvalidRequest, 'JSON-RPC requests must be text frames.');
     }
     if (message.length > _kMaxRpcFrameBytes ||
         (message.length * 3 > _kMaxRpcFrameBytes &&
             utf8.encode(message).length > _kMaxRpcFrameBytes)) {
-      _sendRpcError(
-        clientChannel,
-        id: null,
-        code: _kJsonRpcInvalidRequest,
-        message: 'JSON-RPC request exceeds maximum frame size.',
-      );
-      return null;
+      return fail(_kJsonRpcInvalidRequest, 'JSON-RPC request exceeds maximum frame size.');
     }
 
     final Object? decoded;
     try {
       decoded = json.decode(message);
     } on FormatException {
-      _sendRpcError(clientChannel, id: null, code: _kJsonRpcParseError, message: 'Parse error.');
-      return null;
+      return fail(_kJsonRpcParseError, 'Parse error.');
     }
 
     if (decoded is! Map<String, Object?>) {
-      _sendRpcError(
-        clientChannel,
-        id: null,
-        code: _kJsonRpcInvalidRequest,
-        message: 'Invalid Request.',
-      );
-      return null;
+      return fail(_kJsonRpcInvalidRequest, 'Invalid Request.');
     }
 
-    final Object? rawId = decoded['id'];
+    final Object? rawId = decoded[_kIdKey];
     final Object? rpcId = (rawId is String || rawId is int) ? rawId : null;
-    if (decoded case {'jsonrpc': '2.0', 'method': final String method, 'id': final Object _}
+    if (decoded case {_kJsonRpcKey: _kJsonRpcVersion, _kMethodKey: final String method, _kIdKey: _}
         when rpcId != null) {
-      final Object? rawParams = decoded['params'];
+      final Object? rawParams = decoded[_kParamsKey];
       if (rawParams is! Map<String, Object?>?) {
-        _sendRpcError(
-          clientChannel,
-          id: rpcId,
-          code: _kJsonRpcInvalidParams,
-          message: 'Invalid params.',
-        );
-        return null;
+        return fail(_kJsonRpcInvalidParams, 'Invalid params.', id: rpcId);
       }
       final Map<String, Object?>? params = rawParams;
       final WidgetPreviewDtdServices dtdServices = config.dtdServices;
 
-      Map<String, Object?>? cleanParams;
+      final Map<String, Object?> cleanParams;
       if (method == _kStreamListenMethod || method == _kStreamCancelMethod) {
         if (params?[_kStreamIdKey] != dtdServices.widgetPreviewScaffoldStream) {
-          _sendRpcError(
-            clientChannel,
+          return fail(
+            _kJsonRpcMethodNotFound,
+            'Stream "$method" is not allowed on this endpoint.',
             id: rpcId,
-            code: _kJsonRpcMethodNotFound,
-            message: 'Stream "$method" is not allowed on this endpoint.',
           );
-          return null;
         }
         cleanParams = <String, Object?>{_kStreamIdKey: dtdServices.widgetPreviewScaffoldStream};
       } else if (method ==
@@ -722,30 +682,18 @@ window.\$dartLoader.loader.nextAttempt();''');
         );
         return null;
       } else {
-        _sendRpcError(
-          clientChannel,
-          id: rpcId,
-          code: _kJsonRpcMethodNotFound,
-          message: 'Method "$method" is not allowed.',
-        );
-        return null;
+        return fail(_kJsonRpcMethodNotFound, 'Method "$method" is not allowed.', id: rpcId);
       }
 
       return jsonEncode(<String, Object?>{
-        'jsonrpc': '2.0',
-        'id': rpcId,
-        'method': method,
-        'params': cleanParams,
+        _kJsonRpcKey: _kJsonRpcVersion,
+        _kIdKey: rpcId,
+        _kMethodKey: method,
+        _kParamsKey: cleanParams,
       });
     }
 
-    _sendRpcError(
-      clientChannel,
-      id: rpcId,
-      code: _kJsonRpcInvalidRequest,
-      message: 'Invalid Request.',
-    );
-    return null;
+    return fail(_kJsonRpcInvalidRequest, 'Invalid Request.', id: rpcId);
   }
 
   static Future<void> _closeChannelSafely(WebSocketChannel channel) async {
@@ -761,20 +709,26 @@ window.\$dartLoader.loader.nextAttempt();''');
     required Object? id,
     required Map<String, Object?> result,
   }) {
-    channel.sink.add(jsonEncode(<String, Object?>{'jsonrpc': '2.0', 'id': id, 'result': result}));
+    channel.sink.add(
+      jsonEncode(<String, Object?>{
+        _kJsonRpcKey: _kJsonRpcVersion,
+        _kIdKey: id,
+        _kResultKey: result,
+      }),
+    );
   }
 
   static void _sendRpcError(
     WebSocketChannel channel, {
-    required Object? id,
     required int code,
+    required Object? id,
     required String message,
   }) {
     channel.sink.add(
       jsonEncode(<String, Object?>{
-        'jsonrpc': '2.0',
-        'id': id,
-        'error': <String, Object?>{'code': code, 'message': message},
+        _kJsonRpcKey: _kJsonRpcVersion,
+        _kIdKey: id,
+        _kErrorKey: <String, Object?>{_kCodeKey: code, _kMessageKey: message},
       }),
     );
   }
@@ -803,10 +757,10 @@ window.\$dartLoader.loader.nextAttempt();''');
 
     final String? hostHeader = request.headers[HttpHeaders.hostHeader];
     if (originHeader == null || originHeader.isEmpty) {
-      if (hostHeader == null || hostHeader.isEmpty) {
-        return true;
-      }
-      return _isAllowedHostHeader(hostHeader) || _isHostMatchingAllowedOrigin(hostHeader);
+      return hostHeader == null ||
+          hostHeader.isEmpty ||
+          _isAllowedHostHeader(hostHeader) ||
+          _isHostMatchingAllowedOrigin(hostHeader);
     }
 
     if (hostHeader != null && hostHeader.isNotEmpty && !_isAllowedHostHeader(hostHeader)) {
@@ -816,18 +770,28 @@ window.\$dartLoader.loader.nextAttempt();''');
     return _isSameAuthorityOrigin(originHeader, hostHeader);
   }
 
+  static ({String scheme, String host, int port})? _parseOriginAuthority(String raw) {
+    final Uri? uri = Uri.tryParse(raw.trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      return null;
+    }
+    final String scheme = uri.scheme.toLowerCase();
+    final int port = uri.hasPort ? uri.port : (scheme == 'https' ? 443 : 80);
+    return (scheme: scheme, host: _normalizeLoopbackHost(uri.host), port: port);
+  }
+
   bool _isHostMatchingAllowedOrigin(String hostHeader) {
     for (final String allowed in config.allowedOrigins) {
-      final Uri? allowedUri = Uri.tryParse(allowed.trim());
-      if (allowedUri == null || !allowedUri.hasScheme || allowedUri.host.isEmpty) {
+      final ({String host, int port, String scheme})? allowedAuth = _parseOriginAuthority(allowed);
+      if (allowedAuth == null) {
         continue;
       }
-      final Uri? hostUri = Uri.tryParse('${allowedUri.scheme}://$hostHeader');
-      if (hostUri == null || hostUri.host.isEmpty) {
-        continue;
-      }
-      if (_normalizeLoopbackHost(hostUri.host) == _normalizeLoopbackHost(allowedUri.host) &&
-          _resolveUriPort(hostUri) == _resolveUriPort(allowedUri)) {
+      final ({String host, int port, String scheme})? hostAuth = _parseOriginAuthority(
+        '${allowedAuth.scheme}://$hostHeader',
+      );
+      if (hostAuth != null &&
+          hostAuth.host == allowedAuth.host &&
+          hostAuth.port == allowedAuth.port) {
         return true;
       }
     }
@@ -835,72 +799,48 @@ window.\$dartLoader.loader.nextAttempt();''');
   }
 
   bool _isAllowedHostHeader(String hostHeader) {
-    final Uri? hostUri = Uri.tryParse('http://$hostHeader');
-    if (hostUri == null || hostUri.host.isEmpty) {
-      return false;
-    }
-    return _isAllowedNormalizedHost(_normalizeLoopbackHost(hostUri.host));
+    final ({String host, int port, String scheme})? auth = _parseOriginAuthority(
+      'http://$hostHeader',
+    );
+    return auth != null && _isAllowedNormalizedHost(auth.host);
   }
 
-  bool _isAllowedNormalizedHost(String normalizedHost) {
-    if (normalizedHost == 'localhost') {
-      return true;
-    }
-    return normalizedHost == _normalizeLoopbackHost(configuredHost);
-  }
+  bool _isAllowedNormalizedHost(String normalizedHost) =>
+      normalizedHost == 'localhost' || normalizedHost == _normalizeLoopbackHost(configuredHost);
 
   bool _isOriginExplicitlyAllowed(String originHeader) {
     final String normalizedOrigin = _normalizeOriginString(originHeader);
-    for (final String allowed in config.allowedOrigins) {
-      if (_normalizeOriginString(allowed) == normalizedOrigin) {
-        return true;
-      }
-    }
-    return false;
+    return config.allowedOrigins.any(
+      (String allowed) => _normalizeOriginString(allowed) == normalizedOrigin,
+    );
   }
 
   static String _normalizeOriginString(String origin) {
-    final Uri? uri = Uri.tryParse(origin.trim());
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      return origin.trim();
-    }
-    final int port = _resolveUriPort(uri);
-    return '${uri.scheme.toLowerCase()}://${_normalizeLoopbackHost(uri.host)}:$port';
+    final ({String host, int port, String scheme})? auth = _parseOriginAuthority(origin);
+    return auth == null ? origin.trim() : '${auth.scheme}://${auth.host}:${auth.port}';
   }
 
   bool _isSameAuthorityOrigin(String originHeader, String? hostHeader) {
     if (hostHeader == null || hostHeader.isEmpty) {
       return false;
     }
-    final Uri? originUri = Uri.tryParse(originHeader);
-    if (originUri == null ||
-        (originUri.scheme != 'http' && originUri.scheme != 'https') ||
-        originUri.host.isEmpty) {
+    final ({String host, int port, String scheme})? originAuth = _parseOriginAuthority(
+      originHeader,
+    );
+    if (originAuth == null || (originAuth.scheme != 'http' && originAuth.scheme != 'https')) {
       return false;
     }
-    final Uri? hostUri = Uri.tryParse('${originUri.scheme}://$hostHeader');
-    if (hostUri == null || hostUri.host.isEmpty) {
-      return false;
-    }
-    final String originHost = _normalizeLoopbackHost(originUri.host);
-    final String requestHost = _normalizeLoopbackHost(hostUri.host);
-    return originHost == requestHost &&
-        _isAllowedNormalizedHost(originHost) &&
-        _resolveUriPort(originUri) == _resolveUriPort(hostUri);
+    final ({String host, int port, String scheme})? hostAuth = _parseOriginAuthority(
+      '${originAuth.scheme}://$hostHeader',
+    );
+    return hostAuth != null &&
+        originAuth.host == hostAuth.host &&
+        _isAllowedNormalizedHost(originAuth.host) &&
+        originAuth.port == hostAuth.port;
   }
 
-  static String _normalizeLoopbackHost(String host) {
-    final String lower = host.toLowerCase();
-    return switch (lower) {
-      'localhost' || '127.0.0.1' || '::1' || '[::1]' => 'localhost',
-      _ => lower,
-    };
-  }
-
-  static int _resolveUriPort(Uri uri) {
-    if (uri.hasPort) {
-      return uri.port;
-    }
-    return uri.scheme.toLowerCase() == 'https' ? 443 : 80;
-  }
+  static String _normalizeLoopbackHost(String host) => switch (host.toLowerCase()) {
+    'localhost' || '127.0.0.1' || '::1' || '[::1]' => 'localhost',
+    final String lower => lower,
+  };
 }

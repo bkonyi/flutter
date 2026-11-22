@@ -39,7 +39,6 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
   static const kWidth = 'width';
 
   static const _kMaxPumpMs = 2000;
-
   static const _kCodeKey = 'code';
   static const _kDarkBrightness = 'dark';
   static const _kDefaultCommandFailedMessage = 'Command failed.';
@@ -153,19 +152,14 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
   @override
   Future<FlutterCommandResult> verifyThenRunCommand(String? commandPath) async {
     try {
-      final FlutterCommandResult result = await super.verifyThenRunCommand(commandPath);
-      _lastCommandResult = result;
-      return result;
+      return _lastCommandResult = await super.verifyThenRunCommand(commandPath);
     } on ToolExit catch (error) {
       if (getValue(CommonOptions.machine)) {
         _writeMachineError(
-          toolContext.stdio,
           message: error.message ?? _kDefaultCommandFailedMessage,
           previewId: _machineErrorPreviewId,
         );
-        final failResult = FlutterCommandResult.fail();
-        _lastCommandResult = failResult;
-        return failResult;
+        return _lastCommandResult = FlutterCommandResult.fail();
       }
       rethrow;
     }
@@ -180,11 +174,36 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     }
   }
 
-  static double? _parsePositiveDoubleOption(
-    FlutterCommand command,
-    StringOptionDescriptor descriptor,
-  ) {
-    final String? raw = command.getValue(descriptor);
+  Future<FlutterCommandResult> _runWithMachineErrorHandling(
+    Future<FlutterCommandResult> Function() action,
+  ) async {
+    final bool machine = getValue(CommonOptions.machine);
+    try {
+      return await action();
+    } on RpcException catch (error) {
+      if (machine) {
+        _writeMachineError(
+          code: error.code,
+          message: error.message,
+          previewId: _machineErrorPreviewId,
+        );
+        return FlutterCommandResult.fail();
+      }
+      throwToolExit(error.message.isNotEmpty ? error.message : error.toString());
+    } on ToolExit catch (error) {
+      if (machine) {
+        _writeMachineError(
+          message: error.message ?? _kDefaultCommandFailedMessage,
+          previewId: _machineErrorPreviewId,
+        );
+        return FlutterCommandResult.fail();
+      }
+      rethrow;
+    }
+  }
+
+  double? _parsePositiveDoubleOption(StringOptionDescriptor descriptor) {
+    final String? raw = getValue(descriptor);
     if (raw == null) {
       return null;
     }
@@ -198,8 +217,8 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     return parsed;
   }
 
-  static int? _parsePumpMsOption(FlutterCommand command) {
-    final String? raw = command.getValue(pumpMsOption);
+  int? _parsePumpMsOption() {
+    final String? raw = getValue(pumpMsOption);
     if (raw == null) {
       return null;
     }
@@ -213,8 +232,8 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     return parsed;
   }
 
-  static String? _parseBrightnessOption(FlutterCommand command) {
-    final String? raw = command.getValue(brightnessOption);
+  String? _parseBrightnessOption() {
+    final String? raw = getValue(brightnessOption);
     if (raw == null) {
       return null;
     }
@@ -227,13 +246,8 @@ abstract base class _WidgetPreviewCliSubCommand extends FlutterCommand {
     return raw;
   }
 
-  static void _writeMachineError(
-    Stdio stdio, {
-    required String message,
-    int? code,
-    String? previewId,
-  }) {
-    stdio.stdout.writeln(
+  void _writeMachineError({required String message, int? code, String? previewId}) {
+    toolContext.stdio.stdout.writeln(
       jsonEncode(<String, Object?>{
         _kErrorKey: message,
         _kCodeKey: ?code,
@@ -262,60 +276,34 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
   String get name => kList;
 
   @override
-  Future<FlutterCommandResult> runCommand() async {
-    final bool machine = getValue(CommonOptions.machine);
+  Future<FlutterCommandResult> runCommand() => _runWithMachineErrorHandling(() async {
     final ToolContext(:Logger logger, :Stdio stdio) = toolContext;
     final WidgetPreviewSessionClient client = _createOrGetClient();
     final stopwatch = Stopwatch()..start();
-    try {
-      final (:Directory? explicitProjectDirectory, :FlutterProject rootProject) = client
-          .resolveRootProject(this, allowPositionalDirectory: true);
-      final String? rawFile = getValue(_WidgetPreviewCliSubCommand.fileOption);
-      final String? dtdUrl = getValue(_WidgetPreviewCliSubCommand.dtdUrlOption);
-      final bool sync = getValue(_WidgetPreviewCliSubCommand.syncOption);
-      final String? fileUri = client.resolveFileFilter(
-        rawFile,
-        explicitProjectDirectory: explicitProjectDirectory,
-      );
+    final (:Directory? explicitProjectDirectory, :FlutterProject rootProject) = client
+        .resolveRootProject(this, allowPositionalDirectory: true);
+    final String? fileUri = client.resolveFileFilter(
+      getValue(_WidgetPreviewCliSubCommand.fileOption),
+      explicitProjectDirectory: explicitProjectDirectory,
+    );
+    final PreviewListResponse response = await client.listPreviewsForProject(
+      dtdUrl: getValue(_WidgetPreviewCliSubCommand.dtdUrlOption),
+      fileUri: fileUri,
+      rootProject: rootProject,
+      sync: getValue(_WidgetPreviewCliSubCommand.syncOption),
+    );
+    WidgetPreviewAnalytics(analytics: analytics).reportListCompleted(
+      elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      previewCount: response.previews.length,
+    );
 
-      final PreviewListResponse response = await client.listPreviewsForProject(
-        dtdUrl: dtdUrl,
-        fileUri: fileUri,
-        rootProject: rootProject,
-        sync: sync,
-      );
-      WidgetPreviewAnalytics(analytics: analytics).reportListCompleted(
-        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
-        previewCount: response.previews.length,
-      );
-
-      if (machine) {
-        stdio.stdout.writeln(jsonEncode(response.toJson()));
-      } else {
-        _printHumanPreviewList(logger, response);
-      }
-      return FlutterCommandResult.success();
-    } on RpcException catch (error) {
-      if (machine) {
-        _WidgetPreviewCliSubCommand._writeMachineError(
-          stdio,
-          code: error.code,
-          message: error.message,
-        );
-        return FlutterCommandResult.fail();
-      }
-      throwToolExit(error.message.isNotEmpty ? error.message : error.toString());
-    } on ToolExit catch (error) {
-      if (machine) {
-        _WidgetPreviewCliSubCommand._writeMachineError(
-          stdio,
-          message: error.message ?? _WidgetPreviewCliSubCommand._kDefaultCommandFailedMessage,
-        );
-        return FlutterCommandResult.fail();
-      }
-      rethrow;
+    if (getValue(CommonOptions.machine)) {
+      stdio.stdout.writeln(jsonEncode(response.toJson()));
+    } else {
+      _printHumanPreviewList(logger, response);
     }
-  }
+    return FlutterCommandResult.success();
+  });
 
   static void _printHumanPreviewList(Logger logger, PreviewListResponse response) {
     final List<PreviewEntry> previews = response.previews;
@@ -358,132 +346,83 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
   String get name => kSnapshot;
 
   @override
-  Future<FlutterCommandResult> runCommand() async {
-    final bool machine = getValue(CommonOptions.machine);
+  Future<FlutterCommandResult> runCommand() => _runWithMachineErrorHandling(() async {
     final ToolContext(:FileSystem fs, :Logger logger, :Stdio stdio) = toolContext;
     final List<String> rest = argResults?.rest ?? const <String>[];
-    final String? previewIdCandidate = rest.firstOrNull;
+    if (rest.isEmpty) {
+      throwToolExit('A preview ID or name must be provided.');
+    }
+    if (rest.length > 1) {
+      throwToolExit('Only one preview ID should be provided.');
+    }
+    final String previewId = rest.single;
     final WidgetPreviewSessionClient client = _createOrGetClient();
     final stopwatch = Stopwatch()..start();
+    final double? width = _parsePositiveDoubleOption(_WidgetPreviewCliSubCommand.widthOption);
+    final double? height = _parsePositiveDoubleOption(_WidgetPreviewCliSubCommand.heightOption);
+    final double? pixelRatio = _parsePositiveDoubleOption(
+      _WidgetPreviewCliSubCommand.pixelRatioOption,
+    );
+    final int? pumpMs = _parsePumpMsOption();
+    final double? textScaleFactor = _parsePositiveDoubleOption(
+      _WidgetPreviewCliSubCommand.textScaleFactorOption,
+    );
+    final String? brightness = _parseBrightnessOption();
+    final bool includeImageInStdout = getValue(_WidgetPreviewCliSubCommand.imageOption);
+    final String? outputPath = getValue(_WidgetPreviewCliSubCommand.outputOption);
+    final bool hasOutputFile = outputPath != null && outputPath.isNotEmpty;
 
-    try {
-      if (rest.isEmpty) {
-        throwToolExit('A preview ID or name must be provided.');
-      }
-      if (rest.length > 1) {
-        throwToolExit('Only one preview ID should be provided.');
-      }
-      final String previewId = rest.single;
-      final double? width = _WidgetPreviewCliSubCommand._parsePositiveDoubleOption(
-        this,
-        _WidgetPreviewCliSubCommand.widthOption,
-      );
-      final double? height = _WidgetPreviewCliSubCommand._parsePositiveDoubleOption(
-        this,
-        _WidgetPreviewCliSubCommand.heightOption,
-      );
-      final double? pixelRatio = _WidgetPreviewCliSubCommand._parsePositiveDoubleOption(
-        this,
-        _WidgetPreviewCliSubCommand.pixelRatioOption,
-      );
-      final int? pumpMs = _WidgetPreviewCliSubCommand._parsePumpMsOption(this);
-      final double? textScaleFactor = _WidgetPreviewCliSubCommand._parsePositiveDoubleOption(
-        this,
-        _WidgetPreviewCliSubCommand.textScaleFactorOption,
-      );
-      final String? brightness = _WidgetPreviewCliSubCommand._parseBrightnessOption(this);
-      final String? dtdUrl = getValue(_WidgetPreviewCliSubCommand.dtdUrlOption);
-      final bool sync = getValue(_WidgetPreviewCliSubCommand.syncOption);
-      final bool buildHooks = getValue(WidgetPreviewOptions.buildHooksOption);
-      final List<String> webBrowserFlags = getValue(WebOptions.webBrowserFlags);
-      final bool includeImageInStdout = getValue(_WidgetPreviewCliSubCommand.imageOption);
-      final String? outputPath = getValue(_WidgetPreviewCliSubCommand.outputOption);
-      final bool hasOutputFile = outputPath != null && outputPath.isNotEmpty;
-      final bool requestImageFromScaffold = includeImageInStdout || hasOutputFile;
+    final (explicitProjectDirectory: _, :FlutterProject rootProject) = client.resolveRootProject(
+      this,
+      allowPositionalDirectory: false,
+    );
 
-      final (explicitProjectDirectory: _, :FlutterProject rootProject) = client.resolveRootProject(
-        this,
-        allowPositionalDirectory: false,
-      );
+    final CapturePreviewResponse response = await client.withSession(
+      buildHooks: getValue(WidgetPreviewOptions.buildHooksOption),
+      dtdUrl: getValue(_WidgetPreviewCliSubCommand.dtdUrlOption),
+      rootProject: rootProject,
+      webBrowserFlags: getValue(WebOptions.webBrowserFlags),
+      action: (WidgetPreviewActiveSession session) => client.capturePreview(
+        brightness: brightness,
+        height: height,
+        includeImage: includeImageInStdout || hasOutputFile,
+        pixelRatio: pixelRatio,
+        previewId: previewId,
+        pumpMs: pumpMs,
+        session: session,
+        sync: getValue(_WidgetPreviewCliSubCommand.syncOption),
+        textScaleFactor: textScaleFactor,
+        width: width,
+      ),
+    );
 
-      final CapturePreviewResponse response = await client.withSession(
-        buildHooks: buildHooks,
-        dtdUrl: dtdUrl,
-        rootProject: rootProject,
-        webBrowserFlags: webBrowserFlags,
-        action: (WidgetPreviewActiveSession session) => client.capturePreview(
-          brightness: brightness,
-          height: height,
-          includeImage: requestImageFromScaffold,
-          pixelRatio: pixelRatio,
-          previewId: previewId,
-          pumpMs: pumpMs,
-          session: session,
-          sync: sync,
-          textScaleFactor: textScaleFactor,
-          width: width,
-        ),
-      );
-
-      if (hasOutputFile && response.imageBase64 != null) {
-        final File outputFile = fs.file(outputPath);
-        outputFile.parent.createSync(recursive: true);
-        outputFile.writeAsBytesSync(base64.decode(response.imageBase64!));
-      }
-
-      final outputResponse = includeImageInStdout
-          ? response
-          : CapturePreviewResponse(
-              diagnostics: response.diagnostics,
-              hasErrors: response.hasErrors,
-              name: response.name,
-              pixelRatio: response.pixelRatio,
-              previewId: response.previewId,
-              renderedHeight: response.renderedHeight,
-              renderedWidth: response.renderedWidth,
-            );
-
-      if (machine) {
-        stdio.stdout.writeln(jsonEncode(outputResponse.toJson()));
-      } else {
-        _printHumanSnapshot(
-          logger,
-          outputPath: hasOutputFile && response.imageBase64 != null ? outputPath : null,
-          response: outputResponse,
-        );
-      }
-
-      WidgetPreviewAnalytics(analytics: analytics).reportSnapshotCompleted(
-        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
-        hasErrors: outputResponse.hasErrors,
-      );
-
-      return outputResponse.hasErrors
-          ? FlutterCommandResult.fail()
-          : FlutterCommandResult.success();
-    } on RpcException catch (error) {
-      if (machine) {
-        _WidgetPreviewCliSubCommand._writeMachineError(
-          stdio,
-          code: error.code,
-          message: error.message,
-          previewId: previewIdCandidate,
-        );
-        return FlutterCommandResult.fail();
-      }
-      throwToolExit(error.message.isNotEmpty ? error.message : error.toString());
-    } on ToolExit catch (error) {
-      if (machine) {
-        _WidgetPreviewCliSubCommand._writeMachineError(
-          stdio,
-          message: error.message ?? _WidgetPreviewCliSubCommand._kDefaultCommandFailedMessage,
-          previewId: previewIdCandidate,
-        );
-        return FlutterCommandResult.fail();
-      }
-      rethrow;
+    if (hasOutputFile && response.imageBase64 != null) {
+      final File outputFile = fs.file(outputPath);
+      outputFile.parent.createSync(recursive: true);
+      outputFile.writeAsBytesSync(base64.decode(response.imageBase64!));
     }
-  }
+
+    final CapturePreviewResponse outputResponse = includeImageInStdout
+        ? response
+        : response.withoutImage();
+
+    if (getValue(CommonOptions.machine)) {
+      stdio.stdout.writeln(jsonEncode(outputResponse.toJson()));
+    } else {
+      _printHumanSnapshot(
+        logger,
+        outputPath: hasOutputFile && response.imageBase64 != null ? outputPath : null,
+        response: outputResponse,
+      );
+    }
+
+    WidgetPreviewAnalytics(analytics: analytics).reportSnapshotCompleted(
+      elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      hasErrors: outputResponse.hasErrors,
+    );
+
+    return outputResponse.hasErrors ? FlutterCommandResult.fail() : FlutterCommandResult.success();
+  });
 
   static void _printHumanSnapshot(
     Logger logger, {

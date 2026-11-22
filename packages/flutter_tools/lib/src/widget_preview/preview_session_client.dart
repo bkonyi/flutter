@@ -143,7 +143,6 @@ class WidgetPreviewSessionClient {
         await _closeDtdQuietly(activeSession.dtd);
       }
     }
-
     return _withEphemeralHeadlessSession(
       action: action,
       buildHooks: buildHooks,
@@ -215,10 +214,7 @@ class WidgetPreviewSessionClient {
     try {
       await detector.initialize();
       await detector.waitForAnalysis();
-      final Map<String, Object?> json = await dtd.listPreviewsJson(fileUri: fileUri);
-      return PreviewListResponse.fromDTDResponse(
-        DTDResponse('', PreviewListResponse.kTypeName, json),
-      );
+      return PreviewListResponse.fromJson(await dtd.listPreviewsJson(fileUri: fileUri));
     } finally {
       await detector.dispose();
       await dtd.dispose();
@@ -270,48 +266,32 @@ class WidgetPreviewSessionClient {
       }
     }
 
-    final List<Uri> candidateUris = await _discoverActiveDtdUris();
-    for (final candidateUri in candidateUris) {
+    for (final Uri candidateUri in await _discoverActiveDtdUris()) {
       DartToolingDaemon? dtd;
       try {
         dtd = await _dtdConnector(candidateUri).timeout(_dtdProbeTimeout);
-      } on ToolExit {
-        rethrow;
-      } on Exception {
-        continue;
-      } on StateError catch (error) {
-        if (!_isClosedPeerStateError(error)) {
-          rethrow;
-        }
-        continue;
-      }
-      PreviewServiceInfo? matchingInfo;
-      try {
-        matchingInfo = await _findMatchingServiceOnDtd(
+        final PreviewServiceInfo? matchingInfo = await _findMatchingServiceOnDtd(
           allowSingleServiceFallback: false,
           dtd: dtd,
           dtdUri: candidateUri,
           hasExistingScaffold: hasExistingScaffold,
           targetProjectRoot: targetProjectRoot,
         );
+        if (matchingInfo != null) {
+          return WidgetPreviewActiveSession(dtd: dtd, info: matchingInfo, isEphemeral: false);
+        }
+        await _closeDtdQuietly(dtd);
       } on ToolExit {
         await _closeDtdQuietly(dtd);
         rethrow;
       } on Exception {
         await _closeDtdQuietly(dtd);
-        continue;
       } on StateError catch (error) {
         await _closeDtdQuietly(dtd);
         if (!_isClosedPeerStateError(error)) {
           rethrow;
         }
-        continue;
       }
-      if (matchingInfo == null) {
-        await _closeDtdQuietly(dtd);
-        continue;
-      }
-      return WidgetPreviewActiveSession(dtd: dtd, info: matchingInfo, isEphemeral: false);
     }
     return null;
   }
@@ -489,8 +469,7 @@ class WidgetPreviewSessionClient {
         session.info.previewService,
         WidgetPreviewDtdServices.kGetServiceInfo,
       );
-      final latestInfo = PreviewServiceInfo.fromDTDResponse(infoResponse);
-      if (latestInfo.scaffoldConnected) {
+      if (PreviewServiceInfo.fromDTDResponse(infoResponse).scaffoldConnected) {
         return;
       }
       try {
@@ -667,10 +646,6 @@ class WidgetPreviewSessionClient {
     ) = _toolContext;
     final discovered = <String, Uri>{};
 
-    void recordUrisFromText(String text) {
-      _extractDtdUrisFromText(text, discovered);
-    }
-
     final String dartBinary = artifacts.getArtifactPath(Artifact.engineDartBinary);
     if (processManager.canRun(dartBinary)) {
       try {
@@ -680,7 +655,7 @@ class WidgetPreviewSessionClient {
           _kToolingDaemonListFlag,
         ]);
         if (result.exitCode == 0 && result.stdout is String) {
-          recordUrisFromText(result.stdout as String);
+          _extractDtdUrisFromText(result.stdout as String, discovered);
         }
       } on ProcessException {
         // Ignore failures when probing active tooling daemons.
@@ -695,7 +670,7 @@ class WidgetPreviewSessionClient {
         for (final FileSystemEntity entity in dir.listSync()) {
           if (entity is File) {
             try {
-              recordUrisFromText(entity.readAsStringSync());
+              _extractDtdUrisFromText(entity.readAsStringSync(), discovered);
             } on FileSystemException {
               continue;
             }
@@ -711,48 +686,30 @@ class WidgetPreviewSessionClient {
 
   List<Directory> _dtdMetadataDirectories(FileSystem fs, Platform platform) {
     final directories = <Directory>[];
+    void addDir(List<String> parts) => directories.add(fs.directory(fs.path.joinAll(parts)));
+
     final Map<String, String> env = platform.environment;
     if (env[_kDartDataHomeEnv] case final String dataHome when dataHome.isNotEmpty) {
-      final Directory baseDir = fs.directory(dataHome);
-      directories
-        ..add(baseDir.childDirectory(_kDtdSubdir))
-        ..add(baseDir);
+      addDir(<String>[dataHome, _kDtdSubdir]);
+      addDir(<String>[dataHome]);
     }
     if (platform.isWindows) {
-      if (env[_kLocalAppDataEnv] case final String localAppData when localAppData.isNotEmpty) {
-        directories.add(
-          fs.directory(localAppData).childDirectory('Dart').childDirectory(_kDtdSubdir),
-        );
-      }
-      if (env[_kAppDataEnv] case final String appData when appData.isNotEmpty) {
-        directories.add(fs.directory(appData).childDirectory('Dart').childDirectory(_kDtdSubdir));
+      for (final envKey in const <String>[_kLocalAppDataEnv, _kAppDataEnv]) {
+        if (env[envKey] case final String dir when dir.isNotEmpty) {
+          addDir(<String>[dir, 'Dart', _kDtdSubdir]);
+        }
       }
     } else {
       if (env[_kXdgDataHomeEnv] case final String xdgDataHome when xdgDataHome.isNotEmpty) {
-        directories
-          ..add(fs.directory(xdgDataHome).childDirectory('dart').childDirectory(_kDtdSubdir))
-          ..add(fs.directory(xdgDataHome).childDirectory(_kDtdSubdir));
+        addDir(<String>[xdgDataHome, 'dart', _kDtdSubdir]);
+        addDir(<String>[xdgDataHome, _kDtdSubdir]);
       }
       if (env[_kHomeEnv] case final String home when home.isNotEmpty) {
-        final Directory homeDir = fs.directory(home);
         if (platform.isMacOS) {
-          directories.add(
-            homeDir
-                .childDirectory('Library')
-                .childDirectory('Application Support')
-                .childDirectory('Dart')
-                .childDirectory(_kDtdSubdir),
-          );
+          addDir(<String>[home, 'Library', 'Application Support', 'Dart', _kDtdSubdir]);
         }
-        directories
-          ..add(
-            homeDir
-                .childDirectory('.local')
-                .childDirectory('share')
-                .childDirectory('dart')
-                .childDirectory(_kDtdSubdir),
-          )
-          ..add(homeDir.childDirectory('.dart').childDirectory(_kDtdSubdir));
+        addDir(<String>[home, '.local', 'share', 'dart', _kDtdSubdir]);
+        addDir(<String>[home, '.dart', _kDtdSubdir]);
       }
     }
     return directories;
@@ -764,14 +721,12 @@ class WidgetPreviewSessionClient {
       return;
     }
     try {
-      final Object? decoded = jsonDecode(trimmed);
-      _extractDtdUrisFromJsonObject(decoded, discovered);
+      _extractDtdUrisFromJsonObject(jsonDecode(trimmed), discovered);
     } on FormatException {
       // Fall through to line-by-line and regex extraction.
     }
     for (final RegExpMatch match in _wsUriPattern.allMatches(trimmed)) {
-      final String? rawUri = match.group(0);
-      if (rawUri != null) {
+      if (match.group(0) case final String rawUri) {
         _tryAddDtdUri(rawUri, discovered);
       }
     }
@@ -799,6 +754,12 @@ class WidgetPreviewSessionClient {
     final Uri? uri = Uri.tryParse(rawUri);
     if (uri != null && (uri.isScheme('ws') || uri.isScheme('wss')) && uri.host.isNotEmpty) {
       discovered.putIfAbsent(uri.toString(), () => uri);
+    }
+  }
+
+  static void _completeOnce(Completer<void> completer) {
+    if (!completer.isCompleted) {
+      completer.complete();
     }
   }
 
@@ -842,6 +803,12 @@ class WidgetPreviewSessionClient {
     var sessionAborted = false;
     Future<void>? terminationFuture;
 
+    void killVmPid() {
+      if (initializingPid case final int vmPid when vmPid != process.pid) {
+        processManager.killPid(vmPid);
+      }
+    }
+
     Future<void> terminateProcessImpl() async {
       if (processExited && initializingPid == null) {
         await process.exitCode;
@@ -863,16 +830,10 @@ class WidgetPreviewSessionClient {
           killedWithTaskkill = false;
         }
       }
-      if (!killedWithTaskkill) {
-        if (!processExited && !processManager.killPid(process.pid)) {
-          process.kill();
-        }
-        if (initializingPid case final int vmPid when vmPid != process.pid) {
-          processManager.killPid(vmPid);
-        }
-      } else if (initializingPid case final int vmPid when vmPid != process.pid) {
-        processManager.killPid(vmPid);
+      if (!killedWithTaskkill && !processExited && !processManager.killPid(process.pid)) {
+        process.kill();
       }
+      killVmPid();
       if (!processExited) {
         await process.exitCode.timeout(
           _processExitTimeout,
@@ -882,9 +843,7 @@ class WidgetPreviewSessionClient {
             } else {
               process.kill();
             }
-            if (initializingPid case final int vmPid when vmPid != process.pid) {
-              processManager.killPid(vmPid);
-            }
+            killVmPid();
             return process.exitCode.timeout(_processExitTimeout, onTimeout: () => -1);
           },
         );
@@ -903,18 +862,6 @@ class WidgetPreviewSessionClient {
     final stdoutDone = Completer<void>();
     final stderrDone = Completer<void>();
     final errorLines = <String>[];
-
-    void completeStdoutDone([Object? _]) {
-      if (!stdoutDone.isCompleted) {
-        stdoutDone.complete();
-      }
-    }
-
-    void completeStderrDone([Object? _]) {
-      if (!stderrDone.isCompleted) {
-        stderrDone.complete();
-      }
-    }
 
     void recordErrorLine(String line) {
       final String trimmed = line.trim();
@@ -952,14 +899,18 @@ class WidgetPreviewSessionClient {
               }
             }
           },
-          onDone: completeStdoutDone,
-          onError: completeStdoutDone,
+          onDone: () => _completeOnce(stdoutDone),
+          onError: (Object _) => _completeOnce(stdoutDone),
         );
 
     final StreamSubscription<String> stderrSub = process.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(recordErrorLine, onDone: completeStderrDone, onError: completeStderrDone);
+        .listen(
+          recordErrorLine,
+          onDone: () => _completeOnce(stderrDone),
+          onError: (Object _) => _completeOnce(stderrDone),
+        );
 
     unawaited(
       process.exitCode.then((int exitCode) async {
@@ -998,10 +949,13 @@ class WidgetPreviewSessionClient {
       await terminateProcess();
       await stdoutSub.cancel();
       await stderrSub.cancel();
-      completeStdoutDone();
-      completeStderrDone();
+      _completeOnce(stdoutDone);
+      _completeOnce(stderrDone);
     }
   }
+
+  static String? _nonEmptyString(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
 
   static ({String? fatalError, int? parsedInitializingPid, PreviewServiceInfo? started})
   _tryParseStartedEvent(
@@ -1049,18 +1003,11 @@ class WidgetPreviewSessionClient {
         continue;
       }
       if (eventName == _kStartedEventName && started == null && fatalError == null) {
-        final String? dtdUri = switch (params[PreviewServiceInfo.kDtdUri]) {
-          final String value when value.isNotEmpty => value,
-          _ => null,
-        };
-        final String? previewService = switch (params[PreviewServiceInfo.kPreviewService]) {
-          final String value when value.isNotEmpty => value,
-          _ => null,
-        };
-        final String? scaffoldService = switch (params[PreviewServiceInfo.kScaffoldService]) {
-          final String value when value.isNotEmpty => value,
-          _ => null,
-        };
+        final String? dtdUri = _nonEmptyString(params[PreviewServiceInfo.kDtdUri]);
+        final String? previewService = _nonEmptyString(params[PreviewServiceInfo.kPreviewService]);
+        final String? scaffoldService = _nonEmptyString(
+          params[PreviewServiceInfo.kScaffoldService],
+        );
         if (dtdUri == null || previewService == null || scaffoldService == null) {
           fatalError =
               'Headless widget preview started without required DTD metadata '
@@ -1068,23 +1015,15 @@ class WidgetPreviewSessionClient {
               'This usually indicates an incompatible Flutter < 3.50 installation.';
           continue;
         }
-        final String projectRoot = switch (params[PreviewServiceInfo.kProjectRoot]) {
-          final String value when value.isNotEmpty => value,
-          _ => targetProjectRoot,
-        };
-        final String? webPreviewUri = switch (params[WebPreviewUrlResult.kUrl]) {
-          final String value when value.isNotEmpty => value,
-          _ => null,
-        };
-        final String scaffoldStream = _deriveScaffoldStreamName(scaffoldService);
         started = PreviewServiceInfo(
           dtdUri: dtdUri,
           previewService: previewService,
-          projectRoot: projectRoot,
+          projectRoot:
+              _nonEmptyString(params[PreviewServiceInfo.kProjectRoot]) ?? targetProjectRoot,
           scaffoldConnected: false,
           scaffoldService: scaffoldService,
-          scaffoldStream: scaffoldStream,
-          webPreviewUri: webPreviewUri,
+          scaffoldStream: _deriveScaffoldStreamName(scaffoldService),
+          webPreviewUri: _nonEmptyString(params[WebPreviewUrlResult.kUrl]),
         );
       }
     }
@@ -1094,8 +1033,8 @@ class WidgetPreviewSessionClient {
   static String _deriveScaffoldStreamName(String scaffoldService) {
     const prefix = '${WidgetPreviewDtdServices.kWidgetPreviewScaffoldServiceRoot}-';
     if (scaffoldService.startsWith(prefix)) {
-      final String uuid = scaffoldService.substring(prefix.length);
-      return '${WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot}-$uuid';
+      return '${WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot}-'
+          '${scaffoldService.substring(prefix.length)}';
     }
     return WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot;
   }

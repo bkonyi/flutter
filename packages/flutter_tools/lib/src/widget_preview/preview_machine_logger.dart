@@ -17,9 +17,26 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     required this.verbose,
   });
 
+  static const kInitializingEvent = 'initializing';
+  static const kStartedEvent = 'started';
+  static const kPidKey = 'pid';
+  static const kUrlKey = 'url';
+  static const kDtdUriKey = 'dtdUri';
+  static const kPreviewServiceKey = 'previewService';
+  static const kScaffoldServiceKey = 'scaffoldService';
+  static const kProjectRootKey = 'projectRoot';
+
   final bool machine;
   final bool verbose;
   final Stdio _stdio;
+
+  void _sendLogMessage(String level, String message, {StackTrace? stackTrace}) {
+    sendEvent('logMessage', <String, Object?>{
+      'level': level,
+      'message': message,
+      'stackTrace': ?stackTrace?.toString(),
+    });
+  }
 
   @override
   void printError(
@@ -32,11 +49,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool? wrap,
   }) {
     if (machine) {
-      sendEvent('logMessage', <String, Object?>{
-        'level': 'error',
-        'message': message,
-        'stackTrace': ?stackTrace?.toString(),
-      });
+      _sendLogMessage('error', message, stackTrace: stackTrace);
       return;
     }
     super.printError(
@@ -61,7 +74,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool fatal = true,
   }) {
     if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'warning', 'message': message});
+      _sendLogMessage('warning', message);
       return;
     }
     super.printWarning(
@@ -86,7 +99,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool? wrap,
   }) {
     if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'status', 'message': message});
+      _sendLogMessage('status', message);
       return;
     }
     super.printStatus(
@@ -102,10 +115,9 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
 
   @override
   void printBox(String message, {String? title}) {
-    if (machine) {
-      return;
+    if (!machine) {
+      super.printBox(message, title: title);
     }
-    super.printBox(message, title: title);
   }
 
   @override
@@ -114,20 +126,11 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
       return;
     }
     if (machine) {
-      sendEvent('logMessage', <String, Object?>{'level': 'trace', 'message': message});
-      return;
+      _sendLogMessage('trace', message);
+    } else {
+      super.printTrace(message);
     }
-    super.printTrace(message);
   }
-
-  static const kInitializingEvent = 'initializing';
-  static const kStartedEvent = 'started';
-  static const kPidKey = 'pid';
-  static const kUrlKey = 'url';
-  static const kDtdUriKey = 'dtdUri';
-  static const kPreviewServiceKey = 'previewService';
-  static const kScaffoldServiceKey = 'scaffoldService';
-  static const kProjectRootKey = 'projectRoot';
 
   /// Notifies tooling that the widget previewer is initializing.
   void sendInitializingEvent() {
@@ -153,15 +156,15 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
   }
 
   @override
-  void sendEvent(String name, [Map<String, dynamic>? args]) {
+  void sendEvent(String name, [Map<String, Object?>? args]) {
     if (!machine) {
       return;
     }
     // Don't call super.printStatus as it will result in a prefix being printed when --verbose is
     // provided.
     _stdio.stdout.writeln(
-      json.encode([
-        {'event': 'widget_preview.$name', 'params': ?args},
+      json.encode(<Map<String, Object?>>[
+        <String, Object?>{'event': 'widget_preview.$name', 'params': ?args},
       ]),
     );
   }

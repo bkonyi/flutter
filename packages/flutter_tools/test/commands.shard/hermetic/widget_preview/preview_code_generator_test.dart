@@ -506,7 +506,7 @@ List<_i1.WidgetPreview> previews() => [];
       generatedPreviewFile.createSync(recursive: true);
 
       final update = FlutterWidgetPreviews(
-        namespaces: <String, String>{
+        namespaces: const <String, String>{
           'widget_preview.dart': '_i1',
           'utils.dart': '_i2',
           'package:foo_project/preview.dart': '_i3',
@@ -601,7 +601,7 @@ _i7.PreviewLocalizationsData _defaultPreviewLocalizations() =>
         generatedPreviewFile.createSync(recursive: true);
 
         final update = FlutterWidgetPreviews(
-          namespaces: <String, String>{
+          namespaces: const <String, String>{
             'widget_preview.dart': '_i1',
             'utils.dart': '_i2',
             'package:foo_project/a_multi.dart': '_i3',
@@ -729,7 +729,7 @@ _i6.PreviewLocalizationsData _defaultPreviewLocalizations() =>
         generatedPreviewFile.createSync(recursive: true);
 
         final errorOnlyUpdate = FlutterWidgetPreviews(
-          namespaces: <String, String>{'widget_preview.dart': '_i1', 'utils.dart': '_i2'},
+          namespaces: const <String, String>{'widget_preview.dart': '_i1', 'utils.dart': '_i2'},
           previews: <FlutterWidgetPreviewDetails>[
             FlutterWidgetPreviewDetails(
               functionName: 'brokenPreview',

@@ -235,20 +235,18 @@ class WidgetPreviewDtdServices {
   /// Posts [kPreviewReloadedEvent] on [widgetPreviewScaffoldStream] once a
   /// reload or hot restart succeeds.
   Future<void> postPreviewReloaded({required bool fullRestart}) async {
-    await _postScaffoldEvent(kPreviewReloadedEvent, <String, Object?>{kFullRestart: fullRestart});
-  }
-
-  Future<void> _postScaffoldEvent(String eventKind, Map<String, Object?> eventData) async {
     final DartToolingDaemon? dtd = _dtd;
     if (dtd == null) {
       return;
     }
     try {
-      await dtd.postEvent(widgetPreviewScaffoldStream, eventKind, eventData);
+      await dtd.postEvent(widgetPreviewScaffoldStream, kPreviewReloadedEvent, <String, Object?>{
+        kFullRestart: fullRestart,
+      });
     } on RpcException catch (e) {
-      logger.printTrace('Failed to post $eventKind event: $e');
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
     } on StateError catch (e) {
-      logger.printTrace('Failed to post $eventKind event: $e');
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
     }
   }
 
@@ -511,38 +509,32 @@ class WidgetPreviewDtdServices {
     ).toJson();
   }
 
-  Future<Map<String, Object?>> _syncPreviews(Parameters params) async {
-    final int timeoutMs = params.value == null || params[kTimeoutMs].valueOr(null) == null
-        ? kDefaultSyncTimeoutMs
-        : params[kTimeoutMs].asInt;
+  static Parameter? _optionalParam(Parameters params, String key) =>
+      params.value == null || params[key].valueOr(null) == null ? null : params[key];
+
+  static int _parseTimeoutMs(Parameters params) {
+    final int timeoutMs = _optionalParam(params, kTimeoutMs)?.asInt ?? kDefaultSyncTimeoutMs;
     if (timeoutMs < 0) {
       throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
     }
+    return timeoutMs;
+  }
+
+  Future<Map<String, Object?>> _syncPreviews(Parameters params) async {
+    final int timeoutMs = _parseTimeoutMs(params);
     final Future<SyncPreviewsResponse> Function({required Duration timeout})? syncCallback =
         onSyncPreviews;
     if (syncCallback == null) {
       throw RpcException(kNoValueForKey, 'Preview synchronization is not currently available.');
     }
-    final SyncPreviewsResponse response = await syncCallback(
-      timeout: Duration(milliseconds: timeoutMs),
-    );
-    return response.toJson();
+    return (await syncCallback(timeout: Duration(milliseconds: timeoutMs))).toJson();
   }
 
-  Future<Map<String, Object?>> _listPreviews(Parameters params) async {
-    final String? fileUri = params.value == null || params[kFileUri].valueOr(null) == null
-        ? null
-        : params[kFileUri].asString;
-    final bool sync =
-        params.value == null || params[kSync].valueOr(null) == null || params[kSync].asBool;
-    final int timeoutMs = params.value == null || params[kTimeoutMs].valueOr(null) == null
-        ? kDefaultSyncTimeoutMs
-        : params[kTimeoutMs].asInt;
-    if (timeoutMs < 0) {
-      throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
-    }
-    return listPreviewsJson(fileUri: fileUri, sync: sync, timeoutMs: timeoutMs);
-  }
+  Future<Map<String, Object?>> _listPreviews(Parameters params) => listPreviewsJson(
+    fileUri: _optionalParam(params, kFileUri)?.asString,
+    sync: _optionalParam(params, kSync)?.asBool ?? true,
+    timeoutMs: _parseTimeoutMs(params),
+  );
 
   /// Returns the current list of previews as a JSON-serializable map matching
   /// [PreviewListResponse.toJson].
@@ -589,7 +581,7 @@ class WidgetPreviewDtdServices {
       }
     }
     if (lspPreviews == null) {
-      return const PreviewListResponse(previews: <PreviewEntry>[]).toJson();
+      return PreviewListResponse(previews: const <PreviewEntry>[]).toJson();
     }
     return PreviewListResponse(
       previews: _buildFallbackPreviewEntries(lspPreviews, fileUri: fileUri),
@@ -784,36 +776,32 @@ extension on DartToolingDaemon {
   }
 }
 
-({
+typedef _PreviewAnnotationMetadata = ({
   String? brightness,
   String group,
   double? height,
   String? name,
   double? textScaleFactor,
   double? width,
-})
-_extractPreviewAnnotationMetadata(String annotationSource) {
-  String group = WidgetPreviewDtdServices._kDefaultPreviewGroup;
-  String? name;
-  double? width;
-  double? height;
-  double? textScaleFactor;
-  String? brightness;
+});
 
+const _PreviewAnnotationMetadata _defaultPreviewMetadata = (
+  brightness: null,
+  group: WidgetPreviewDtdServices._kDefaultPreviewGroup,
+  height: null,
+  name: null,
+  textScaleFactor: null,
+  width: null,
+);
+
+_PreviewAnnotationMetadata _extractPreviewAnnotationMetadata(String annotationSource) {
   final ParseStringResult parsed = parseString(
     content: 'final _ = $annotationSource;',
     throwIfDiagnostics: false,
   );
   final CompilationUnitMember? declaration = parsed.unit.declarations.firstOrNull;
   if (declaration is! TopLevelVariableDeclaration) {
-    return (
-      brightness: brightness,
-      group: group,
-      height: height,
-      name: name,
-      textScaleFactor: textScaleFactor,
-      width: width,
-    );
+    return _defaultPreviewMetadata;
   }
   final Expression? initializer = declaration.variables.variables.firstOrNull?.initializer;
   final ArgumentList? argumentList = switch (initializer) {
@@ -822,23 +810,22 @@ _extractPreviewAnnotationMetadata(String annotationSource) {
     _ => null,
   };
   if (argumentList == null) {
-    return (
-      brightness: brightness,
-      group: group,
-      height: height,
-      name: name,
-      textScaleFactor: textScaleFactor,
-      width: width,
-    );
+    return _defaultPreviewMetadata;
   }
+
+  String group = WidgetPreviewDtdServices._kDefaultPreviewGroup;
+  String? name;
+  double? width;
+  double? height;
+  double? textScaleFactor;
+  String? brightness;
 
   for (final Argument argument in argumentList.arguments) {
     if (argument is! NamedArgument) {
       continue;
     }
-    final String argName = argument.name.lexeme;
     final Expression expr = argument.argumentExpression;
-    switch (argName) {
+    switch (argument.name.lexeme) {
       case 'group':
         if (expr is SimpleStringLiteral) {
           group = expr.value;
@@ -860,9 +847,7 @@ _extractPreviewAnnotationMetadata(String annotationSource) {
           brightness = enumName;
         }
       case 'size':
-        final (:double? w, :double? h) = _extractSizeDimensions(expr);
-        width = w;
-        height = h;
+        (:width, :height) = _extractSizeDimensions(expr);
     }
   }
 
@@ -876,7 +861,7 @@ _extractPreviewAnnotationMetadata(String annotationSource) {
   );
 }
 
-({double? w, double? h}) _extractSizeDimensions(Expression expr) {
+({double? width, double? height}) _extractSizeDimensions(Expression expr) {
   final (String? constructorName, NodeList<Argument>? args) = switch (expr) {
     InstanceCreationExpression(
       :final ConstructorName constructorName,
@@ -899,27 +884,19 @@ _extractPreviewAnnotationMetadata(String annotationSource) {
       ),
     _ => (null, null),
   };
-  if (args == null) {
-    return (w: null, h: null);
+  if (args == null || args.isEmpty) {
+    return (width: null, height: null);
   }
+  final double? first = _extractFiniteDouble(args[0].argumentExpression);
   return switch (constructorName) {
     null when args.length >= 2 => (
-      w: _extractFiniteDouble(args[0].argumentExpression),
-      h: _extractFiniteDouble(args[1].argumentExpression),
+      width: first,
+      height: _extractFiniteDouble(args[1].argumentExpression),
     ),
-    'fromWidth' when args.isNotEmpty => (
-      w: _extractFiniteDouble(args[0].argumentExpression),
-      h: null,
-    ),
-    'fromHeight' when args.isNotEmpty => (
-      w: null,
-      h: _extractFiniteDouble(args[0].argumentExpression),
-    ),
-    'square' when args.isNotEmpty => () {
-      final double? dimension = _extractFiniteDouble(args[0].argumentExpression);
-      return (w: dimension, h: dimension);
-    }(),
-    _ => (w: null, h: null),
+    'fromWidth' => (width: first, height: null),
+    'fromHeight' => (width: null, height: first),
+    'square' => (width: first, height: first),
+    _ => (width: null, height: null),
   };
 }
 
