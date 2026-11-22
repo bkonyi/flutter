@@ -98,6 +98,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   var _reconnectAttempt = 0;
   var _disposed = false;
   var _editorServiceInitialized = false;
+  var _needsViewerCatchUp = false;
 
   /// Connects to the Dart Tooling Daemon (DTD) specified by the Flutter tool.
   ///
@@ -121,6 +122,10 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     final DartToolingDaemon? previousDtd = _dtd;
     _dtd = null;
     await previousDtd?.close();
+    if (isViewerOnly) {
+      await _connectViewer(dtdWsUri);
+      return;
+    }
     final DartToolingDaemon connectedDtd = await DartToolingDaemon.connect(
       dtdWsUri,
     );
@@ -129,19 +134,6 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
       return;
     }
     _dtd = connectedDtd;
-    _reconnectAttempt = 0;
-    if (isViewerOnly) {
-      _liveRevision ??= initialLiveRevision;
-      await _subscribeToScaffoldReloadEvents();
-      unawaited(
-        connectedDtd.done.whenComplete(() {
-          if (!_disposed && identical(_dtd, connectedDtd)) {
-            _scheduleViewerReconnect(dtdWsUri);
-          }
-        }),
-      );
-      return;
-    }
     await _determineIfWindows();
     await connectedDtd.registerService(
       scaffoldServiceName,
@@ -164,10 +156,68 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     await initializeEditorService(this);
   }
 
+  Future<void> _connectViewer(Uri dtdWsUri) async {
+    _liveRevision ??= initialLiveRevision;
+    final DartToolingDaemon connectedDtd;
+    try {
+      connectedDtd = await DartToolingDaemon.connect(dtdWsUri);
+    } on Exception {
+      if (!_disposed) {
+        _scheduleViewerReconnect(dtdWsUri);
+      }
+      return;
+    }
+    if (_disposed) {
+      await connectedDtd.close();
+      return;
+    }
+    _dtd = connectedDtd;
+    try {
+      await _subscribeToScaffoldReloadEvents();
+    } on Exception catch (e) {
+      if (identical(_dtd, connectedDtd)) {
+        _dtd = null;
+      }
+      await connectedDtd.close();
+      if (_disposed) {
+        return;
+      }
+      if (e is RpcException && e.code == RpcErrorCodes.kMethodNotFound) {
+        // The server rejected our compiled scaffold stream UUID, which
+        // indicates the preview daemon restarted with a new stream ID.
+        if (onPreviewReloaded case final VoidCallback callback) {
+          callback();
+        } else {
+          reloadWindow();
+        }
+        return;
+      }
+      _scheduleViewerReconnect(dtdWsUri);
+      return;
+    }
+    if (_disposed) {
+      return;
+    }
+    _reconnectAttempt = 0;
+    final bool shouldCatchUp = _needsViewerCatchUp;
+    _needsViewerCatchUp = false;
+    unawaited(
+      connectedDtd.done.whenComplete(() {
+        if (!_disposed && identical(_dtd, connectedDtd)) {
+          _scheduleViewerReconnect(dtdWsUri);
+        }
+      }),
+    );
+    if (shouldCatchUp) {
+      unawaited(_enqueueViewerReload(fullRestart: false, onlyIfChanged: true));
+    }
+  }
+
   void _scheduleViewerReconnect(Uri dtdWsUri) {
     if (_disposed || _reconnectTimer != null) {
       return;
     }
+    _needsViewerCatchUp = true;
     final int delaySeconds = math.min(1 << _reconnectAttempt, 10);
     _reconnectAttempt = math.min(_reconnectAttempt + 1, 4);
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
@@ -175,13 +225,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
       if (_disposed) {
         return;
       }
-      try {
-        await connect(dtdUri: dtdWsUri, readOnly: true);
-      } on Exception {
-        if (!_disposed) {
-          _scheduleViewerReconnect(dtdWsUri);
-        }
-      }
+      await connect(dtdUri: dtdWsUri, readOnly: true);
     });
   }
 
@@ -191,37 +235,55 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
         .onEvent(kWidgetPreviewScaffoldStream)
         .listen((DTDEvent event) {
           if (event.kind == kPreviewReloadedEvent) {
-            unawaited(_enqueueViewerReload(event));
+            unawaited(
+              _enqueueViewerReload(
+                fullRestart: event.data[kFullRestart] == true,
+              ),
+            );
           }
         });
     await dtd.safeStreamListen(kWidgetPreviewScaffoldStream);
   }
 
-  Future<void> _enqueueViewerReload(DTDEvent event) {
+  Future<void> _enqueueViewerReload({
+    required bool fullRestart,
+    bool onlyIfChanged = false,
+  }) {
     final Future<void> previous = _activeViewerReload ?? Future<void>.value();
     final Future<void> current = previous.whenComplete(() async {
       if (_disposed) {
         return;
       }
-      await _handleViewerReloadEvent(event);
+      await _handleViewerReloadEvent(
+        fullRestart: fullRestart,
+        onlyIfChanged: onlyIfChanged,
+      );
     });
     _activeViewerReload = current;
     return current;
   }
 
-  Future<void> _handleViewerReloadEvent(DTDEvent event) async {
+  Future<void> _handleViewerReloadEvent({
+    required bool fullRestart,
+    bool onlyIfChanged = false,
+  }) async {
     if (onPreviewReloaded case final VoidCallback callback) {
-      callback();
+      if (!onlyIfChanged) {
+        callback();
+      }
       return;
     }
     final int? sinceRevision = _liveRevision;
-    if (event.data[kFullRestart] != true && sinceRevision != null) {
+    if (onlyIfChanged && sinceRevision == null) {
+      return;
+    }
+    if (!fullRestart && sinceRevision != null) {
       final int? nextRevision = await hotReloadLiveModules(
         sinceRevision: sinceRevision,
       );
       if (nextRevision != null) {
         _liveRevision = nextRevision;
-        if (!_disposed) {
+        if (!_disposed && (!onlyIfChanged || nextRevision > sinceRevision)) {
           await onInPlaceHotReload?.call();
         }
         return;

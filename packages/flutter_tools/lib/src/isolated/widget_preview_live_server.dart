@@ -110,6 +110,7 @@ class WidgetPreviewLiveServer {
   static const _kStreamListenMethod = 'streamListen';
   static const _kStreamCancelMethod = 'streamCancel';
   static const _kStreamIdKey = 'streamId';
+  static const _kWebSocketPingInterval = Duration(seconds: 30);
 
   static const _kJsonRpcParseError = -32700;
   static const _kJsonRpcInvalidRequest = -32600;
@@ -554,7 +555,7 @@ window.\$dartLoader.loader.nextAttempt();
     }
     final shelf.Handler wsHandler = webSocketHandler((WebSocketChannel clientChannel, String? _) {
       _bridgeDtdWebSocket(clientChannel, dtdUri);
-    });
+    }, pingInterval: _kWebSocketPingInterval);
     return wsHandler(request);
   }
 

@@ -4,7 +4,14 @@
 
 import 'dart:async';
 import 'dart:io'
-    show HttpServer, Process, ProcessStartMode, WebSocket, WebSocketTransformer;
+    show
+        HttpRequest,
+        HttpServer,
+        HttpStatus,
+        Process,
+        ProcessStartMode,
+        WebSocket,
+        WebSocketTransformer;
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
@@ -732,7 +739,108 @@ void main() {
       await fakeDtd.firstSocket()!.close();
       await fakeDtd.secondConnected.future.timeout(const Duration(seconds: 5));
       expect(fakeDtd.connectionCount(), 2);
+      expect(debugReloadCount, 0);
     });
+
+    test(
+      'viewer-only mode catches up missed revisions on reconnect without reloading when unchanged',
+      () async {
+        final fakeDtd = await _startFakeDtdServer();
+        var serverRevision = 4;
+        var inPlaceHotReloads = 0;
+        final observedSinceRevisions = <int>[];
+        debugSetInitialLiveRevision(serverRevision);
+        debugSetHotReloadHandler((int sinceRevision) async {
+          observedSinceRevisions.add(sinceRevision);
+          return serverRevision;
+        });
+
+        final viewerDtd = WidgetPreviewScaffoldDtdServices(
+          onInPlaceHotReload: () => inPlaceHotReloads++,
+        );
+        addTearDown(viewerDtd.dispose);
+        await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+
+        // Simulate edits happening while the WebSocket was disconnected.
+        serverRevision = 6;
+        await fakeDtd.latestSocket()!.close();
+        await fakeDtd.secondConnected.future.timeout(
+          const Duration(seconds: 5),
+        );
+        await pumpEventQueue();
+        expect(observedSinceRevisions, <int>[4]);
+        expect(inPlaceHotReloads, 1);
+        expect(debugReloadCount, 0);
+
+        // A reconnect with no missed revisions is a no-op (no reassemble/reload).
+        final thirdConnected = Completer<void>();
+        fakeDtd.setOnConnection(() {
+          if (fakeDtd.connectionCount() == 3 && !thirdConnected.isCompleted) {
+            thirdConnected.complete();
+          }
+        });
+        await fakeDtd.latestSocket()!.close();
+        await thirdConnected.future.timeout(const Duration(seconds: 5));
+        await pumpEventQueue();
+        expect(observedSinceRevisions, <int>[4, 6]);
+        expect(inPlaceHotReloads, 1);
+        expect(debugReloadCount, 0);
+      },
+    );
+
+    test(
+      'viewer-only mode reloads window instead of looping when streamListen is rejected after daemon restart',
+      () async {
+        var rejectStreamListen = false;
+        final fakeDtd = await _startFakeDtdServer(
+          shouldRejectStreamListen: () => rejectStreamListen,
+        );
+        final reloadTriggered = Completer<void>();
+        debugSetReloadHandler(() {
+          if (!reloadTriggered.isCompleted) {
+            reloadTriggered.complete();
+          }
+        });
+        final viewerDtd = WidgetPreviewScaffoldDtdServices();
+        addTearDown(viewerDtd.dispose);
+        await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+
+        rejectStreamListen = true;
+        await fakeDtd.firstSocket()!.close();
+        await reloadTriggered.future.timeout(const Duration(seconds: 5));
+        expect(debugReloadCount, 1);
+        expect(fakeDtd.connectionCount(), 2);
+
+        // Wait past the 1s initial backoff to confirm no reconnect loop runs.
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        expect(fakeDtd.connectionCount(), 2);
+      },
+    );
+
+    test(
+      'viewer-only mode schedules reconnect when initial connect fails transiently',
+      () async {
+        var rejectNextConnect = true;
+        final fakeDtd = await _startFakeDtdServer(
+          shouldRejectUpgrade: () => rejectNextConnect,
+        );
+        final connected = Completer<void>();
+        fakeDtd.setOnConnection(() {
+          if (!connected.isCompleted) {
+            connected.complete();
+          }
+        });
+        final viewerDtd = WidgetPreviewScaffoldDtdServices();
+        addTearDown(viewerDtd.dispose);
+
+        await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+        expect(fakeDtd.connectionCount(), 0);
+
+        rejectNextConnect = false;
+        await connected.future.timeout(const Duration(seconds: 5));
+        expect(fakeDtd.connectionCount(), 1);
+      },
+    );
 
     test('dispose cancels pending viewer-only reconnect timer', () async {
       final fakeDtd = await _startFakeDtdServer();
@@ -751,29 +859,60 @@ Future<
   ({
     Uri uri,
     WebSocket? Function() firstSocket,
+    WebSocket? Function() latestSocket,
     int Function() connectionCount,
     Completer<void> secondConnected,
+    void Function(void Function()? callback) setOnConnection,
   })
 >
-_startFakeDtdServer() async {
+_startFakeDtdServer({
+  bool Function()? shouldRejectStreamListen,
+  bool Function()? shouldRejectUpgrade,
+}) async {
   var connections = 0;
   final secondConnected = Completer<void>();
   WebSocket? firstSocket;
+  WebSocket? latestSocket;
+  void Function()? onConnection;
   final HttpServer server = await HttpServer.bind('127.0.0.1', 0);
   addTearDown(() async {
     await firstSocket?.close();
+    await latestSocket?.close();
     await server.close(force: true);
   });
-  server.transform(WebSocketTransformer()).listen((WebSocket ws) {
+  server.listen((HttpRequest request) async {
+    if (shouldRejectUpgrade?.call() ?? false) {
+      request.response.statusCode = HttpStatus.serviceUnavailable;
+      await request.response.close();
+      return;
+    }
+    final WebSocket ws = await WebSocketTransformer.upgrade(request);
     connections++;
     if (connections == 1) {
       firstSocket = ws;
     } else if (!secondConnected.isCompleted) {
       secondConnected.complete();
     }
+    latestSocket = ws;
+    onConnection?.call();
     ws.listen((Object? raw) {
       final Object? decoded = jsonDecode(raw! as String);
       if (decoded is Map<String, Object?> && decoded.containsKey('id')) {
+        if ((shouldRejectStreamListen?.call() ?? false) &&
+            decoded['method'] == 'streamListen') {
+          ws.add(
+            jsonEncode(<String, Object?>{
+              'jsonrpc': '2.0',
+              'id': decoded['id'],
+              'error': <String, Object?>{
+                'code': RpcErrorCodes.kMethodNotFound,
+                'message':
+                    'Stream "streamListen" is not allowed on this endpoint.',
+              },
+            }),
+          );
+          return;
+        }
         ws.add(
           jsonEncode(<String, Object?>{
             'jsonrpc': '2.0',
@@ -787,7 +926,9 @@ _startFakeDtdServer() async {
   return (
     uri: Uri.parse('ws://127.0.0.1:${server.port}'),
     firstSocket: () => firstSocket,
+    latestSocket: () => latestSocket,
     connectionCount: () => connections,
     secondConnected: secondConnected,
+    setOnConnection: (void Function()? callback) => onConnection = callback,
   );
 }
