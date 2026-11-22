@@ -43,6 +43,8 @@ const _kTextScaleKey = 'textScale';
 const _kViewportKey = 'viewport';
 const _kZoomKey = 'zoom';
 
+/// Typed JS interop view over `window.dartDevEmbedder` for in-place DDC module
+/// hot reload.
 extension type _DartDevEmbedder._(JSObject _) implements JSObject {
   external JSPromise<JSAny?> hotReload(
     JSArray<JSString> filesToLoad,
@@ -50,7 +52,17 @@ extension type _DartDevEmbedder._(JSObject _) implements JSObject {
   );
 }
 
+/// Typed JS interop view over the host bridge injected on
+/// `window.flutterWidgetPreviewHost`.
+extension type _FlutterWidgetPreviewHost._(JSObject _) implements JSObject {
+  external JSAny? sendSelection(JSAny? payload);
+}
+
+/// Outcome of a `POST __api/sync` request from the live preview toolbar.
 typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
+
+/// Callback signature for forwarding live preview selections and notes to an
+/// embedding host.
 typedef LiveSendSelectionHandler =
     Future<void> Function({
       required String message,
@@ -189,7 +201,7 @@ void notifyEmbedZoomChanged(double zoom) {
   window.history.replaceState(null, '', updatedUri.toString());
 }
 
-JSObject? _resolveHostObject() {
+_FlutterWidgetPreviewHost? _resolveHostBridge() {
   try {
     final JSObject globalWindow = window as JSObject;
     final JSAny? host = globalWindow.getProperty<JSAny?>(_kHostKey.toJS);
@@ -203,7 +215,7 @@ JSObject? _resolveHostObject() {
     if (sendFn == null || !sendFn.isA<JSFunction>()) {
       return null;
     }
-    return hostObj;
+    return _FlutterWidgetPreviewHost._(hostObj);
   } on Object {
     return null;
   }
@@ -212,7 +224,7 @@ JSObject? _resolveHostObject() {
 /// Whether a host `window.flutterWidgetPreviewHost.sendSelection` callback (or
 /// test handler) is available.
 bool get canSendLiveSelection =>
-    _debugSendSelectionHandler != null || _resolveHostObject() != null;
+    _debugSendSelectionHandler != null || _resolveHostBridge() != null;
 
 _DartDevEmbedder? _resolveDartDevEmbedder() {
   try {
@@ -385,8 +397,8 @@ Future<void> sendLiveSelectionToHost({
     );
     return;
   }
-  final JSObject? hostObj = _resolveHostObject();
-  if (hostObj == null) {
+  final _FlutterWidgetPreviewHost? hostBridge = _resolveHostBridge();
+  if (hostBridge == null) {
     throw StateError('Host selection handler is not available.');
   }
   final payload = <String, Object?>{
@@ -401,10 +413,7 @@ Future<void> sendLiveSelectionToHost({
     if (textScale != null && textScale.isNotEmpty) _kTextScaleKey: textScale,
     if (zoom != null && zoom.isNotEmpty) _kZoomKey: zoom,
   };
-  final JSAny? result = hostObj.callMethod<JSAny?>(
-    _kSendSelectionMethod.toJS,
-    payload.jsify(),
-  );
+  final JSAny? result = hostBridge.sendSelection(payload.jsify());
   if (result != null && result.isA<JSPromise>()) {
     await (result as JSPromise<JSAny?>).toDart;
   }

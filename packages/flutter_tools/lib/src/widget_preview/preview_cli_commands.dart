@@ -267,6 +267,7 @@ final class WidgetPreviewListCommand extends _WidgetPreviewCliSubCommand {
     argParser.addDescriptors(_WidgetPreviewCliSubCommand.listOptions, verboseHelp: verbose);
   }
 
+  /// Subcommand name for `flutter widget-preview list`.
   static const kList = 'list';
 
   @override
@@ -334,6 +335,7 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
     argParser.addDescriptors(_WidgetPreviewCliSubCommand.snapshotOptions, verboseHelp: verbose);
   }
 
+  /// Subcommand name for `flutter widget-preview snapshot`.
   static const kSnapshot = 'snapshot';
 
   @override
@@ -348,14 +350,11 @@ final class WidgetPreviewSnapshotCommand extends _WidgetPreviewCliSubCommand {
   @override
   Future<FlutterCommandResult> runCommand() => _runWithMachineErrorHandling(() async {
     final ToolContext(:FileSystem fs, :Logger logger, :Stdio stdio) = toolContext;
-    final List<String> rest = argResults?.rest ?? const <String>[];
-    if (rest.isEmpty) {
-      throwToolExit('A preview ID or name must be provided.');
-    }
-    if (rest.length > 1) {
-      throwToolExit('Only one preview ID should be provided.');
-    }
-    final String previewId = rest.single;
+    final String previewId = switch (argResults?.rest) {
+      <String>[final String id] => id,
+      <String>[_, _, ...] => throwToolExit('Only one preview ID should be provided.'),
+      _ => throwToolExit('A preview ID or name must be provided.'),
+    };
     final WidgetPreviewSessionClient client = _createOrGetClient();
     final stopwatch = Stopwatch()..start();
     final double? width = _parsePositiveDoubleOption(_WidgetPreviewCliSubCommand.widthOption);

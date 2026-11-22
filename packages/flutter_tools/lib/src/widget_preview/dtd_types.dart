@@ -379,11 +379,20 @@ class SyncPreviewsResponse with _JsonValue {
 
 /// Lifecycle phase in which a [PreviewDiagnostic] was captured.
 enum PreviewDiagnosticPhase {
+  /// Static analysis or incremental compilation error.
   compile,
+
+  /// Exception thrown during widget build.
   build,
+
+  /// Exception or layout audit warning during render-object layout.
   layout,
+
+  /// Overflow or exception raised during painting.
   paint;
 
+  /// Parses [value] into a [PreviewDiagnosticPhase], throwing a
+  /// [FormatException] for unrecognized wire values.
   static PreviewDiagnosticPhase fromJson(String value) => values.firstWhere(
     (PreviewDiagnosticPhase phase) => phase.name == value,
     orElse: () => throw FormatException('Unknown PreviewDiagnosticPhase: $value'),
@@ -392,19 +401,37 @@ enum PreviewDiagnosticPhase {
 
 /// Classification of a [PreviewDiagnostic].
 enum PreviewDiagnosticKind {
+  /// Analyzer or compiler error preventing preview rendering.
   compileError('compile_error'),
+
+  /// Unhandled Dart or Flutter framework exception.
   exception('exception'),
+
+  /// Preview widget attempted to expand infinitely under unbounded constraints.
   unconstrained('unconstrained'),
+
+  /// `RenderFlex` or render-box paint overflow.
   overflow('overflow'),
+
+  /// Preview rendered with zero width or zero height.
   zeroSize('zero_size'),
+
+  /// `RenderParagraph` exceeded `maxLines` and truncated text.
   textTruncated('text_truncated'),
+
+  /// Interactive touch target smaller than 48x48dp on mobile platforms.
   smallTapTarget('small_tap_target'),
+
+  /// Additional layout/paint frame remained scheduled when capture settled.
   pendingFrame('pending_frame');
 
   const PreviewDiagnosticKind(this.wireValue);
 
+  /// Snake-case wire representation serialized in JSON responses.
   final String wireValue;
 
+  /// Parses [value] from its [wireValue], throwing a [FormatException] for
+  /// unrecognized values.
   static PreviewDiagnosticKind fromJson(String value) => values.firstWhere(
     (PreviewDiagnosticKind kind) => kind.wireValue == value,
     orElse: () => throw FormatException('Unknown PreviewDiagnosticKind: $value'),
@@ -413,13 +440,19 @@ enum PreviewDiagnosticKind {
 
 /// Severity level of a [PreviewDiagnostic].
 enum PreviewDiagnosticSeverity {
+  /// Fatal or blocking diagnostic that marks a snapshot as failed.
   error('error'),
+
+  /// Non-blocking layout or accessibility advisory warning.
   warning('warning');
 
   const PreviewDiagnosticSeverity(this.wireValue);
 
+  /// Wire string serialized in JSON responses.
   final String wireValue;
 
+  /// Parses [value] from its [wireValue], throwing a [FormatException] for
+  /// unrecognized values.
   static PreviewDiagnosticSeverity fromJson(String value) => values.firstWhere(
     (PreviewDiagnosticSeverity severity) => severity.wireValue == value,
     orElse: () => throw FormatException('Unknown PreviewDiagnosticSeverity: $value'),
@@ -450,13 +483,28 @@ class PreviewDiagnostic with _JsonValue {
   static const kSummary = 'summary';
   static const kTargetType = 'targetType';
 
+  /// Classification of the diagnostic.
   final PreviewDiagnosticKind kind;
+
+  /// Overflow axis (`horizontal` or `vertical`) when [kind] is `.overflow`.
   final String? overflowAxis;
+
+  /// Number of overflowing logical pixels when [kind] is `.overflow`.
   final double? overflowPixels;
+
+  /// Overflowing edge (e.g. `right` or `bottom`) when [kind] is `.overflow`.
   final String? overflowSide;
+
+  /// Lifecycle phase in which the diagnostic occurred.
   final PreviewDiagnosticPhase phase;
+
+  /// Severity of the diagnostic (defaults to `.error`).
   final PreviewDiagnosticSeverity severity;
+
+  /// Concise human-readable description of the diagnostic.
   final String summary;
+
+  /// Runtime type name of the offending render object, if known.
   final String? targetType;
 
   @override
@@ -541,23 +589,55 @@ extension type PreviewEntry._(Map<String, Object?> _json) {
   static const kTextScaleFactor = 'textScaleFactor';
   static const kWidth = 'width';
 
+  /// Configured brightness override (`light` or `dark`), if set.
   String? get brightness => _json[kBrightness] as String?;
+
+  /// Zero-based source column of the `@Preview` annotation.
   int get column => (_json[kColumn]! as num).toInt();
+
+  /// Analyzer or compilation error summary when [hasError] is `true`.
   String? get errorMessage => _json[kErrorMessage] as String?;
+
+  /// Name of the preview function, constructor, or static member.
   String get functionName => _json[kFunctionName]! as String;
+
+  /// Group label assigned to this preview.
   String get group => _json[kGroup]! as String;
+
+  /// Whether static analysis or compilation errors prevent rendering.
   bool get hasError => _json[kHasError]! as bool;
+
+  /// Explicit preview height in logical pixels, if constrained.
   double? get height => (_json[kHeight] as num?)?.toDouble();
+
+  /// Canonical preview identifier (`<libraryUri>::<functionName>[#<index>]`).
   String get id => _json[kId]! as String;
+
+  /// `package:` or `dart:` URI of the declaring library.
   String get libraryUri => _json[kLibraryUri]! as String;
+
+  /// Zero-based source line of the `@Preview` annotation.
   int get line => (_json[kLine]! as num).toInt();
+
+  /// Zero-based index within an expanded `@MultiPreview`, or `null`.
   int? get multiPreviewIndex => (_json[kMultiPreviewIndex] as num?)?.toInt();
+
+  /// Optional display name specified on the `@Preview` annotation.
   String? get name => _json[kName] as String?;
+
+  /// Name of the Dart package declaring this preview.
   String get packageName => _json[kPackageName]! as String;
+
+  /// `file://` URI of the source file declaring this preview.
   String get scriptUri => _json[kScriptUri]! as String;
+
+  /// Explicit text scale factor override, if configured.
   double? get textScaleFactor => (_json[kTextScaleFactor] as num?)?.toDouble();
+
+  /// Explicit preview width in logical pixels, if constrained.
   double? get width => (_json[kWidth] as num?)?.toDouble();
 
+  /// Returns the underlying JSON-serializable map representation.
   Map<String, Object?> toJson() => _json;
 
   static PreviewEntry fromJson(Map<String, Object?> json) => PreviewEntry(
@@ -597,8 +677,10 @@ extension type PreviewListResponse._(Map<String, Object?> _json) {
   static const String kType = _kTypeKey;
   static const kTypeName = 'PreviewListResponse';
 
+  /// All discovered widget previews included in this response.
   List<PreviewEntry> get previews => _json[kPreviews]! as List<PreviewEntry>;
 
+  /// Returns the underlying JSON-serializable map representation.
   Map<String, Object?> toJson() => _json;
 
   static PreviewListResponse fromJson(Map<String, Object?> json) => PreviewListResponse(
@@ -641,15 +723,32 @@ class CapturePreviewResponse with _JsonValue {
   static const String kType = _kTypeKey;
   static const kTypeName = 'CapturePreviewResponse';
 
+  /// Structured compile, build, layout, and paint diagnostics recorded while
+  /// capturing this preview.
   final List<PreviewDiagnostic> diagnostics;
+
+  /// Whether any error-severity diagnostic was recorded during capture.
   final bool hasErrors;
+
+  /// Base64-encoded PNG image bytes, or `null` when image capture was omitted.
   final String? imageBase64;
+
+  /// Display name of the captured preview, if configured.
   final String? name;
+
+  /// Device pixel ratio used to rasterize the captured snapshot.
   final double pixelRatio;
+
+  /// Canonical identifier of the captured preview.
   final String previewId;
+
+  /// Rendered logical height of the captured preview surface.
   final double renderedHeight;
+
+  /// Rendered logical width of the captured preview surface.
   final double renderedWidth;
 
+  /// Returns a copy of this response with [imageBase64] cleared.
   CapturePreviewResponse withoutImage() => CapturePreviewResponse(
     diagnostics: diagnostics,
     hasErrors: hasErrors,

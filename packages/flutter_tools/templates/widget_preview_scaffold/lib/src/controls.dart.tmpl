@@ -89,8 +89,13 @@ class PreviewPointerScrollZoom extends StatefulWidget {
   /// Scroll delta threshold (in logical pixels) per discrete [kPreviewZoomStep].
   static const kScrollDeltaPerZoomStep = 20.0;
 
+  /// Preview subtree wrapped by this scroll-zoom interceptor.
   final Widget child;
+
+  /// Invoked with the clamped zoom multiplier whenever zoom changes.
   final ValueChanged<double> onZoomChanged;
+
+  /// Current zoom multiplier.
   final double zoom;
 
   @override
@@ -739,10 +744,19 @@ class CopyFeedbackButton extends StatefulWidget {
     super.key,
   });
 
+  /// Temporary label displayed after copying [textToCopy].
   final String copiedLabel;
+
+  /// Optional leading icon displayed before [label].
   final IconData? icon;
+
+  /// Default button label shown before copying.
   final String label;
+
+  /// Optional [ButtonStyle] override for the underlying [OutlinedButton].
   final ButtonStyle? style;
+
+  /// Text written to the system clipboard on tap.
   final String textToCopy;
 
   @override

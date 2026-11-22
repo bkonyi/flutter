@@ -17,11 +17,16 @@ class WebMemoryFS {
   final metadataFiles = <String, Uint8List>{};
   final files = <String, Uint8List>{};
   final sourcemaps = <String, Uint8List>{};
+
+  /// Maps compiled JS module file paths to the [revision] at which they last
+  /// changed.
   final moduleRevisions = <String, int>{};
 
   String? get mergedMetadata => _mergedMetadata;
   String? _mergedMetadata;
 
+  /// Monotonically increasing revision incremented whenever compiled JS files
+  /// change in [files].
   int get revision => _revision;
   int _revision = 0;
 

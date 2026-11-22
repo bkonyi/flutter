@@ -2408,17 +2408,19 @@ class _StageCaptureSession {
 
   void recordDiagnostic(PreviewDiagnostic diagnostic) {
     if (hasBuildError &&
-        diagnostic.phase == PreviewDiagnosticPhase.paint &&
-        diagnostic.kind == PreviewDiagnosticKind.overflow) {
+        diagnostic.phase == .paint &&
+        diagnostic.kind == .overflow) {
       return;
     }
-    if (diagnostic.phase == PreviewDiagnosticPhase.build) {
-      hasBuildError = true;
-    } else if (diagnostic.phase == PreviewDiagnosticPhase.layout) {
-      hasLayoutError = true;
-    } else if (diagnostic.phase == PreviewDiagnosticPhase.paint &&
-        diagnostic.kind == PreviewDiagnosticKind.exception) {
-      hasPaintException = true;
+    switch (diagnostic.phase) {
+      case .build:
+        hasBuildError = true;
+      case .layout:
+        hasLayoutError = true;
+      case .paint when diagnostic.kind == .exception:
+        hasPaintException = true;
+      case .compile || .paint:
+        break;
     }
     if (!diagnostics.contains(diagnostic)) {
       diagnostics.add(diagnostic);
@@ -2453,13 +2455,28 @@ class WidgetPreviewEnvironment extends StatelessWidget {
     super.key,
   });
 
+  /// Effective brightness applied to [MediaQuery] and the base [Theme].
   final Brightness brightness;
+
+  /// Preview subtree rendered within this environment.
   final Widget child;
+
+  /// Optional height override propagated to [MediaQueryData.size].
   final double? height;
+
+  /// Optional device pixel ratio override propagated to [MediaQueryData].
   final double? pixelRatio;
+
+  /// Preview metadata supplying package asset bundle resolution.
   final WidgetPreview preview;
+
+  /// Optional linear text scale override propagated to [MediaQueryData].
   final double? textScaleFactor;
+
+  /// Optional width override propagated to [MediaQueryData.size].
   final double? width;
+
+  /// Outer window constraints exposed via [WidgetPreviewerWindowConstraints].
   final BoxConstraints windowConstraints;
 
   @override

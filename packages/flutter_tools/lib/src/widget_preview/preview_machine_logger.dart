@@ -17,24 +17,56 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     required this.verbose,
   });
 
+  /// Event suffix emitted as soon as `flutter widget-preview start` begins.
   static const kInitializingEvent = 'initializing';
+
+  /// Event suffix emitted once the widget previewer web server and DTD services
+  /// are ready.
   static const kStartedEvent = 'started';
+
+  /// JSON key carrying the Flutter tool process ID in [kInitializingEvent].
   static const kPidKey = 'pid';
+
+  /// JSON key carrying the web preview HTTP URL in [kStartedEvent].
   static const kUrlKey = 'url';
+
+  /// JSON key carrying the DTD WebSocket URI in [kStartedEvent].
   static const kDtdUriKey = 'dtdUri';
+
+  /// JSON key carrying the registered tool DTD service name in [kStartedEvent].
   static const kPreviewServiceKey = 'previewService';
+
+  /// JSON key carrying the registered scaffold DTD service name in
+  /// [kStartedEvent].
   static const kScaffoldServiceKey = 'scaffoldService';
+
+  /// JSON key carrying the resolved project root path in [kStartedEvent].
   static const kProjectRootKey = 'projectRoot';
 
+  static const _kEventKey = 'event';
+  static const _kEventPrefix = 'widget_preview.';
+  static const _kLevelError = 'error';
+  static const _kLevelKey = 'level';
+  static const _kLevelStatus = 'status';
+  static const _kLevelTrace = 'trace';
+  static const _kLevelWarning = 'warning';
+  static const _kLogMessageEvent = 'logMessage';
+  static const _kMessageKey = 'message';
+  static const _kParamsKey = 'params';
+  static const _kStackTraceKey = 'stackTrace';
+
+  /// Whether `--machine` JSON event output is enabled.
   final bool machine;
+
+  /// Whether verbose trace logging is enabled.
   final bool verbose;
   final Stdio _stdio;
 
   void _sendLogMessage(String level, String message, {StackTrace? stackTrace}) {
-    sendEvent('logMessage', <String, Object?>{
-      'level': level,
-      'message': message,
-      'stackTrace': ?stackTrace?.toString(),
+    sendEvent(_kLogMessageEvent, <String, Object?>{
+      _kLevelKey: level,
+      _kMessageKey: message,
+      _kStackTraceKey: ?stackTrace?.toString(),
     });
   }
 
@@ -49,7 +81,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool? wrap,
   }) {
     if (machine) {
-      _sendLogMessage('error', message, stackTrace: stackTrace);
+      _sendLogMessage(_kLevelError, message, stackTrace: stackTrace);
       return;
     }
     super.printError(
@@ -74,7 +106,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool fatal = true,
   }) {
     if (machine) {
-      _sendLogMessage('warning', message);
+      _sendLogMessage(_kLevelWarning, message);
       return;
     }
     super.printWarning(
@@ -99,7 +131,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     bool? wrap,
   }) {
     if (machine) {
-      _sendLogMessage('status', message);
+      _sendLogMessage(_kLevelStatus, message);
       return;
     }
     super.printStatus(
@@ -126,7 +158,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
       return;
     }
     if (machine) {
-      _sendLogMessage('trace', message);
+      _sendLogMessage(_kLevelTrace, message);
     } else {
       super.printTrace(message);
     }
@@ -164,7 +196,7 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
     // provided.
     _stdio.stdout.writeln(
       json.encode(<Map<String, Object?>>[
-        <String, Object?>{'event': 'widget_preview.$name', 'params': ?args},
+        <String, Object?>{_kEventKey: '$_kEventPrefix$name', _kParamsKey: ?args},
       ]),
     );
   }

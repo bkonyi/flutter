@@ -114,11 +114,15 @@ const _kPlumbingWidgetTypes = <String>{
 
 /// Geometry classification for an interactive preview selection.
 enum EmbedSelectionKind {
+  /// Single click or tap pin with zero width and height.
   point('point'),
+
+  /// Dragged rectangular marquee selection.
   region('region');
 
   const EmbedSelectionKind(this.wireValue);
 
+  /// Wire string serialized in selection payloads.
   final String wireValue;
 }
 
@@ -135,16 +139,31 @@ class EmbedSelectedWidgetInfo {
     this.text,
   });
 
+  /// Rounded rendered height in preview-local logical pixels.
   final int height;
+
+  /// String representation of the widget's [Key], if present.
   final String? key;
+
+  /// Concise extracted plain-text content for text/editable widgets, if any.
   final String? text;
+
+  /// Runtime type name of the Flutter widget.
   final String widget;
+
+  /// Rounded rendered width in preview-local logical pixels.
   final int width;
+
+  /// Rounded left offset in preview-local logical pixels.
   final int x;
+
+  /// Rounded top offset in preview-local logical pixels.
   final int y;
 
+  /// Bounding-box area in square logical pixels used to rank inner widgets first.
   int get area => width * height;
 
+  /// Serializes this widget summary into a JSON map for host chat payloads.
   Map<String, Object?> toJson() => <String, Object?>{
     _kWidgetKey: widget,
     if (key case final String k when k.isNotEmpty) _kKeyKey: k,
@@ -198,32 +217,33 @@ List<EmbedSelectedWidgetInfo> inspectPreviewSubtree({
             (_kPlumbingWidgetTypes.contains(baseType) ||
                 (insideTextWidget && currentWidget is RichText)));
 
-    if (!shouldSkipWidget && element.renderObject is RenderBox) {
-      final box = element.renderObject! as RenderBox;
-      if (box.attached && box.hasSize && !box.size.isEmpty) {
-        final Rect localBounds = MatrixUtils.transformRect(
-          box.getTransformTo(surfaceBox),
-          Offset.zero & box.size,
-        );
-        final bool intersects = switch (kind) {
-          .region => localBounds.overlaps(queryRect),
-          .point =>
-            localBounds.inflate(_kPointHitInflation).contains(pointTarget),
-        };
-        if (intersects) {
-          candidates.add((
-            info: EmbedSelectedWidgetInfo(
-              height: math.max(1, localBounds.height.round()),
-              key: currentWidget.key?.toString(),
-              text: _extractConciseText(currentWidget),
-              widget: typeName,
-              width: math.max(1, localBounds.width.round()),
-              x: localBounds.left.round(),
-              y: localBounds.top.round(),
-            ),
-            order: traversalCounter++,
-          ));
-        }
+    if (element.renderObject case final RenderBox box
+        when !shouldSkipWidget &&
+            box.attached &&
+            box.hasSize &&
+            !box.size.isEmpty) {
+      final Rect localBounds = MatrixUtils.transformRect(
+        box.getTransformTo(surfaceBox),
+        Offset.zero & box.size,
+      );
+      final bool intersects = switch (kind) {
+        .region => localBounds.overlaps(queryRect),
+        .point =>
+          localBounds.inflate(_kPointHitInflation).contains(pointTarget),
+      };
+      if (intersects) {
+        candidates.add((
+          info: EmbedSelectedWidgetInfo(
+            height: math.max(1, localBounds.height.round()),
+            key: currentWidget.key?.toString(),
+            text: _extractConciseText(currentWidget),
+            widget: typeName,
+            width: math.max(1, localBounds.width.round()),
+            x: localBounds.left.round(),
+            y: localBounds.top.round(),
+          ),
+          order: traversalCounter++,
+        ));
       }
     }
 
@@ -301,21 +321,49 @@ class EmbedSelectionEntry {
     this.previewName,
   });
 
+  /// Theme brightness active on the preview surface when captured.
   final Brightness brightness;
+
+  /// Selection height in preview-local logical pixels (`0` for points).
   final int height;
+
+  /// Unique session-scoped identifier (`sel-<n>`).
   final String id;
+
+  /// Whether this entry represents a point pin or rectangular marquee region.
   final EmbedSelectionKind kind;
+
+  /// Rendered logical height of the enclosing preview surface.
   final int previewHeight;
+
+  /// Canonical identifier of the preview containing this selection.
   final String previewId;
+
+  /// Display name of the preview, if configured.
   final String? previewName;
+
+  /// Rendered logical width of the enclosing preview surface.
   final int previewWidth;
+
+  /// Active text scale factor when captured.
   final double textScale;
+
+  /// Rendered Flutter widgets intersecting this selection, ordered smallest first.
   final List<EmbedSelectedWidgetInfo> widgets;
+
+  /// Selection width in preview-local logical pixels (`0` for points).
   final int width;
+
+  /// Left offset in preview-local logical pixels.
   final int x;
+
+  /// Top offset in preview-local logical pixels.
   final int y;
+
+  /// Active canvas zoom multiplier when captured.
   final double zoom;
 
+  /// Serializes this selection with its 1-based display [index] for host payloads.
   Map<String, Object?> toJson({required int index}) => <String, Object?>{
     _kIdKey: id,
     _kIndexKey: index,
@@ -393,11 +441,14 @@ class EmbedSelectionController extends ChangeNotifier {
   var _selectionCounter = 0;
   final _selections = <EmbedSelectionEntry>[];
 
+  /// Whether interactive marquee/point selection mode is currently active.
   bool get selectMode => _selectMode;
 
+  /// Unmodifiable list of active selections in capture order.
   List<EmbedSelectionEntry> get selections =>
       List<EmbedSelectionEntry>.unmodifiable(_selections);
 
+  /// JSON-serializable list of [selections] numbered `1..N`.
   List<Map<String, Object?>> get selectionsJson => <Map<String, Object?>>[
     for (final (int i, EmbedSelectionEntry entry) in _selections.indexed)
       entry.toJson(index: i + 1),

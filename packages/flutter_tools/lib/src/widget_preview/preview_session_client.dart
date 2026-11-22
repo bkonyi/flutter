@@ -71,9 +71,19 @@ class WidgetPreviewSessionClient {
     ),
   });
 
+  /// CLI option name for specifying an existing DTD WebSocket URL.
   static const kDtdUrl = 'dtd-url';
+
+  /// Default timeout when probing discovered DTD endpoints for a matching
+  /// widget preview service.
   static const kDefaultDtdProbeTimeout = Duration(seconds: 2);
+
+  /// Default timeout when launching an ephemeral headless widget preview child
+  /// process and waiting for its `widget_preview.started` event.
   static const kDefaultHeadlessStartupTimeout = Duration(minutes: 2);
+
+  /// Default grace period before forcefully killing an ephemeral headless
+  /// widget preview child process.
   static const kDefaultProcessExitTimeout = Duration(seconds: 5);
 
   static const _kAppDataEnv = 'APPDATA';
@@ -654,8 +664,8 @@ class WidgetPreviewSessionClient {
           _kToolingDaemonCommand,
           _kToolingDaemonListFlag,
         ]);
-        if (result.exitCode == 0 && result.stdout is String) {
-          _extractDtdUrisFromText(result.stdout as String, discovered);
+        if (result case ProcessResult(exitCode: 0, stdout: final String stdout)) {
+          _extractDtdUrisFromText(stdout, discovered);
         }
       } on ProcessException {
         // Ignore failures when probing active tooling daemons.
@@ -736,9 +746,9 @@ class WidgetPreviewSessionClient {
     switch (node) {
       case final Map<String, Object?> map:
         for (final MapEntry(:String key, :Object? value) in map.entries) {
-          if ((key == _kUriKey || key == PreviewServiceInfo.kDtdUri || key == _kWsUriKey) &&
-              value is String) {
-            _tryAddDtdUri(value, discovered);
+          if (value case final String rawUri
+              when key == _kUriKey || key == PreviewServiceInfo.kDtdUri || key == _kWsUriKey) {
+            _tryAddDtdUri(rawUri, discovered);
           } else {
             _extractDtdUrisFromJsonObject(value, discovered);
           }
@@ -982,49 +992,40 @@ class WidgetPreviewSessionClient {
     PreviewServiceInfo? started;
     String? fatalError;
     for (final entry in events) {
-      if (entry is! Map<String, Object?>) {
-        continue;
-      }
-      final Object? eventName = entry[_kEventKey];
-      final Object? params = entry[_kParamsKey];
-      if (params is! Map<String, Object?>) {
-        continue;
-      }
-      if (eventName == _kInitializingEventName) {
-        if (params[_kPidKey] case final int pid) {
+      switch (entry) {
+        case {_kEventKey: _kInitializingEventName, _kParamsKey: {_kPidKey: final int pid}}:
           parsedInitializingPid = pid;
-        }
-        continue;
-      }
-      if (eventName == _kLogMessageEventName &&
-          params[_kLevelKey] == _kErrorKey &&
-          params[_kMessageKey] is String) {
-        onErrorMessage(params[_kMessageKey]! as String);
-        continue;
-      }
-      if (eventName == _kStartedEventName && started == null && fatalError == null) {
-        final String? dtdUri = _nonEmptyString(params[PreviewServiceInfo.kDtdUri]);
-        final String? previewService = _nonEmptyString(params[PreviewServiceInfo.kPreviewService]);
-        final String? scaffoldService = _nonEmptyString(
-          params[PreviewServiceInfo.kScaffoldService],
-        );
-        if (dtdUri == null || previewService == null || scaffoldService == null) {
-          fatalError =
-              'Headless widget preview started without required DTD metadata '
-              '(dtdUri, previewService, scaffoldService) in "$_kStartedEventName". '
-              'This usually indicates an incompatible Flutter < 3.50 installation.';
-          continue;
-        }
-        started = PreviewServiceInfo(
-          dtdUri: dtdUri,
-          previewService: previewService,
-          projectRoot:
-              _nonEmptyString(params[PreviewServiceInfo.kProjectRoot]) ?? targetProjectRoot,
-          scaffoldConnected: false,
-          scaffoldService: scaffoldService,
-          scaffoldStream: _deriveScaffoldStreamName(scaffoldService),
-          webPreviewUri: _nonEmptyString(params[WebPreviewUrlResult.kUrl]),
-        );
+        case {
+          _kEventKey: _kLogMessageEventName,
+          _kParamsKey: {_kLevelKey: _kErrorKey, _kMessageKey: final String message},
+        }:
+          onErrorMessage(message);
+        case {_kEventKey: _kStartedEventName, _kParamsKey: final Map<String, Object?> params}
+            when started == null && fatalError == null:
+          final String? dtdUri = _nonEmptyString(params[PreviewServiceInfo.kDtdUri]);
+          final String? previewService = _nonEmptyString(
+            params[PreviewServiceInfo.kPreviewService],
+          );
+          final String? scaffoldService = _nonEmptyString(
+            params[PreviewServiceInfo.kScaffoldService],
+          );
+          if (dtdUri == null || previewService == null || scaffoldService == null) {
+            fatalError =
+                'Headless widget preview started without required DTD metadata '
+                '(dtdUri, previewService, scaffoldService) in "$_kStartedEventName". '
+                'This usually indicates an incompatible Flutter < 3.50 installation.';
+          } else {
+            started = PreviewServiceInfo(
+              dtdUri: dtdUri,
+              previewService: previewService,
+              projectRoot:
+                  _nonEmptyString(params[PreviewServiceInfo.kProjectRoot]) ?? targetProjectRoot,
+              scaffoldConnected: false,
+              scaffoldService: scaffoldService,
+              scaffoldStream: _deriveScaffoldStreamName(scaffoldService),
+              webPreviewUri: _nonEmptyString(params[WebPreviewUrlResult.kUrl]),
+            );
+          }
       }
     }
     return (fatalError: fatalError, parsedInitializingPid: parsedInitializingPid, started: started);

@@ -20,7 +20,7 @@ import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.d
 const _kDarkPreviewSurfaceColor = Color(0xFF18181B);
 const _kLightPreviewSurfaceColor = Color(0xFFFAFAFA);
 
-Color _surfaceColorFor(Brightness brightness) => brightness == Brightness.dark
+Color _surfaceColorFor(Brightness brightness) => brightness == .dark
     ? _kDarkPreviewSurfaceColor
     : _kLightPreviewSurfaceColor;
 
@@ -37,11 +37,22 @@ class EmbedPreviewScaffold extends StatefulWidget {
     super.key,
   });
 
+  /// Controller providing discovered previews and DTD services.
   final WidgetPreviewScaffoldController controller;
+
+  /// Returns the current interactive canvas zoom multiplier.
   final ValueGetter<double> currentZoom;
+
+  /// Host IDE theme settings used when no explicit brightness override is set.
   final IdeTheme ideTheme;
+
+  /// Invoked when interactive `/live` controls update [params].
   final ValueChanged<EmbedPreviewParams>? onParamsChanged;
+
+  /// Invoked when keyboard or trackpad zoom controls change zoom.
   final ValueChanged<double> onZoomChanged;
+
+  /// Parsed embed URL fragment parameters governing rendered previews and UI.
   final EmbedPreviewParams params;
 
   @override
@@ -234,12 +245,12 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
             null => params.brightness,
           };
           final ThemeMode themeMode = switch (explicitBrightness) {
-            Brightness.light => ThemeMode.light,
-            Brightness.dark => ThemeMode.dark,
+            .light => .light,
+            .dark => .dark,
             null =>
               ideTheme.ideSpecifiedTheme
-                  ? (ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light)
-                  : ThemeMode.system,
+                  ? (ideTheme.isDarkMode ? .dark : .light)
+                  : .system,
           };
           // Use builder + Navigator instead of MaterialApp(home: ...) so
           // WidgetsApp._usesNavigator stays false (never enabling
@@ -462,8 +473,8 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     }
 
     return (
-      buildOne(Brightness.light, 'Light', lightKey),
-      buildOne(Brightness.dark, 'Dark', darkKey),
+      buildOne(.light, 'Light', lightKey),
+      buildOne(.dark, 'Dark', darkKey),
     );
   }
 
@@ -597,16 +608,13 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
             : _kDefaultWindowSize.height) /
         2;
     final items = <_GalleryItem>[
-      for (
-        var groupIndex = 0;
-        groupIndex < groups.length;
-        groupIndex++
-      ) ...<_GalleryItem>[
+      for (final (int groupIndex, WidgetPreviewGroup group)
+          in groups.indexed) ...<_GalleryItem>[
         _GalleryGroupHeader(
-          group: groups[groupIndex],
+          group: group,
           topSpacing: groupIndex > 0 ? _kGroupSpacing : 0.0,
         ),
-        for (final WidgetPreview preview in groups[groupIndex].previews)
+        for (final WidgetPreview preview in group.previews)
           _GalleryPreviewItem(preview: preview),
       ],
     ];

@@ -129,12 +129,16 @@ class EmbedPreviewParams {
     this.zoom,
   });
 
+  /// Parses embed parameters from the current browser URL and fragment.
   factory EmbedPreviewParams.fromCurrentUrl() =>
       EmbedPreviewParams.fromFragment(getUrlFragment(), baseUri: getBaseUri());
 
+  /// Parses embed parameters from [fragment] without consulting a base URI.
   factory EmbedPreviewParams.parse(String fragment) =
       EmbedPreviewParams.fromFragment;
 
+  /// Parses embed parameters from [fragment], inheriting query defaults and
+  /// `/live` route detection from [baseUri] when provided.
   factory EmbedPreviewParams.fromFragment(String fragment, {Uri? baseUri}) {
     final params = <String, String>{
       ...?baseUri?.queryParameters,
@@ -145,8 +149,8 @@ class EmbedPreviewParams {
         (baseUri != null && isLiveUriPath(baseUri));
     return EmbedPreviewParams(
       brightness: switch (params[kBrightnessParam]) {
-        kLightBrightness => Brightness.light,
-        kDarkBrightness => Brightness.dark,
+        kLightBrightness => .light,
+        kDarkBrightness => .dark,
         _ => null,
       },
       dtdProxy: _nonEmpty(params[kDtdProxyParam]),
@@ -198,15 +202,34 @@ class EmbedPreviewParams {
       uri.path.endsWith(_kLivePathSegment) ||
       uri.path.endsWith(_kLivePathTrailingSlash);
 
+  /// Explicit brightness override (`light` or `dark`), or `null` to inherit.
   final Brightness? brightness;
+
+  /// Relative path to the scoped DTD WebSocket proxy endpoint, if overridden.
   final String? dtdProxy;
+
+  /// Explicit preview viewport height in logical pixels, or `null` for auto.
   final double? height;
+
+  /// Whether embed mode (`#embed=1` or `/live`) is active.
   final bool isEmbed;
+
+  /// Target preview identifier or shorthand name, or `null`/`*` for gallery.
   final String? previewId;
+
+  /// Whether interactive marquee/point selection mode is enabled.
   final bool selectMode;
+
+  /// Whether the `/live` top toolbar and selection tray are displayed.
   final bool showControls;
+
+  /// Explicit text scale factor override, or `null` to inherit.
   final double? textScale;
+
+  /// Explicit preview viewport width in logical pixels, or `null` for auto.
   final double? width;
+
+  /// Explicit canvas zoom multiplier clamped to `[kMinZoom, kMaxZoom]`.
   final double? zoom;
 
   /// Whether this embed configuration targets the grouped all-previews gallery
@@ -252,9 +275,7 @@ class EmbedPreviewParams {
         kLiveParam: kLiveEnabledValue,
       if (_nonEmpty(previewId) case final String id) kPreviewIdParam: id,
       if (brightness case final Brightness b)
-        kBrightnessParam: b == Brightness.dark
-            ? kDarkBrightness
-            : kLightBrightness,
+        kBrightnessParam: b == .dark ? kDarkBrightness : kLightBrightness,
       if (width case final double w) kWidthParam: formatEmbedZoom(w),
       if (height case final double h) kHeightParam: formatEmbedZoom(h),
       if (textScale case final double s) kTextScaleParam: formatEmbedZoom(s),

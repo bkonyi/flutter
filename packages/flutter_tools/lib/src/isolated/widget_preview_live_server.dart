@@ -34,9 +34,39 @@ class WidgetPreviewLiveConfig {
     @visibleForTesting this.dtdWebSocketConnector = WebSocketChannel.connect,
   });
 
+  /// The tool-side DTD service manager backing `/__api/*` and `/dtd_ws`.
   final WidgetPreviewDtdServices dtdServices;
+
+  /// Explicit HTTP/HTTPS origins permitted in addition to same-origin loopback
+  /// requests (supplied via `--web-allow-origin`).
   final List<String> allowedOrigins;
+
+  /// Factory used to open upstream WebSocket connections to DTD.
   final DtdWebSocketConnector dtdWebSocketConnector;
+}
+
+String _normalizeLoopbackHost(String host) => switch (host.toLowerCase()) {
+  'localhost' || '127.0.0.1' || '::1' || '[::1]' => 'localhost',
+  final String lower => lower,
+};
+
+/// Zero-cost wrapper over a parsed origin [Uri] with loopback-normalized host
+/// and resolved HTTP/HTTPS port semantics.
+extension type const _OriginAuthority._(Uri _uri) {
+  /// Parses [raw] into an origin authority, returning `null` if [raw] lacks a
+  /// scheme or host.
+  static _OriginAuthority? tryParse(String raw) {
+    final Uri? uri = Uri.tryParse(raw.trim());
+    return uri != null && uri.hasScheme && uri.host.isNotEmpty ? _OriginAuthority._(uri) : null;
+  }
+
+  String get host => _normalizeLoopbackHost(_uri.host);
+  int get port => _uri.hasPort ? _uri.port : (scheme == 'https' ? 443 : 80);
+  String get scheme => _uri.scheme;
+  bool get isHttpOrHttps => scheme == 'http' || scheme == 'https';
+  String get normalized => '$scheme://$host:$port';
+
+  bool matchesHostPort(_OriginAuthority other) => host == other.host && port == other.port;
 }
 
 class _CachedDdcBundle {
@@ -120,13 +150,28 @@ class WidgetPreviewLiveServer {
 
   static final List<int> _kSourceMappingUrlPrefixBytes = utf8.encode('//# sourceMappingURL=');
 
+  /// Returns the current base URL path prefix for the web asset server.
   final String Function() basePathProvider;
+
+  /// Live server and DTD WebSocket bridge configuration.
   final WidgetPreviewLiveConfig config;
+
+  /// Hostname configured for the web asset server (e.g. `localhost`).
   final String configuredHost;
+
+  /// Whether the Flutter tool is running on Windows.
   final bool isWindows;
+
+  /// Map of DDC module IDs to their relative script paths (without `.js`).
   final Map<String, String> modules;
+
+  /// Renders the current `flutter_bootstrap.js` content.
   final String Function() renderFlutterBootstrapJs;
+
+  /// Renders the current `index.html` content.
   final String Function() renderIndexHtml;
+
+  /// In-memory compiled DDC files, metadata, and revision tracking.
   final WebMemoryFS webMemoryFS;
 
   final String _serverNonce =
@@ -435,9 +480,9 @@ window.\$dartLoader.loader.nextAttempt();
       }
       var quality = 1.0;
       for (final String param in segments.skip(1)) {
-        final List<String> kv = param.trim().split('=');
-        if (kv.length == 2 && kv.first.trim().toLowerCase() == 'q') {
-          quality = double.tryParse(kv[1].trim()) ?? 1.0;
+        if (param.trim().split('=') case [final String key, final String rawQuality]
+            when key.trim().toLowerCase() == 'q') {
+          quality = double.tryParse(rawQuality.trim()) ?? 1.0;
         }
       }
       return quality > 0;
@@ -657,16 +702,18 @@ window.\$dartLoader.loader.nextAttempt();
         cleanParams = <String, Object?>{_kStreamIdKey: dtdServices.widgetPreviewScaffoldStream};
       } else if (method ==
           '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kListPreviews}') {
-        final Object? fileUri = params?[WidgetPreviewDtdServices.kFileUri];
         cleanParams = <String, Object?>{
           WidgetPreviewDtdServices.kSync: false,
-          if (fileUri is String && fileUri.isNotEmpty) WidgetPreviewDtdServices.kFileUri: fileUri,
+          if (params?[WidgetPreviewDtdServices.kFileUri] case final String fileUri
+              when fileUri.isNotEmpty)
+            WidgetPreviewDtdServices.kFileUri: fileUri,
         };
       } else if (method ==
           '${dtdServices.widgetPreviewScaffoldService}.${WidgetPreviewDtdServices.kGetPreviews}') {
-        final Object? fileUri = params?[WidgetPreviewDtdServices.kFileUri];
         cleanParams = <String, Object?>{
-          if (fileUri is String && fileUri.isNotEmpty) WidgetPreviewDtdServices.kFileUri: fileUri,
+          if (params?[WidgetPreviewDtdServices.kFileUri] case final String fileUri
+              when fileUri.isNotEmpty)
+            WidgetPreviewDtdServices.kFileUri: fileUri,
         };
       } else if (method ==
           '${dtdServices.widgetPreviewService}.${WidgetPreviewDtdServices.kGetServiceInfo}') {
@@ -774,28 +821,16 @@ window.\$dartLoader.loader.nextAttempt();
     return _isSameAuthorityOrigin(originHeader, hostHeader);
   }
 
-  static ({String scheme, String host, int port})? _parseOriginAuthority(String raw) {
-    final Uri? uri = Uri.tryParse(raw.trim());
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      return null;
-    }
-    final String scheme = uri.scheme.toLowerCase();
-    final int port = uri.hasPort ? uri.port : (scheme == 'https' ? 443 : 80);
-    return (scheme: scheme, host: _normalizeLoopbackHost(uri.host), port: port);
-  }
-
   bool _isHostMatchingAllowedOrigin(String hostHeader) {
     for (final String allowed in config.allowedOrigins) {
-      final ({String host, int port, String scheme})? allowedAuth = _parseOriginAuthority(allowed);
+      final _OriginAuthority? allowedAuth = _OriginAuthority.tryParse(allowed);
       if (allowedAuth == null) {
         continue;
       }
-      final ({String host, int port, String scheme})? hostAuth = _parseOriginAuthority(
+      final _OriginAuthority? hostAuth = _OriginAuthority.tryParse(
         '${allowedAuth.scheme}://$hostHeader',
       );
-      if (hostAuth != null &&
-          hostAuth.host == allowedAuth.host &&
-          hostAuth.port == allowedAuth.port) {
+      if (hostAuth != null && hostAuth.matchesHostPort(allowedAuth)) {
         return true;
       }
     }
@@ -803,9 +838,7 @@ window.\$dartLoader.loader.nextAttempt();
   }
 
   bool _isAllowedHostHeader(String hostHeader) {
-    final ({String host, int port, String scheme})? auth = _parseOriginAuthority(
-      'http://$hostHeader',
-    );
+    final _OriginAuthority? auth = _OriginAuthority.tryParse('http://$hostHeader');
     return auth != null && _isAllowedNormalizedHost(auth.host);
   }
 
@@ -819,32 +852,22 @@ window.\$dartLoader.loader.nextAttempt();
     );
   }
 
-  static String _normalizeOriginString(String origin) {
-    final ({String host, int port, String scheme})? auth = _parseOriginAuthority(origin);
-    return auth == null ? origin.trim() : '${auth.scheme}://${auth.host}:${auth.port}';
-  }
+  static String _normalizeOriginString(String origin) =>
+      _OriginAuthority.tryParse(origin)?.normalized ?? origin.trim();
 
   bool _isSameAuthorityOrigin(String originHeader, String? hostHeader) {
     if (hostHeader == null || hostHeader.isEmpty) {
       return false;
     }
-    final ({String host, int port, String scheme})? originAuth = _parseOriginAuthority(
-      originHeader,
-    );
-    if (originAuth == null || (originAuth.scheme != 'http' && originAuth.scheme != 'https')) {
+    final _OriginAuthority? originAuth = _OriginAuthority.tryParse(originHeader);
+    if (originAuth == null || !originAuth.isHttpOrHttps) {
       return false;
     }
-    final ({String host, int port, String scheme})? hostAuth = _parseOriginAuthority(
+    final _OriginAuthority? hostAuth = _OriginAuthority.tryParse(
       '${originAuth.scheme}://$hostHeader',
     );
     return hostAuth != null &&
-        originAuth.host == hostAuth.host &&
-        _isAllowedNormalizedHost(originAuth.host) &&
-        originAuth.port == hostAuth.port;
+        originAuth.matchesHostPort(hostAuth) &&
+        _isAllowedNormalizedHost(originAuth.host);
   }
-
-  static String _normalizeLoopbackHost(String host) => switch (host.toLowerCase()) {
-    'localhost' || '127.0.0.1' || '::1' || '[::1]' => 'localhost',
-    final String lower => lower,
-  };
 }

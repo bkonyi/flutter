@@ -83,19 +83,46 @@ class EmbedLiveTopBar extends StatelessWidget {
     super.key,
   });
 
+  /// Whether side-by-side Light and Dark panes are active.
   final bool isSplitBrightness;
+
+  /// Whether a live `POST __api/sync` request is currently in flight.
   final bool isSyncing;
+
+  /// Toggles the render-box bounds overlay.
   final VoidCallback onBoundsToggled;
+
+  /// Dismisses the active [syncErrorMessage] banner.
   final VoidCallback? onDismissSyncError;
+
+  /// Applies updated embed URL parameters from toolbar controls.
   final ValueChanged<EmbedPreviewParams> onParamsChanged;
+
+  /// Toggles side-by-side Light and Dark mode.
   final ValueChanged<bool> onSplitBrightnessChanged;
+
+  /// Triggers an on-demand sync and viewer catch-up reload.
   final VoidCallback onSyncPressed;
+
+  /// Updates the active canvas zoom level.
   final ValueChanged<double> onZoomChanged;
+
+  /// Current embed view parameters reflected in toolbar state.
   final EmbedPreviewParams params;
+
+  /// All available previews populated in the preview selector menu.
   final List<WidgetPreview> previews;
+
+  /// Canonical ID of the currently focused single preview, or `null` in gallery.
   final String? resolvedPreviewId;
+
+  /// Controller tracking select mode and active selections.
   final EmbedSelectionController selectionController;
+
+  /// Whether the render-box bounds overlay is currently enabled.
   final bool showBounds;
+
+  /// Compilation or sync error message shown in the error banner, if any.
   final String? syncErrorMessage;
 
   void _selectBrightness(Brightness target) {
@@ -410,7 +437,10 @@ class EmbedLiveSelectionBar extends StatefulWidget {
     super.key,
   });
 
+  /// Current embed parameters forwarded in selection payloads.
   final EmbedPreviewParams params;
+
+  /// Controller supplying active selection chips and mutations.
   final EmbedSelectionController selectionController;
 
   @override
@@ -841,6 +871,8 @@ class EmbedLiveResizableFrame extends StatefulWidget {
   final double? resolvedWidth;
   final double zoom;
 
+  /// Deflates [constraints] by the drag-handle thickness so handles stay within
+  /// the visible preview stage bounds.
   static BoxConstraints deflateStageConstraints(BoxConstraints constraints) {
     double deflate(double maxExtent) => maxExtent.isFinite
         ? math.max(_kMinResizeExtent, maxExtent - _kResizeHandleThickness)
@@ -876,13 +908,13 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
     final Size? frameSize = _currentLogicalFrameSize();
     setState(() {
       _activeKind = kind;
-      if (kind != _ResizeHandleKind.height) {
+      if (kind != .height) {
         _dragWidth =
             widget.resolvedWidth ??
             frameSize?.width ??
             widget.defaultSize.width;
       }
-      if (kind != _ResizeHandleKind.width) {
+      if (kind != .width) {
         _dragHeight =
             widget.resolvedHeight ??
             frameSize?.height ??
@@ -894,11 +926,11 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
   void _updateDrag(_ResizeHandleKind kind, Offset delta) {
     double? clampedWidth;
     double? clampedHeight;
-    if (kind != _ResizeHandleKind.height) {
+    if (kind != .height) {
       _dragWidth = _dragWidth! + delta.dx / widget.zoom;
       clampedWidth = math.max(_kMinResizeExtent, _dragWidth!).roundToDouble();
     }
-    if (kind != _ResizeHandleKind.width) {
+    if (kind != .width) {
       _dragHeight = _dragHeight! + delta.dy / widget.zoom;
       clampedHeight = math.max(_kMinResizeExtent, _dragHeight!).roundToDouble();
     }
@@ -917,15 +949,15 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
 
   Widget _buildHandle(_ResizeHandleKind kind) {
     final (Key key, MouseCursor cursor) = switch (kind) {
-      _ResizeHandleKind.width => (
+      .width => (
         const Key('embed-live-resize-width'),
         SystemMouseCursors.resizeLeftRight,
       ),
-      _ResizeHandleKind.height => (
+      .height => (
         const Key('embed-live-resize-height'),
         SystemMouseCursors.resizeUpDown,
       ),
-      _ResizeHandleKind.corner => (
+      .corner => (
         const Key('embed-live-resize-corner'),
         SystemMouseCursors.resizeDownRight,
       ),
@@ -933,22 +965,23 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
     final Color color = _hoveredKind == kind || _activeKind == kind
         ? _kGripHoverColor
         : _kGripColor;
-    final Widget grip = kind == _ResizeHandleKind.corner
-        ? Icon(Icons.south_east, size: _kResizeCornerIconSize, color: color)
-        : DecoratedBox(
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(_kResizeGripRadius),
-            ),
-            child: SizedBox(
-              width: kind == _ResizeHandleKind.width
-                  ? _kResizeGripThickness
-                  : _kResizeGripLength,
-              height: kind == _ResizeHandleKind.width
-                  ? _kResizeGripLength
-                  : _kResizeGripThickness,
-            ),
-          );
+    final Widget grip = switch (kind) {
+      .corner => Icon(
+        Icons.south_east,
+        size: _kResizeCornerIconSize,
+        color: color,
+      ),
+      .width || .height => DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(_kResizeGripRadius),
+        ),
+        child: SizedBox(
+          width: kind == .width ? _kResizeGripThickness : _kResizeGripLength,
+          height: kind == .width ? _kResizeGripLength : _kResizeGripThickness,
+        ),
+      ),
+    };
     return MouseRegion(
       key: key,
       cursor: cursor,
@@ -968,8 +1001,8 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
         onPanCancel: _endDrag,
         onDoubleTap: () => widget.onParamsChanged(
           widget.params.copyWith(
-            clearHeight: kind != _ResizeHandleKind.width,
-            clearWidth: kind != _ResizeHandleKind.height,
+            clearHeight: kind != .width,
+            clearWidth: kind != .height,
           ),
         ),
         child: Center(child: grip),
@@ -1000,21 +1033,21 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
           right: 0,
           bottom: t,
           width: t,
-          child: _buildHandle(_ResizeHandleKind.width),
+          child: _buildHandle(.width),
         ),
         Positioned(
           left: 0,
           right: t,
           bottom: 0,
           height: t,
-          child: _buildHandle(_ResizeHandleKind.height),
+          child: _buildHandle(.height),
         ),
         Positioned(
           right: 0,
           bottom: 0,
           width: t,
           height: t,
-          child: _buildHandle(_ResizeHandleKind.corner),
+          child: _buildHandle(.corner),
         ),
       ],
     );

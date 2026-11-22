@@ -616,15 +616,7 @@ class WidgetPreviewDtdServices {
                 ? 'Dependency of $libraryUri has errors!'
                 : '$libraryUri has errors!')
           : null;
-      final ({
-        String? brightness,
-        String group,
-        double? height,
-        String? name,
-        double? textScaleFactor,
-        double? width,
-      })
-      metadata = hasError
+      final _PreviewAnnotationMetadata metadata = hasError
           ? (
               brightness: null,
               group: _kInvalidPreviewsGroup,

@@ -11,7 +11,11 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'url.dart';
 
+/// Outcome of a `POST __api/sync` request from the live preview toolbar.
 typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
+
+/// Callback signature for forwarding live preview selections and notes to an
+/// embedding host.
 typedef LiveSendSelectionHandler =
     Future<void> Function({
       required String message,
