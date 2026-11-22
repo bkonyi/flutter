@@ -74,6 +74,7 @@ void main() {
       String basePath = '',
       WidgetPreviewDtdServices? dtdServicesOverride,
       DtdWebSocketConnector? dtdWebSocketConnector,
+      int maxActiveWebSockets = WidgetPreviewLiveConfig.kDefaultMaxActiveWebSockets,
       Map<String, String>? modulesOverride,
       String flutterBootstrapJs =
           'window._flutter.buildConfig = {"builds":[{"mainJsPath":"main.dart.js"}]};',
@@ -85,6 +86,7 @@ void main() {
           allowedOrigins: allowedOrigins,
           dtdServices: dtdServicesOverride ?? dtdServices,
           dtdWebSocketConnector: dtdWebSocketConnector ?? WebSocketChannel.connect,
+          maxActiveWebSockets: maxActiveWebSockets,
         ),
         configuredHost: 'localhost',
         isWindows: false,
@@ -140,6 +142,7 @@ void main() {
       expect(embedRoot.statusCode, io.HttpStatus.ok);
       expect(embedRoot.headers['cross-origin-resource-policy'], 'same-site');
       expect(embedRoot.headers['x-content-type-options'], 'nosniff');
+      expect(embedRoot.headers['content-security-policy'], "frame-ancestors 'self'");
       expect(embedRoot.headers.containsKey('access-control-allow-origin'), isFalse);
       final String embedHtml = await embedRoot.readAsString();
       expect(embedHtml, contains('__embed_flutter_bootstrap.js'));
@@ -166,71 +169,68 @@ void main() {
       expect(embedMainModule.statusCode, io.HttpStatus.ok);
       expect(embedMainModule.headers['cache-control'], 'no-cache');
       final String moduleBootstrap = await embedMainModule.readAsString();
+      expect(moduleBootstrap, startsWith('self.__wpLiveRevision=1;\n'));
       expect(moduleBootstrap, contains('"id":"packages/my_app/main.dart"'));
       expect(moduleBootstrap, contains('"id":"web_entrypoint.dart"'));
-      expect(moduleBootstrap, contains('src: "__ddc_bundle.js"'));
-      expect(moduleBootstrap, isNot(contains('src: "/__ddc_bundle.js"')));
+      expect(moduleBootstrap, contains('packages/my_app/main.dart.lib.js?rev='));
+      expect(moduleBootstrap, contains(r'window.$dartLoader.loadConfig.maxRequestPoolSize = 100;'));
+      expect(moduleBootstrap, contains('loader.addScriptsToQueue(scripts, null);'));
+      expect(moduleBootstrap, isNot(contains('__ddc_bundle.js')));
       expect(moduleBootstrap, isNot(contains('{src: "on_load_end_bootstrap.js"')));
       expect(moduleBootstrap, contains(r'window.$dartLoader.loader.nextAttempt();'));
     });
 
-    testWithoutContext(
-      '/__ddc_bundle.js concatenates modules, caches by revision, supports 304 and gzip',
-      () async {
-        final shelf.Response first = await request('/__ddc_bundle.js');
-        expect(first.statusCode, io.HttpStatus.ok);
-        final String? etag1 = first.headers['etag'];
-        expect(etag1, isNotNull);
-        expect(etag1, endsWith('-rev-1"'));
-        expect(first.headers['cross-origin-resource-policy'], 'same-site');
-        expect(first.headers['x-content-type-options'], 'nosniff');
-        expect(first.headers.containsKey('access-control-allow-origin'), isFalse);
+    testWithoutContext('serves versioned DDC modules with immutable cache on current token and no-store on stale token', () async {
+      final String bootstrap = await (await request('/__embed_main_module.bootstrap.js'))
+          .readAsString();
+      final RegExpMatch? match = RegExp(r'packages/my_app/main\.dart\.lib\.js\?rev=([^"]+)')
+          .firstMatch(bootstrap);
+      expect(match, isNotNull);
+      final String currentRevToken = match!.group(1)!;
 
-        final String body = await first.readAsString();
-        expect(body, startsWith('self.__wpLiveRevision=1;\n'));
-        expect(body, contains('console.log("app");'));
-        expect(body, contains('console.log("entry");'));
-        expect(body, isNot(contains('//# sourceMappingURL=')));
+      final shelf.Response current = await request(
+        '/packages/my_app/main.dart.lib.js?rev=$currentRevToken',
+      );
+      expect(current.statusCode, io.HttpStatus.ok);
+      expect(current.headers['cross-origin-resource-policy'], 'same-site');
+      expect(current.headers['x-content-type-options'], 'nosniff');
+      expect(current.headers['cache-control'], 'private, max-age=31536000, immutable');
+      expect(current.headers.containsKey('access-control-allow-origin'), isFalse);
+      final String body = await current.readAsString();
+      expect(body, contains('console.log("app");'));
+      expect(body, contains('//# sourceMappingURL=main.dart.lib.js.map'));
 
-        final shelf.Response notModified = await request(
-          '/__ddc_bundle.js',
-          headers: <String, String>{'if-none-match': etag1!},
-        );
-        expect(notModified.statusCode, io.HttpStatus.notModified);
+      final shelf.Response stale = await request(
+        '/packages/my_app/main.dart.lib.js?rev=other-nonce-0',
+      );
+      expect(stale.statusCode, io.HttpStatus.ok);
+      expect(stale.headers['cache-control'], 'no-store');
 
-        final shelf.Response gzipped = await request(
-          '/__ddc_bundle.js',
-          headers: <String, String>{'accept-encoding': 'gzip, deflate'},
-        );
-        expect(gzipped.statusCode, io.HttpStatus.ok);
-        expect(gzipped.headers['content-encoding'], 'gzip');
-        final List<int> compressedBytes = await gzipped.read().expand((List<int> c) => c).toList();
-        expect(utf8.decode(io.gzip.decode(compressedBytes)), body);
+      final WidgetPreviewLiveServer otherServer = createServer(
+        flutterBootstrapJs: '',
+        indexHtml: '',
+      );
+      final shelf.Response crossServer = await request(
+        '/packages/my_app/main.dart.lib.js?rev=$currentRevToken',
+        target: otherServer,
+      );
+      expect(crossServer.statusCode, io.HttpStatus.ok);
+      expect(crossServer.headers['cache-control'], 'no-store');
 
-        final shelf.Response gzipRejected = await request(
-          '/__ddc_bundle.js',
-          headers: <String, String>{'accept-encoding': 'gzip;q=0, identity'},
-        );
-        expect(gzipRejected.statusCode, io.HttpStatus.ok);
-        expect(gzipRejected.headers.containsKey('content-encoding'), isFalse);
-        expect(await gzipRejected.readAsString(), body);
-
-        final WidgetPreviewLiveServer otherServer = createServer(
-          flutterBootstrapJs: '',
-          indexHtml: '',
-        );
-        final shelf.Response otherFirst = await request('/__ddc_bundle.js', target: otherServer);
-        expect(otherFirst.headers['etag'], isNot(etag1));
-
-        webMemoryFS.incrementRevision();
-        final shelf.Response second = await request(
-          '/__ddc_bundle.js',
-          headers: <String, String>{'if-none-match': etag1},
-        );
-        expect(second.statusCode, io.HttpStatus.ok);
-        expect(second.headers['etag'], endsWith('-rev-2"'));
-      },
-    );
+      final WidgetPreviewLiveServer allowedServer = createServer(
+        allowedOrigins: const <String>[
+          'https://ide.example:8443',
+          'http://localhost:3000',
+          '*',
+          'javascript://evil',
+        ],
+      );
+      final shelf.Response allowedHtml = await request('/live', target: allowedServer);
+      expect(
+        allowedHtml.headers['content-security-policy'],
+        "frame-ancestors 'self' https://ide.example:8443 http://localhost:3000",
+      );
+    });
 
     group('authorization', () {
       const authCases =
@@ -263,14 +263,14 @@ void main() {
             (
               name: 'rejects Sec-Fetch-Site cross-site without allowlisted Origin',
               method: 'GET',
-              url: '/__ddc_bundle.js',
+              url: '/packages/my_app/main.dart.lib.js?rev=test-0',
               headers: <String, String>{'host': 'localhost:8080', 'sec-fetch-site': 'cross-site'},
               expectedStatus: io.HttpStatus.forbidden,
             ),
             (
               name: 'rejects Sec-Fetch-Site same-site without Origin',
               method: 'GET',
-              url: '/__ddc_bundle.js',
+              url: '/packages/my_app/main.dart.lib.js?rev=test-0',
               headers: <String, String>{'host': 'localhost:8080', 'sec-fetch-site': 'same-site'},
               expectedStatus: io.HttpStatus.forbidden,
             ),
@@ -322,7 +322,7 @@ void main() {
               name:
                   'allows classic script load without Origin when Host matches --web-allow-origin',
               method: 'GET',
-              url: 'http://ide.example:8443/__ddc_bundle.js',
+              url: 'http://ide.example:8443/packages/my_app/main.dart.lib.js?rev=test-0',
               headers: <String, String>{
                 'host': 'ide.example:8443',
                 'sec-fetch-site': 'same-origin',
@@ -332,7 +332,7 @@ void main() {
             (
               name: 'rejects classic script load without Origin when Host port mismatches --web-allow-origin',
               method: 'GET',
-              url: 'http://ide.example:9999/__ddc_bundle.js',
+              url: 'http://ide.example:9999/packages/my_app/main.dart.lib.js?rev=test-0',
               headers: <String, String>{
                 'host': 'ide.example:9999',
                 'sec-fetch-site': 'same-origin',
@@ -342,7 +342,7 @@ void main() {
             (
               name: 'rejects classic script load without Origin on unallowed non-loopback Host',
               method: 'GET',
-              url: 'http://evil.example:8443/__ddc_bundle.js',
+              url: 'http://evil.example:8443/packages/my_app/main.dart.lib.js?rev=test-0',
               headers: <String, String>{
                 'host': 'evil.example:8443',
                 'sec-fetch-site': 'same-origin',
@@ -428,76 +428,173 @@ void main() {
       },
     );
 
+    testWithoutContext('GET /__api/hot-reload gates uncommitted revisions, signals fullRestartRequired, and serves versioned module JS', () async {
+      for (final badUrl in const <String>['/__api/hot-reload', '/__api/hot-reload?since=-1']) {
+        expect((await request(badUrl)).statusCode, io.HttpStatus.badRequest);
+      }
+
+      final int initialRevision = webMemoryFS.revision;
+      server.recordReloadCommitted(fullRestart: false);
+
+      final shelf.Response unchanged = await request('/__api/hot-reload?since=$initialRevision');
+      expect(unchanged.statusCode, io.HttpStatus.ok);
+      expect(jsonDecode(await unchanged.readAsString()), <String, Object?>{
+        'revision': initialRevision,
+        'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
+        'fullRestartRequired': false,
+        'modules': const <Object?>[],
+      });
+
+      webMemoryFS.metadataFiles['packages/my_app/main.dart.lib.js.metadata'] = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'version': '2.0.0',
+            'name': 'packages/my_app/main.dart',
+            'closureName': 'load__main',
+            'sourceMapUri': 'packages/my_app/main.dart.lib.js.map',
+            'moduleUri': 'packages/my_app/main.dart.lib.js',
+            'libraries': <Map<String, Object?>>[
+              <String, Object?>{
+                'name': 'main',
+                'importUri': 'package:my_app/main.dart',
+                'partUris': const <String>[],
+              },
+            ],
+          }),
+        ),
+      );
+      webMemoryFS.writeFileBytes(
+        'packages/my_app/main.dart.lib.js',
+        Uint8List.fromList(
+          utf8.encode('console.log("app v2");\n//# sourceMappingURL=main.dart.lib.js.map\n'),
+        ),
+      );
+      final int updatedRevision = webMemoryFS.revision;
+      expect(updatedRevision, initialRevision + 1);
+
+      // Before commit, uncommitted revisions are hidden from live viewers.
+      final shelf.Response uncommitted = await request('/__api/hot-reload?since=$initialRevision');
+      expect(uncommitted.statusCode, io.HttpStatus.ok);
+      expect(jsonDecode(await uncommitted.readAsString()), <String, Object?>{
+        'revision': initialRevision,
+        'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
+        'fullRestartRequired': false,
+        'modules': const <Object?>[],
+      });
+
+      server.recordReloadCommitted(fullRestart: false);
+      final shelf.Response delta = await request('/__api/hot-reload?since=$initialRevision');
+      expect(delta.statusCode, io.HttpStatus.ok);
+      final deltaJson = jsonDecode(await delta.readAsString()) as Map<String, Object?>;
+      expect(deltaJson['revision'], updatedRevision);
+      expect(deltaJson['scaffoldStream'], dtdServices.widgetPreviewScaffoldStream);
+      expect(deltaJson['fullRestartRequired'], isFalse);
+      final changedModules = deltaJson['modules']! as List<Object?>;
+      expect(changedModules, hasLength(1));
+      final firstModule = changedModules.single! as Map<String, Object?>;
+      final moduleSrc = firstModule['src']! as String;
+      expect(moduleSrc, startsWith('packages/my_app/main.dart.lib.js?rev='));
+      expect(moduleSrc, endsWith('-$updatedRevision'));
+      expect(firstModule['id'], 'packages/my_app/main.dart');
+      expect(firstModule['libraries'], const <String>['package:my_app/main.dart']);
+
+      final shelf.Response moduleJs = await request('/$moduleSrc');
+      expect(moduleJs.statusCode, io.HttpStatus.ok);
+      expect(moduleJs.headers['cross-origin-resource-policy'], 'same-site');
+      expect(moduleJs.headers['cache-control'], 'private, max-age=31536000, immutable');
+      expect(
+        await moduleJs.readAsString(),
+        'console.log("app v2");\n//# sourceMappingURL=main.dart.lib.js.map\n',
+      );
+
+      webMemoryFS.metadataFiles.remove('packages/my_app/main.dart.lib.js.metadata');
+      expect(
+        (await request('/__api/hot-reload?since=$initialRevision')).statusCode,
+        io.HttpStatus.internalServerError,
+      );
+
+      // After a full restart commit, viewers behind the restart revision must
+      // receive fullRestartRequired: true instead of an incremental delta.
+      webMemoryFS.incrementRevision();
+      final int restartRevision = webMemoryFS.revision;
+      server.recordReloadCommitted(fullRestart: true);
+      final shelf.Response restartDelta = await request('/__api/hot-reload?since=$initialRevision');
+      expect(restartDelta.statusCode, io.HttpStatus.ok);
+      expect(jsonDecode(await restartDelta.readAsString()), <String, Object?>{
+        'revision': restartRevision,
+        'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
+        'fullRestartRequired': true,
+        'modules': const <Object?>[],
+      });
+
+      final shelf.Response caughtUp = await request('/__api/hot-reload?since=$restartRevision');
+      expect(caughtUp.statusCode, io.HttpStatus.ok);
+      expect(jsonDecode(await caughtUp.readAsString()), <String, Object?>{
+        'revision': restartRevision,
+        'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
+        'fullRestartRequired': false,
+        'modules': const <Object?>[],
+      });
+    });
+
     testWithoutContext(
-      'GET /__api/hot-reload returns changed module descriptors and serves cache-busted module JS',
+      '/dtd_ws enforces maxActiveWebSockets cap and releases slots on close',
       () async {
-        for (final badUrl in const <String>['/__api/hot-reload', '/__api/hot-reload?since=-1']) {
-          expect((await request(badUrl)).statusCode, io.HttpStatus.badRequest);
-        }
-
-        final int initialRevision = webMemoryFS.revision;
-        final shelf.Response unchanged = await request('/__api/hot-reload?since=$initialRevision');
-        expect(unchanged.statusCode, io.HttpStatus.ok);
-        expect(jsonDecode(await unchanged.readAsString()), <String, Object?>{
-          'revision': initialRevision,
-          'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
-          'modules': const <Object?>[],
+        final controllers = <StreamChannelController<Object?>>[];
+        final WidgetPreviewLiveServer cappedServer = createServer(
+          maxActiveWebSockets: 2,
+          dtdWebSocketConnector: (_) {
+            final controller = StreamChannelController<Object?>();
+            controller.foreign.stream.listen((_) {});
+            controllers.add(controller);
+            return _FakeWebSocketChannel(controller.local);
+          },
+          flutterBootstrapJs: '',
+          indexHtml: '',
+        );
+        final io.HttpServer httpServer = await shelf_io.serve(
+          cappedServer.handler,
+          io.InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(() async {
+          for (final c in controllers) {
+            unawaited(c.local.sink.close());
+            unawaited(c.foreign.sink.close());
+          }
+          await httpServer.close(force: true);
         });
 
-        webMemoryFS.metadataFiles['packages/my_app/main.dart.lib.js.metadata'] = Uint8List.fromList(
-          utf8.encode(
-            jsonEncode(<String, Object?>{
-              'version': '2.0.0',
-              'name': 'packages/my_app/main.dart',
-              'closureName': 'load__main',
-              'sourceMapUri': 'packages/my_app/main.dart.lib.js.map',
-              'moduleUri': 'packages/my_app/main.dart.lib.js',
-              'libraries': <Map<String, Object?>>[
-                <String, Object?>{
-                  'name': 'main',
-                  'importUri': 'package:my_app/main.dart',
-                  'partUris': const <String>[],
-                },
-              ],
-            }),
-          ),
-        );
-        webMemoryFS.writeFileBytes(
-          'packages/my_app/main.dart.lib.js',
-          Uint8List.fromList(
-            utf8.encode('console.log("app v2");\n//# sourceMappingURL=main.dart.lib.js.map\n'),
-          ),
-        );
-        final int updatedRevision = webMemoryFS.revision;
-        expect(updatedRevision, initialRevision + 1);
+        final Uri wsUri = Uri.parse('ws://127.0.0.1:${httpServer.port}/dtd_ws');
+        final client1 = IOWebSocketChannel.connect(wsUri);
+        await client1.ready;
+        final StreamSubscription<Object?> sub1 = client1.stream.listen((_) {});
+        final client2 = IOWebSocketChannel.connect(wsUri);
+        await client2.ready;
+        final StreamSubscription<Object?> sub2 = client2.stream.listen((_) {});
 
-        final shelf.Response delta = await request('/__api/hot-reload?since=$initialRevision');
-        expect(delta.statusCode, io.HttpStatus.ok);
-        expect(jsonDecode(await delta.readAsString()), <String, Object?>{
-          'revision': updatedRevision,
-          'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
-          'modules': <Map<String, Object?>>[
-            <String, Object?>{
-              'src': 'packages/my_app/main.dart.lib.js?rev=$updatedRevision',
-              'id': 'packages/my_app/main.dart',
-              'libraries': const <String>['package:my_app/main.dart'],
-            },
-          ],
-        });
-
-        final shelf.Response moduleJs = await request(
-          '/packages/my_app/main.dart.lib.js?rev=$updatedRevision',
+        final httpClient = io.HttpClient();
+        addTearDown(() => httpClient.close(force: true));
+        final io.HttpClientRequest rejectedReq = await httpClient.getUrl(
+          Uri.parse('http://127.0.0.1:${httpServer.port}/dtd_ws'),
         );
-        expect(moduleJs.statusCode, io.HttpStatus.ok);
-        expect(moduleJs.headers['cross-origin-resource-policy'], 'same-site');
-        expect(moduleJs.headers['cache-control'], 'no-store');
-        expect(await moduleJs.readAsString(), 'console.log("app v2");');
+        final io.HttpClientResponse rejectedRes = await rejectedReq.close();
+        expect(rejectedRes.statusCode, io.HttpStatus.serviceUnavailable);
+        expect(rejectedRes.headers.value('retry-after'), '5');
+        await rejectedRes.drain<void>();
 
-        webMemoryFS.metadataFiles.remove('packages/my_app/main.dart.lib.js.metadata');
-        expect(
-          (await request('/__api/hot-reload?since=$initialRevision')).statusCode,
-          io.HttpStatus.internalServerError,
-        );
+        await client1.sink.close();
+        await sub1.cancel();
+        await controllers.first.foreign.sink.close();
+        await controllers.first.local.sink.done;
+
+        final client3 = IOWebSocketChannel.connect(wsUri);
+        await client3.ready;
+        final StreamSubscription<Object?> sub3 = client3.stream.listen((_) {});
+        await client2.sink.close();
+        await client3.sink.close();
+        await sub2.cancel();
+        await sub3.cancel();
       },
     );
 
@@ -878,27 +975,41 @@ void main() {
           200,
         );
 
-        final ({String body, Map<String, String> headers, int statusCode}) bundle1 = await httpGet(
+        final ({String body, Map<String, String> headers, int statusCode}) bootstrap1 =
+            await httpGet(client, server.selectedPort, '/subapp/__embed_main_module.bootstrap.js');
+        expect(bootstrap1.statusCode, io.HttpStatus.ok);
+        final RegExpMatch? match1 = RegExp(r'packages/my_app/main\.dart\.lib\.js\?rev=([^"]+)')
+            .firstMatch(bootstrap1.body);
+        expect(match1, isNotNull);
+        final String rev1 = match1!.group(1)!;
+        final ({String body, Map<String, String> headers, int statusCode}) mod1 = await httpGet(
           client,
           server.selectedPort,
-          '/subapp/__ddc_bundle.js',
+          '/subapp/packages/my_app/main.dart.lib.js?rev=$rev1',
         );
-        expect(bundle1.statusCode, io.HttpStatus.ok);
-        final String? etag1 = bundle1.headers['etag'];
-        expect(etag1, isNotNull);
+        expect(mod1.statusCode, io.HttpStatus.ok);
+        expect(mod1.headers['cache-control'], 'private, max-age=31536000, immutable');
+        expect(mod1.body, contains('console.log("v1");'));
 
         server.writeBytes(
           'packages/my_app/main.dart.lib.js',
           Uint8List.fromList(utf8.encode('console.log("v2");')),
         );
-        final ({String body, Map<String, String> headers, int statusCode}) bundle2 = await httpGet(
+        final ({String body, Map<String, String> headers, int statusCode}) bootstrap2 =
+            await httpGet(client, server.selectedPort, '/subapp/__embed_main_module.bootstrap.js');
+        final RegExpMatch? match2 = RegExp(r'packages/my_app/main\.dart\.lib\.js\?rev=([^"]+)')
+            .firstMatch(bootstrap2.body);
+        expect(match2, isNotNull);
+        final String rev2 = match2!.group(1)!;
+        expect(rev2, isNot(rev1));
+        final ({String body, Map<String, String> headers, int statusCode}) mod2 = await httpGet(
           client,
           server.selectedPort,
-          '/subapp/__ddc_bundle.js',
+          '/subapp/packages/my_app/main.dart.lib.js?rev=$rev2',
         );
-        expect(bundle2.statusCode, io.HttpStatus.ok);
-        expect(bundle2.headers['etag'], isNot(etag1));
-        expect(bundle2.body, contains('console.log("v2");'));
+        expect(mod2.statusCode, io.HttpStatus.ok);
+        expect(mod2.headers['cache-control'], 'private, max-age=31536000, immutable');
+        expect(mod2.body, contains('console.log("v2");'));
       },
     );
 

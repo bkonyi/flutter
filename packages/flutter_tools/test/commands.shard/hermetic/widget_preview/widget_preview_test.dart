@@ -830,7 +830,7 @@ environment:
     testWithoutContext('skips postPreviewReloaded on no-op syncPreviews and handleReload when WebMemoryFS revision is unchanged', () async {
       final webMemoryFS = WebMemoryFS()
         ..writeFileBytes('packages/my_app/main.dart.lib.js', Uint8List.fromList(<int>[1, 2, 3]));
-      final fakeLiveServer = _FakePrewarmLiveServer();
+      final fakeLiveServer = _FakeCommitLiveServer();
       final fakeDevice = _FakeFlutterDevice(
         devFS: _FakeWebDevFS(
           webAssetServer: _FakeWebAssetServer(liveServer: fakeLiveServer, webMemoryFS: webMemoryFS),
@@ -855,18 +855,18 @@ environment:
       final SyncPreviewsResponse initialSync = await startCommand.syncPreviews();
       expect(initialSync.reloaded, isTrue);
       expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
-      expect(fakeLiveServer.prewarmCount, 1);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false]);
 
       final SyncPreviewsResponse noopSync = await startCommand.syncPreviews();
       expect(noopSync.compileSuccess, isTrue);
       expect(noopSync.reloaded, isFalse);
       expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
-      expect(fakeLiveServer.prewarmCount, 2);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false]);
 
       final OperationResult? noopReload = await startCommand.handleReload();
       expect(noopReload?.isOk, isTrue);
       expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
-      expect(fakeLiveServer.prewarmCount, 3);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false]);
 
       advanceRevisionOnRestart = true;
       final SyncPreviewsResponse changedSync = await startCommand.syncPreviews();
@@ -874,7 +874,7 @@ environment:
       expect(changedSync.reloaded, isTrue);
       expect(changedSync.fullRestart, isFalse);
       expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false]);
-      expect(fakeLiveServer.prewarmCount, 4);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false, false]);
 
       rejectHotReload = true;
       final SyncPreviewsResponse restartSync = await startCommand.syncPreviews();
@@ -882,7 +882,7 @@ environment:
       expect(restartSync.reloaded, isTrue);
       expect(restartSync.fullRestart, isTrue);
       expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false, true]);
-      expect(fakeLiveServer.prewarmCount, 5);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false, false, true]);
     });
   });
 
@@ -2860,12 +2860,12 @@ class _FakeFlutterDevice extends Fake implements FlutterDevice {
   DevFS? devFS;
 }
 
-class _FakePrewarmLiveServer extends Fake implements WidgetPreviewLiveServer {
-  int prewarmCount = 0;
+class _FakeCommitLiveServer extends Fake implements WidgetPreviewLiveServer {
+  final committedFullRestarts = <bool>[];
 
   @override
-  void prewarmBundle() {
-    prewarmCount++;
+  void recordReloadCommitted({required bool fullRestart}) {
+    committedFullRestarts.add(fullRestart);
   }
 }
 

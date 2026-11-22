@@ -636,7 +636,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     try {
       result = await app.restart(fullRestart: true);
       if (result.isOk) {
-        _webDevFS?.webAssetServer.liveServer?.prewarmBundle();
+        _webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: true);
       }
       return result;
     } finally {
@@ -670,10 +670,13 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
         didChange: restartResult != null && restartResult.isOk,
       );
     }
-    if (result.isOk) {
-      webDevFS?.webAssetServer.liveServer?.prewarmBundle();
-    }
     final int? revisionAfter = webDevFS?.webAssetServer.webMemoryFS.revision;
+    if (result.isOk) {
+      if (assetChanged && revisionBefore != null && revisionAfter == revisionBefore) {
+        webDevFS?.webAssetServer.webMemoryFS.incrementRevision();
+      }
+      webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: false);
+    }
     final bool didChange =
         result.isOk && (revisionBefore == null || revisionAfter != revisionBefore || assetChanged);
     return (result: result, fullRestart: false, didChange: didChange);
@@ -1072,6 +1075,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             ),
           );
           await appStarted.future;
+          _webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: false);
           final Uri applicationUrl = flutterDevice.devFS!.baseUri!;
           webPreviewUri = applicationUrl;
           final bool legacyDetection = boolArg(kLegacyPreviewDetection);

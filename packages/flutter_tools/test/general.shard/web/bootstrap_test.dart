@@ -108,6 +108,16 @@ void main() {
     expect(result, isNot(contains('dart-app-ready')));
   });
 
+  test('bootstrap script strips query parameters from source map URLs', () {
+    final String result = generateDDCLibraryBundleBootstrapScript(
+      ddcModuleLoaderUrl: 'ddc_module_loader.js',
+      mapperUrl: 'mapper.js',
+      generateLoadingIndicator: false,
+      isWindows: false,
+    );
+    expect(result, contains("url = url.split('?')[0];"));
+  });
+
   test('generateDDCLibraryBundleMainModule embeds the entrypoint correctly', () {
     final String result = generateDDCLibraryBundleMainModule(
       entrypoint: 'main.js',

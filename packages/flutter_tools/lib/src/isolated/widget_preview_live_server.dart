@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -32,7 +31,11 @@ class WidgetPreviewLiveConfig {
     required this.dtdServices,
     this.allowedOrigins = const <String>[],
     @visibleForTesting this.dtdWebSocketConnector = WebSocketChannel.connect,
+    @visibleForTesting this.maxActiveWebSockets = kDefaultMaxActiveWebSockets,
   });
+
+  /// Default cap on concurrent `/dtd_ws` client WebSocket connections.
+  static const kDefaultMaxActiveWebSockets = 32;
 
   /// The tool-side DTD service manager backing `/__api/*` and `/dtd_ws`.
   final WidgetPreviewDtdServices dtdServices;
@@ -43,6 +46,10 @@ class WidgetPreviewLiveConfig {
 
   /// Factory used to open upstream WebSocket connections to DTD.
   final DtdWebSocketConnector dtdWebSocketConnector;
+
+  /// Maximum number of concurrent `/dtd_ws` client connections accepted before
+  /// rejecting additional upgrades with HTTP 503.
+  final int maxActiveWebSockets;
 }
 
 String _normalizeLoopbackHost(String host) => switch (host.toLowerCase()) {
@@ -65,20 +72,9 @@ extension type const _OriginAuthority._(Uri _uri) {
   String get scheme => _uri.scheme;
   bool get isHttpOrHttps => scheme == 'http' || scheme == 'https';
   String get normalized => '$scheme://$host:$port';
+  String get origin => _uri.origin;
 
   bool matchesHostPort(_OriginAuthority other) => host == other.host && port == other.port;
-}
-
-class _CachedDdcBundle {
-  _CachedDdcBundle({required this.etag, required this.revision, required this.utf8Bytes});
-
-  final String etag;
-  final int revision;
-  final Uint8List utf8Bytes;
-  Future<Uint8List>? _gzipBytesFuture;
-
-  Future<Uint8List> getGzipBytes() =>
-      _gzipBytesFuture ??= Isolate.run(() => Uint8List.fromList(gzip.encode(utf8Bytes)));
 }
 
 /// Serves DWDS-free widget preview embed assets, the `/live` interactive shell,
@@ -101,15 +97,17 @@ class WidgetPreviewLiveServer {
   static const _kCodeKey = 'code';
   static const _kCorpHeader = 'cross-origin-resource-policy';
   static const _kCorpSameSite = 'same-site';
-  static const _kDdcBundlePath = '__ddc_bundle.js';
+  static const _kCspHeader = 'content-security-policy';
   static const _kDtdWsPath = 'dtd_ws';
   static const _kEmbedFlutterBootstrapPath = '__embed_flutter_bootstrap.js';
   static const _kEmbedMainDartJsPath = '__embed_main.dart.js';
   static const _kEmbedMainModuleBootstrapPath = '__embed_main_module.bootstrap.js';
   static const _kEntrypointExtensionMarker = '/* ENTRYPOINT_EXTENTION_MARKER */';
   static const _kErrorKey = 'error';
+  static const _kFullRestartRequiredKey = 'fullRestartRequired';
   static const _kHtmlContentType = 'text/html; charset=utf-8';
   static const _kIdKey = 'id';
+  static const _kImmutableCacheControl = 'private, max-age=31536000, immutable';
   static const _kJsContentType = 'application/javascript; charset=utf-8';
   static const _kJsonContentType = 'application/json; charset=utf-8';
   static const _kJsonRpcKey = 'jsonrpc';
@@ -117,8 +115,10 @@ class WidgetPreviewLiveServer {
   static const _kLiveBgStyleTag =
       '<style id="wp-live-bg">html,body{margin:0;background:#121212;color:#e4e4e7}</style>';
   static const _kLivePath = 'live';
+  static const _kLiveRevisionKey = '__wpLiveRevision';
   static const _kLiveSlashPath = 'live/';
   static const _kMainModuleBootstrapPath = 'main_module.bootstrap.js';
+  static const int _kMaxRequestPoolSize = 100;
   static const int _kMaxRpcFrameBytes = 64 * 1024;
   static const _kMessageKey = 'message';
   static const _kMethodKey = 'method';
@@ -131,6 +131,7 @@ class WidgetPreviewLiveServer {
   static const _kParamsKey = 'params';
   static const _kPlainContentType = 'text/plain; charset=utf-8';
   static const _kResultKey = 'result';
+  static const _kRetryAfterSeconds = '5';
   static const _kRevQueryParam = 'rev';
   static const _kRevisionKey = 'revision';
   static const _kSecFetchSiteHeader = 'sec-fetch-site';
@@ -147,8 +148,6 @@ class WidgetPreviewLiveServer {
   static const _kJsonRpcInvalidRequest = -32600;
   static const _kJsonRpcMethodNotFound = -32601;
   static const _kJsonRpcInvalidParams = -32602;
-
-  static final List<int> _kSourceMappingUrlPrefixBytes = utf8.encode('//# sourceMappingURL=');
 
   /// Returns the current base URL path prefix for the web asset server.
   final String Function() basePathProvider;
@@ -177,8 +176,10 @@ class WidgetPreviewLiveServer {
   final String _serverNonce =
       '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
       '${Random.secure().nextInt(0x7fffffff).toRadixString(36)}';
-  final _activeChannels = <WebSocketChannel>{};
-  _CachedDdcBundle? _cachedBundle;
+  final _clientChannels = <WebSocketChannel>{};
+  final _upstreamChannels = <WebSocketChannel>{};
+  int? _committedRevision;
+  var _lastFullRestartRevision = 0;
   var _reportedEmbedOpen = false;
   var _reportedLiveOpen = false;
 
@@ -186,6 +187,23 @@ class WidgetPreviewLiveServer {
     _kCorpHeader: _kCorpSameSite,
     _kNoSniffHeader: _kNoSniffValue,
   };
+
+  int get _currentRevision => _committedRevision ?? webMemoryFS.revision;
+
+  /// Records that the primary preview runtime committed the current
+  /// [WebMemoryFS.revision].
+  ///
+  /// When [fullRestart] is `true`, viewers catching up from any earlier
+  /// revision are instructed via `fullRestartRequired: true` on
+  /// `/__api/hot-reload` to reload the page instead of applying an in-place
+  /// module delta across a hot-restart boundary.
+  void recordReloadCommitted({required bool fullRestart}) {
+    final int revision = webMemoryFS.revision;
+    _committedRevision = revision;
+    if (fullRestart) {
+      _lastFullRestartRevision = revision;
+    }
+  }
 
   /// Handles incoming requests for live/embed routes, returning 404 for all
   /// non-live routes so normal DWDS traffic falls through.
@@ -213,7 +231,7 @@ class WidgetPreviewLiveServer {
       return _serveEmbedIndexHtml();
     }
 
-    final bool isHotReloadModule =
+    final bool isVersionedModule =
         request.method == 'GET' &&
         request.url.queryParameters.containsKey(_kRevQueryParam) &&
         requestPath.endsWith('.js') &&
@@ -222,12 +240,11 @@ class WidgetPreviewLiveServer {
       _kEmbedFlutterBootstrapPath ||
       _kEmbedMainDartJsPath ||
       _kEmbedMainModuleBootstrapPath ||
-      _kDdcBundlePath ||
       _kApiHotReloadPath ||
       _kApiStatusPath ||
       _kApiSyncPath ||
       _kDtdWsPath => true,
-      _ => isHotReloadModule,
+      _ => isVersionedModule,
     };
     if (!isProtectedRoute) {
       return shelf.Response.notFound('');
@@ -240,15 +257,14 @@ class WidgetPreviewLiveServer {
       );
     }
 
-    if (isHotReloadModule) {
-      return _serveHotReloadModule(requestPath);
+    if (isVersionedModule) {
+      return _serveVersionedModule(requestPath, request.url.queryParameters[_kRevQueryParam]);
     }
 
     return switch ((request.method, requestPath)) {
       ('GET', _kEmbedFlutterBootstrapPath) => _serveEmbedFlutterBootstrapJs(),
       ('GET', _kEmbedMainDartJsPath) => _serveEmbedMainDartJs(),
       ('GET', _kEmbedMainModuleBootstrapPath) => _serveEmbedMainModuleBootstrapJs(),
-      ('GET', _kDdcBundlePath) => _serveDdcBundle(request),
       ('GET', _kApiHotReloadPath) => _serveApiHotReload(request),
       ('GET', _kApiStatusPath) => _serveApiStatus(),
       ('POST', _kApiSyncPath) => _serveApiSync(),
@@ -257,16 +273,11 @@ class WidgetPreviewLiveServer {
     };
   }
 
-  /// Pre-builds the concatenated DDC bundle and warms its gzip cache in the
-  /// background for the current [WebMemoryFS.revision].
-  void prewarmBundle() {
-    unawaited(_getOrBuildBundle().getGzipBytes());
-  }
-
   /// Closes all active `/dtd_ws` WebSocket connections.
   Future<void> dispose() async {
-    final List<WebSocketChannel> channels = _activeChannels.toList();
-    _activeChannels.clear();
+    final channels = <WebSocketChannel>[..._clientChannels, ..._upstreamChannels];
+    _clientChannels.clear();
+    _upstreamChannels.clear();
     await Future.wait(channels.map(_closeChannelSafely));
   }
 
@@ -312,6 +323,20 @@ class WidgetPreviewLiveServer {
     return basePath.isEmpty ? '/$subPath' : '/$basePath/$subPath';
   }
 
+  String _frameAncestorsPolicy() {
+    final ancestors = <String>["'self'"];
+    for (final String allowed in config.allowedOrigins) {
+      if (_OriginAuthority.tryParse(allowed) case final _OriginAuthority auth
+          when auth.isHttpOrHttps) {
+        final String origin = auth.origin;
+        if (!ancestors.contains(origin)) {
+          ancestors.add(origin);
+        }
+      }
+    }
+    return 'frame-ancestors ${ancestors.join(' ')}';
+  }
+
   shelf.Response _serveEmbedIndexHtml() {
     final String html = renderIndexHtml()
         .replaceAll('flutter_bootstrap.js', _rootRelativePath(_kEmbedFlutterBootstrapPath))
@@ -320,7 +345,10 @@ class WidgetPreviewLiveServer {
     return shelf.Response.ok(
       html,
       encoding: utf8,
-      headers: _securityHeaders(contentType: _kHtmlContentType, extra: _kNoCacheHeaders),
+      headers: _securityHeaders(
+        contentType: _kHtmlContentType,
+        extra: <String, String>{..._kNoCacheHeaders, _kCspHeader: _frameAncestorsPolicy()},
+      ),
     );
   }
 
@@ -357,150 +385,48 @@ class WidgetPreviewLiveServer {
     );
   }
 
+  String _moduleRevToken(int moduleRev) => '$_serverNonce-$moduleRev';
+
+  String _versionedModuleSrc(String fileName, int moduleRev) =>
+      '$fileName?$_kRevQueryParam=${_moduleRevToken(moduleRev)}';
+
   String _buildEmbedModuleRegistrationJs() {
-    const registerCall = r'window.$dartLoader.loader.registerScript';
-    const tail =
-        '''
+    final int revision = _currentRevision;
+    final scripts = <Map<String, String>>[
+      for (final MapEntry(key: name, value: path) in modules.entries)
+        <String, String>{
+          'src': _versionedModuleSrc('$path.js', webMemoryFS.moduleRevisions['$path.js'] ?? 0),
+          'id': name,
+        },
+    ];
+    // Cap concurrent script requests at 100 (matching bootstrap.dart CI mode;
+    // https://github.com/flutter/flutter/issues/169574) so loading 1,000+
+    // versioned DDC modules in headless Chrome does not stall.
+    return '''
+self.$_kLiveRevisionKey=$revision;
+var scripts = ${jsonEncode(scripts)};
+window.\$dartLoader.loadConfig.maxRequestPoolSize = $_kMaxRequestPoolSize;
 window.\$dartLoader.loadConfig.loadScriptFn = function(loader) {
-  loader.addScriptsToQueue([
-    {src: "$_kDdcBundlePath", id: "__ddc_bundle__"}
-  ], null);
+  loader.addScriptsToQueue(scripts, null);
   loader.loadEnqueuedModules();
 };
 window.\$dartLoader.loader.nextAttempt();
 ''';
-    return <String>[
-      for (final MapEntry(key: name, value: path) in modules.entries)
-        '$registerCall(${jsonEncode(<String, String>{'src': '$path.js', 'id': name})});',
-      tail,
-    ].join('\n');
   }
 
-  _CachedDdcBundle _getOrBuildBundle() {
-    final int revision = webMemoryFS.revision;
-    final _CachedDdcBundle? existing = _cachedBundle;
-    if (existing != null && existing.revision == revision) {
-      return existing;
-    }
-    final builder = BytesBuilder(copy: false)
-      ..add(utf8.encode('self.__wpLiveRevision=$revision;\n'));
-    var wroteModule = false;
-    for (final String path in modules.values) {
-      final Uint8List? fileBytes = webMemoryFS.files['$path.js'];
-      if (fileBytes == null) {
-        continue;
-      }
-      if (wroteModule) {
-        builder.addByte(0x0A);
-      }
-      builder.add(_stripTrailingSourceMappingUrlBytes(fileBytes));
-      wroteModule = true;
-    }
-    return _cachedBundle = _CachedDdcBundle(
-      etag: '"ddc-$_serverNonce-rev-$revision"',
-      revision: revision,
-      utf8Bytes: builder.takeBytes(),
-    );
-  }
-
-  static Uint8List _stripTrailingSourceMappingUrlBytes(Uint8List bytes) {
-    int end = bytes.length;
-    while (end > 0 && _isAsciiWhitespace(bytes[end - 1])) {
-      end--;
-    }
-    var lineStart = end;
-    while (lineStart > 0 && bytes[lineStart - 1] != 0x0A) {
-      lineStart--;
-    }
-    if (_startsWithBytes(bytes, lineStart, end, _kSourceMappingUrlPrefixBytes)) {
-      var cut = lineStart;
-      if (cut > 0 && bytes[cut - 1] == 0x0A) {
-        cut--;
-      }
-      if (cut > 0 && bytes[cut - 1] == 0x0D) {
-        cut--;
-      }
-      return Uint8List.sublistView(bytes, 0, cut);
-    }
-    return bytes;
-  }
-
-  static bool _isAsciiWhitespace(int byte) =>
-      byte == 0x0A || byte == 0x0D || byte == 0x20 || byte == 0x09;
-
-  static bool _startsWithBytes(Uint8List bytes, int start, int end, List<int> prefix) {
-    if (end - start < prefix.length) {
-      return false;
-    }
-    for (var i = 0; i < prefix.length; i++) {
-      if (bytes[start + i] != prefix[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  Future<shelf.Response> _serveDdcBundle(shelf.Request request) async {
-    final _CachedDdcBundle bundle = _getOrBuildBundle();
-    final String? ifNoneMatch = request.headers[HttpHeaders.ifNoneMatchHeader];
-    if (_matchesEtag(ifNoneMatch, bundle.etag)) {
-      return shelf.Response.notModified(
-        headers: _securityHeaders(
-          extra: <String, String>{
-            HttpHeaders.cacheControlHeader: 'max-age=0, must-revalidate',
-            HttpHeaders.etagHeader: bundle.etag,
-          },
-        ),
-      );
-    }
-
-    final bool acceptsGzip = _acceptsGzipEncoding(
-      request.headers[HttpHeaders.acceptEncodingHeader],
-    );
-    final Uint8List bodyBytes = acceptsGzip ? await bundle.getGzipBytes() : bundle.utf8Bytes;
-    return _jsOkResponse(
-      bodyBytes,
-      extra: <String, String>{
-        HttpHeaders.cacheControlHeader: 'max-age=0, must-revalidate',
-        HttpHeaders.etagHeader: bundle.etag,
-        HttpHeaders.varyHeader: HttpHeaders.acceptEncodingHeader,
-        if (acceptsGzip) HttpHeaders.contentEncodingHeader: 'gzip',
-      },
-    );
-  }
-
-  static bool _acceptsGzipEncoding(String? acceptEncoding) {
-    if (acceptEncoding == null || acceptEncoding.isEmpty) {
-      return false;
-    }
-    for (final String part in acceptEncoding.split(',')) {
-      final List<String> segments = part.trim().split(';');
-      if (segments.isEmpty || segments.first.trim().toLowerCase() != 'gzip') {
-        continue;
-      }
-      var quality = 1.0;
-      for (final String param in segments.skip(1)) {
-        if (param.trim().split('=') case [final String key, final String rawQuality]
-            when key.trim().toLowerCase() == 'q') {
-          quality = double.tryParse(rawQuality.trim()) ?? 1.0;
-        }
-      }
-      return quality > 0;
-    }
-    return false;
-  }
-
-  static bool _matchesEtag(String? ifNoneMatch, String etag) =>
-      ifNoneMatch != null &&
-      ifNoneMatch.isNotEmpty &&
-      (ifNoneMatch == etag || ifNoneMatch.split(',').any((String part) => part.trim() == etag));
-
-  shelf.Response _serveHotReloadModule(String requestPath) {
+  shelf.Response _serveVersionedModule(String requestPath, String? revParam) {
     final Uint8List? fileBytes = webMemoryFS.files[requestPath];
     if (fileBytes == null) {
       return shelf.Response.notFound('');
     }
-    return _jsOkResponse(_stripTrailingSourceMappingUrlBytes(fileBytes), extra: _kNoStoreHeaders);
+    final int moduleRev = webMemoryFS.moduleRevisions[requestPath] ?? 0;
+    final bool matchesCurrent = revParam != null && revParam == _moduleRevToken(moduleRev);
+    return _jsOkResponse(
+      fileBytes,
+      extra: matchesCurrent
+          ? const <String, String>{HttpHeaders.cacheControlHeader: _kImmutableCacheControl}
+          : _kNoStoreHeaders,
+    );
   }
 
   shelf.Response _serveApiHotReload(shelf.Request request) {
@@ -512,13 +438,17 @@ window.\$dartLoader.loader.nextAttempt();
         'Query parameter "$_kSinceQueryParam" must be a non-negative integer.',
       );
     }
-    final int currentRevision = webMemoryFS.revision;
+    final int currentRevision = _currentRevision;
+    final bool fullRestartRequired = since < _lastFullRestartRevision;
     final changedModules = <Map<String, Object?>>[];
-    if (since < currentRevision) {
+    if (!fullRestartRequired && since < currentRevision) {
       for (final MapEntry(key: id, value: path) in modules.entries) {
         final fileName = '$path.js';
         final int? moduleRev = webMemoryFS.moduleRevisions[fileName];
-        if (moduleRev == null || moduleRev <= since || !webMemoryFS.files.containsKey(fileName)) {
+        if (moduleRev == null ||
+            moduleRev <= since ||
+            moduleRev > currentRevision ||
+            !webMemoryFS.files.containsKey(fileName)) {
           continue;
         }
         final List<String>? libraries = _librariesForModule(fileName);
@@ -529,7 +459,7 @@ window.\$dartLoader.loader.nextAttempt();
           );
         }
         changedModules.add(<String, Object?>{
-          'src': '$fileName?$_kRevQueryParam=$moduleRev',
+          'src': _versionedModuleSrc(fileName, moduleRev),
           'id': id,
           'libraries': libraries,
         });
@@ -538,6 +468,7 @@ window.\$dartLoader.loader.nextAttempt();
     return _jsonResponse(<String, Object?>{
       _kRevisionKey: currentRevision,
       PreviewServiceInfo.kScaffoldStream: config.dtdServices.widgetPreviewScaffoldStream,
+      _kFullRestartRequiredKey: fullRestartRequired,
       _kModulesKey: changedModules,
     }, noStore: true);
   }
@@ -601,6 +532,16 @@ window.\$dartLoader.loader.nextAttempt();
         headers: _securityHeaders(contentType: _kPlainContentType),
       );
     }
+    if (_clientChannels.length >= config.maxActiveWebSockets) {
+      return shelf.Response(
+        HttpStatus.serviceUnavailable,
+        body: 'Too many active /dtd_ws connections.',
+        headers: _securityHeaders(
+          contentType: _kPlainContentType,
+          extra: const <String, String>{HttpHeaders.retryAfterHeader: _kRetryAfterSeconds},
+        ),
+      );
+    }
     final shelf.Handler wsHandler = webSocketHandler((WebSocketChannel clientChannel, String? _) {
       _bridgeDtdWebSocket(clientChannel, dtdUri);
     }, pingInterval: _kWebSocketPingInterval);
@@ -608,10 +549,13 @@ window.\$dartLoader.loader.nextAttempt();
   }
 
   void _bridgeDtdWebSocket(WebSocketChannel clientChannel, Uri dtdUri) {
+    if (_clientChannels.length >= config.maxActiveWebSockets) {
+      unawaited(_closeChannelSafely(clientChannel));
+      return;
+    }
     final WebSocketChannel upstreamChannel = config.dtdWebSocketConnector(dtdUri);
-    _activeChannels
-      ..add(clientChannel)
-      ..add(upstreamChannel);
+    _clientChannels.add(clientChannel);
+    _upstreamChannels.add(upstreamChannel);
 
     var closed = false;
     Future<void> closeBoth() async {
@@ -619,9 +563,8 @@ window.\$dartLoader.loader.nextAttempt();
         return;
       }
       closed = true;
-      _activeChannels
-        ..remove(clientChannel)
-        ..remove(upstreamChannel);
+      _clientChannels.remove(clientChannel);
+      _upstreamChannels.remove(upstreamChannel);
       await Future.wait<void>(<Future<void>>[
         _closeChannelSafely(clientChannel),
         _closeChannelSafely(upstreamChannel),
@@ -824,7 +767,7 @@ window.\$dartLoader.loader.nextAttempt();
   bool _isHostMatchingAllowedOrigin(String hostHeader) {
     for (final String allowed in config.allowedOrigins) {
       final _OriginAuthority? allowedAuth = _OriginAuthority.tryParse(allowed);
-      if (allowedAuth == null) {
+      if (allowedAuth == null || !allowedAuth.isHttpOrHttps) {
         continue;
       }
       final _OriginAuthority? hostAuth = _OriginAuthority.tryParse(
@@ -846,14 +789,18 @@ window.\$dartLoader.loader.nextAttempt();
       normalizedHost == 'localhost' || normalizedHost == _normalizeLoopbackHost(configuredHost);
 
   bool _isOriginExplicitlyAllowed(String originHeader) {
-    final String normalizedOrigin = _normalizeOriginString(originHeader);
-    return config.allowedOrigins.any(
-      (String allowed) => _normalizeOriginString(allowed) == normalizedOrigin,
-    );
+    final _OriginAuthority? requestAuth = _OriginAuthority.tryParse(originHeader);
+    if (requestAuth == null || !requestAuth.isHttpOrHttps) {
+      return false;
+    }
+    for (final String allowed in config.allowedOrigins) {
+      if (_OriginAuthority.tryParse(allowed) case final _OriginAuthority allowedAuth
+          when allowedAuth.isHttpOrHttps && allowedAuth.normalized == requestAuth.normalized) {
+        return true;
+      }
+    }
+    return false;
   }
-
-  static String _normalizeOriginString(String origin) =>
-      _OriginAuthority.tryParse(origin)?.normalized ?? origin.trim();
 
   bool _isSameAuthorityOrigin(String originHeader, String? hostHeader) {
     if (hostHeader == null || hostHeader.isEmpty) {

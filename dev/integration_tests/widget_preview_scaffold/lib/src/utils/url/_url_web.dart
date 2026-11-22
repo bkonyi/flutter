@@ -23,6 +23,7 @@ const _kCompileSuccessKey = 'compileSuccess';
 const _kDartDevEmbedderKey = 'dartDevEmbedder';
 const _kErrorKey = 'error';
 const _kErrorMessageKey = 'errorMessage';
+const _kFullRestartRequiredKey = 'fullRestartRequired';
 const _kHostKey = 'flutterWidgetPreviewHost';
 const _kHotReloadMethod = 'hotReload';
 const _kHotReloadTimeout = Duration(seconds: 5);
@@ -248,8 +249,8 @@ _DartDevEmbedder? _resolveDartDevEmbedder() {
   }
 }
 
-/// Returns the initial [WebMemoryFS] revision embedded in `__ddc_bundle.js`, or
-/// `null` if unavailable.
+/// Returns the initial [WebMemoryFS] revision stamped in
+/// `__embed_main_module.bootstrap.js`, or `null` if unavailable.
 int? get initialLiveRevision {
   if (_debugInitialLiveRevision case final int rev) {
     return rev;
@@ -265,8 +266,9 @@ int? get initialLiveRevision {
 /// Fetches changed DDC modules since [sinceRevision] via
 /// `GET __api/hot-reload?since=<rev>` and hot-reloads them in-place using
 /// `window.dartDevEmbedder.hotReload`, returning the updated server revision or
-/// `null` if in-place hot reload is unavailable, the server's `scaffoldStream`
-/// no longer matches [expectedScaffoldStream], or hot reload fails.
+/// `null` if in-place hot reload is unavailable, `fullRestartRequired` is
+/// `true`, the server's `scaffoldStream` no longer matches
+/// [expectedScaffoldStream], or hot reload fails.
 Future<int?> hotReloadLiveModules({
   required String expectedScaffoldStream,
   required int sinceRevision,
@@ -291,6 +293,9 @@ Future<int?> hotReloadLiveModules({
       return null;
     }
     final Object? decoded = jsonDecode((await response.text().toDart).toDart);
+    if (decoded case {_kFullRestartRequiredKey: true}) {
+      return null;
+    }
     if (decoded case {
       _kScaffoldStreamKey: final String stream,
     } when stream != expectedScaffoldStream) {
