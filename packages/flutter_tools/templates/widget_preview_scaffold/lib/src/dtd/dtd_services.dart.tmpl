@@ -94,8 +94,10 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   StreamSubscription<DTDEvent>? _scaffoldStreamSubscription;
   Future<void>? _activeViewerReload;
   int? _liveRevision;
+  Uri? _viewerDtdWsUri;
   Timer? _reconnectTimer;
   var _reconnectAttempt = 0;
+  var _connectingViewer = false;
   var _disposed = false;
   var _editorServiceInitialized = false;
   var _needsViewerCatchUp = false;
@@ -156,60 +158,96 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     await initializeEditorService(this);
   }
 
-  Future<void> _connectViewer(Uri dtdWsUri) async {
-    _liveRevision ??= initialLiveRevision;
-    final DartToolingDaemon connectedDtd;
-    try {
-      connectedDtd = await DartToolingDaemon.connect(dtdWsUri);
-    } on Exception {
-      if (!_disposed) {
-        _scheduleViewerReconnect(dtdWsUri);
-      }
-      return;
-    }
+  /// Reconnects the viewer-only DTD socket if disconnected and catches up to
+  /// the latest live server revision in-place (falling back to a full page
+  /// reload if the daemon restarted or in-place reload fails).
+  Future<void> syncViewerReload() async {
     if (_disposed) {
-      await connectedDtd.close();
       return;
     }
-    _dtd = connectedDtd;
+    _liveRevision ??= initialLiveRevision;
+    if (_viewerDtdWsUri case final Uri dtdWsUri
+        when !_connectingViewer && (_dtd?.isClosed ?? true)) {
+      _reconnectAttempt = 0;
+      _needsViewerCatchUp = false;
+      unawaited(connect(dtdUri: dtdWsUri, readOnly: true));
+    }
+    await _enqueueViewerReload(fullRestart: false, onlyIfChanged: true);
+  }
+
+  Future<void> _connectViewer(Uri dtdWsUri) async {
+    _viewerDtdWsUri = dtdWsUri;
+    if (_connectingViewer) {
+      return;
+    }
+    _connectingViewer = true;
     try {
-      await _subscribeToScaffoldReloadEvents();
-    } on Exception catch (e) {
-      if (identical(_dtd, connectedDtd)) {
-        _dtd = null;
+      _liveRevision ??= initialLiveRevision;
+      final DartToolingDaemon connectedDtd;
+      try {
+        connectedDtd = await DartToolingDaemon.connect(dtdWsUri);
+      } on Exception {
+        if (!_disposed) {
+          _scheduleViewerReconnect(dtdWsUri);
+        }
+        return;
       }
-      await connectedDtd.close();
+      if (_disposed) {
+        await connectedDtd.close();
+        return;
+      }
+      _dtd = connectedDtd;
+      Object? subscribeError;
+      try {
+        await _subscribeToScaffoldReloadEvents();
+      } on Exception catch (e) {
+        subscribeError = e;
+      } on StateError catch (e) {
+        subscribeError = e;
+      }
+      if (subscribeError != null) {
+        if (identical(_dtd, connectedDtd)) {
+          _dtd = null;
+        }
+        await connectedDtd.close();
+        if (_disposed) {
+          return;
+        }
+        if (subscribeError case RpcException(
+          code: RpcErrorCodes.kMethodNotFound,
+        )) {
+          // The server rejected our compiled scaffold stream UUID, which
+          // indicates the preview daemon restarted with a new stream ID.
+          if (onPreviewReloaded case final VoidCallback callback) {
+            callback();
+          } else {
+            reloadWindow();
+          }
+          return;
+        }
+        _scheduleViewerReconnect(dtdWsUri);
+        return;
+      }
       if (_disposed) {
         return;
       }
-      if (e is RpcException && e.code == RpcErrorCodes.kMethodNotFound) {
-        // The server rejected our compiled scaffold stream UUID, which
-        // indicates the preview daemon restarted with a new stream ID.
-        if (onPreviewReloaded case final VoidCallback callback) {
-          callback();
-        } else {
-          reloadWindow();
-        }
-        return;
+      _reconnectAttempt = 0;
+      final bool shouldCatchUp = _needsViewerCatchUp;
+      _needsViewerCatchUp = false;
+      unawaited(
+        connectedDtd.done.whenComplete(() {
+          if (!_disposed && identical(_dtd, connectedDtd)) {
+            _scheduleViewerReconnect(dtdWsUri);
+          }
+        }),
+      );
+      if (shouldCatchUp) {
+        unawaited(
+          _enqueueViewerReload(fullRestart: false, onlyIfChanged: true),
+        );
       }
-      _scheduleViewerReconnect(dtdWsUri);
-      return;
-    }
-    if (_disposed) {
-      return;
-    }
-    _reconnectAttempt = 0;
-    final bool shouldCatchUp = _needsViewerCatchUp;
-    _needsViewerCatchUp = false;
-    unawaited(
-      connectedDtd.done.whenComplete(() {
-        if (!_disposed && identical(_dtd, connectedDtd)) {
-          _scheduleViewerReconnect(dtdWsUri);
-        }
-      }),
-    );
-    if (shouldCatchUp) {
-      unawaited(_enqueueViewerReload(fullRestart: false, onlyIfChanged: true));
+    } finally {
+      _connectingViewer = false;
     }
   }
 
@@ -279,6 +317,7 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     }
     if (!fullRestart && sinceRevision != null) {
       final int? nextRevision = await hotReloadLiveModules(
+        expectedScaffoldStream: kWidgetPreviewScaffoldStream,
         sinceRevision: sinceRevision,
       );
       if (nextRevision != null) {

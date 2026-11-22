@@ -1300,9 +1300,11 @@ void main() {
           throw StateError('Host bridge unavailable');
         });
 
+        final fakeDtd = FakeWidgetPreviewScaffoldDtdServices();
         await pumpTestScaffold(
           tester,
           baseUri: Uri.parse('http://localhost:8080/'),
+          dtdServices: fakeDtd,
           fragment:
               'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&select=1',
           previews: () => _buildTestPreviews().take(2).toList(),
@@ -1335,12 +1337,14 @@ void main() {
           findsOneWidget,
         );
         expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+        expect(fakeDtd.syncViewerReloadCount, 0);
 
         shouldFailSync = false;
         await tester.tap(find.byKey(const Key('embed-live-sync-button')));
         await tester.pumpAndSettle();
         expect(find.byKey(const Key('embed-live-error-banner')), findsNothing);
         expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+        expect(fakeDtd.syncViewerReloadCount, 1);
       },
     );
 

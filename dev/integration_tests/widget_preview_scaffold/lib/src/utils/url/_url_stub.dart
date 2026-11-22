@@ -111,7 +111,10 @@ int? get initialLiveRevision => _debugInitialLiveRevision;
 
 /// Hot-reloads changed DDC modules in-place since [sinceRevision] (stub returns
 /// `null` unless overridden in tests).
-Future<int?> hotReloadLiveModules({required int sinceRevision}) async {
+Future<int?> hotReloadLiveModules({
+  required String expectedScaffoldStream,
+  required int sinceRevision,
+}) async {
   _debugHotReloadCount++;
   if (_debugHotReloadHandler case final handler?) {
     return handler(sinceRevision);

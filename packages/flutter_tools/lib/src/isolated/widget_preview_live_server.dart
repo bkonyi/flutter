@@ -93,6 +93,7 @@ class WidgetPreviewLiveServer {
   static const _kMessageKey = 'message';
   static const _kMethodKey = 'method';
   static const _kModulesKey = 'modules';
+  static const _kNoCacheHeaders = <String, String>{HttpHeaders.cacheControlHeader: 'no-cache'};
   static const _kNoSniffHeader = 'x-content-type-options';
   static const _kNoSniffValue = 'nosniff';
   static const _kNoStoreHeaders = <String, String>{HttpHeaders.cacheControlHeader: 'no-store'};
@@ -274,7 +275,7 @@ class WidgetPreviewLiveServer {
     return shelf.Response.ok(
       html,
       encoding: utf8,
-      headers: _securityHeaders(contentType: _kHtmlContentType),
+      headers: _securityHeaders(contentType: _kHtmlContentType, extra: _kNoCacheHeaders),
     );
   }
 
@@ -307,6 +308,7 @@ class WidgetPreviewLiveServer {
     }
     return _jsOkResponse(
       decodedBootstrap.replaceFirst(_kEntrypointExtensionMarker, _buildEmbedModuleRegistrationJs()),
+      extra: _kNoCacheHeaders,
     );
   }
 
@@ -490,6 +492,7 @@ window.\$dartLoader.loader.nextAttempt();
     }
     return _jsonResponse(<String, Object?>{
       _kRevisionKey: currentRevision,
+      PreviewServiceInfo.kScaffoldStream: config.dtdServices.widgetPreviewScaffoldStream,
       _kModulesKey: changedModules,
     }, noStore: true);
   }

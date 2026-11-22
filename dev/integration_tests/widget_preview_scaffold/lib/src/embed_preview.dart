@@ -110,6 +110,10 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       }
       if (compileSuccess) {
         _selectionController.clearSelections();
+        await widget.controller.dtdServices.syncViewerReload();
+        if (!mounted) {
+          return;
+        }
       }
       setState(() {
         _isSyncing = false;

@@ -842,6 +842,69 @@ void main() {
       },
     );
 
+    test(
+      'viewer-only mode schedules reconnect when socket closes mid-streamListen (StateError)',
+      () async {
+        var dropDuringStreamListen = true;
+        final fakeDtd = await _startFakeDtdServer(
+          shouldDropOnStreamListen: () => dropDuringStreamListen,
+        );
+        final viewerDtd = WidgetPreviewScaffoldDtdServices();
+        addTearDown(viewerDtd.dispose);
+
+        await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+        expect(fakeDtd.connectionCount(), 1);
+
+        dropDuringStreamListen = false;
+        await fakeDtd.secondConnected.future.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(fakeDtd.connectionCount(), 2);
+      },
+    );
+
+    test(
+      'syncViewerReload catches up missed revisions and reconnects closed viewer socket',
+      () async {
+        var rejectUpgrade = true;
+        final fakeDtd = await _startFakeDtdServer(
+          shouldRejectUpgrade: () => rejectUpgrade,
+        );
+        var serverRevision = 4;
+        var inPlaceHotReloads = 0;
+        final observedSinceRevisions = <int>[];
+        debugSetInitialLiveRevision(serverRevision);
+        debugSetHotReloadHandler((int sinceRevision) async {
+          observedSinceRevisions.add(sinceRevision);
+          return serverRevision;
+        });
+
+        final connected = Completer<void>();
+        fakeDtd.setOnConnection(() {
+          if (!connected.isCompleted) {
+            connected.complete();
+          }
+        });
+
+        final viewerDtd = WidgetPreviewScaffoldDtdServices(
+          onInPlaceHotReload: () => inPlaceHotReloads++,
+        );
+        addTearDown(viewerDtd.dispose);
+        await viewerDtd.connect(dtdUri: fakeDtd.uri, readOnly: true);
+        expect(fakeDtd.connectionCount(), 0);
+
+        rejectUpgrade = false;
+        serverRevision = 6;
+        await viewerDtd.syncViewerReload();
+        // Reconnect must occur immediately rather than waiting for the 1s
+        // backoff timer scheduled by the failed initial connect.
+        await connected.future.timeout(const Duration(milliseconds: 500));
+        expect(observedSinceRevisions, <int>[4]);
+        expect(inPlaceHotReloads, 1);
+        expect(debugReloadCount, 0);
+      },
+    );
+
     test('dispose cancels pending viewer-only reconnect timer', () async {
       final fakeDtd = await _startFakeDtdServer();
       final viewerDtd = WidgetPreviewScaffoldDtdServices();
@@ -866,6 +929,7 @@ Future<
   })
 >
 _startFakeDtdServer({
+  bool Function()? shouldDropOnStreamListen,
   bool Function()? shouldRejectStreamListen,
   bool Function()? shouldRejectUpgrade,
 }) async {
@@ -898,6 +962,11 @@ _startFakeDtdServer({
     ws.listen((Object? raw) {
       final Object? decoded = jsonDecode(raw! as String);
       if (decoded is Map<String, Object?> && decoded.containsKey('id')) {
+        if ((shouldDropOnStreamListen?.call() ?? false) &&
+            decoded['method'] == 'streamListen') {
+          unawaited(ws.close());
+          return;
+        }
         if ((shouldRejectStreamListen?.call() ?? false) &&
             decoded['method'] == 'streamListen') {
           ws.add(

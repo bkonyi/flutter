@@ -34,6 +34,7 @@ const _kModulesKey = 'modules';
 const _kPreviewIdKey = 'previewId';
 const _kPreviewNameKey = 'previewName';
 const _kRevisionKey = 'revision';
+const _kScaffoldStreamKey = 'scaffoldStream';
 const _kSelectionsKey = 'selections';
 const _kSendSelectionMethod = 'sendSelection';
 const _kSinceParam = 'since';
@@ -252,8 +253,12 @@ int? get initialLiveRevision {
 /// Fetches changed DDC modules since [sinceRevision] via
 /// `GET __api/hot-reload?since=<rev>` and hot-reloads them in-place using
 /// `window.dartDevEmbedder.hotReload`, returning the updated server revision or
-/// `null` if in-place hot reload is unavailable or fails.
-Future<int?> hotReloadLiveModules({required int sinceRevision}) async {
+/// `null` if in-place hot reload is unavailable, the server's `scaffoldStream`
+/// no longer matches [expectedScaffoldStream], or hot reload fails.
+Future<int?> hotReloadLiveModules({
+  required String expectedScaffoldStream,
+  required int sinceRevision,
+}) async {
   _debugHotReloadCount++;
   if (_debugHotReloadHandler case final handler?) {
     return handler(sinceRevision);
@@ -274,6 +279,11 @@ Future<int?> hotReloadLiveModules({required int sinceRevision}) async {
       return null;
     }
     final Object? decoded = jsonDecode((await response.text().toDart).toDart);
+    if (decoded case {
+      _kScaffoldStreamKey: final String stream,
+    } when stream != expectedScaffoldStream) {
+      return null;
+    }
     if (decoded case {
       _kRevisionKey: final int nextRevision,
       _kModulesKey: final List<Object?> rawModules,

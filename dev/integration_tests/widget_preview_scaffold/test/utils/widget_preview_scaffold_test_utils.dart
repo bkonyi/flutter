@@ -258,10 +258,16 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   }
 
   bool hotRestartInvoked = false;
+  var syncViewerReloadCount = 0;
 
   @override
   Future<void> hotRestartPreviewer() async {
     hotRestartInvoked = true;
+  }
+
+  @override
+  Future<void> syncViewerReload() async {
+    syncViewerReloadCount++;
   }
 
   @override

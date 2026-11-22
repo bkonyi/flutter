@@ -164,6 +164,7 @@ void main() {
 
       final shelf.Response embedMainModule = await request('/__embed_main_module.bootstrap.js');
       expect(embedMainModule.statusCode, io.HttpStatus.ok);
+      expect(embedMainModule.headers['cache-control'], 'no-cache');
       final String moduleBootstrap = await embedMainModule.readAsString();
       expect(moduleBootstrap, contains('"id":"packages/my_app/main.dart"'));
       expect(moduleBootstrap, contains('"id":"web_entrypoint.dart"'));
@@ -396,6 +397,7 @@ void main() {
           final shelf.Response live = await request(livePath);
           expect(live.statusCode, io.HttpStatus.ok);
           expect(live.headers['cross-origin-resource-policy'], 'same-site');
+          expect(live.headers['cache-control'], 'no-cache');
           final String liveHtml = await live.readAsString();
           expect(liveHtml, contains('__embed_flutter_bootstrap.js'));
           expect(liveHtml, contains('id="wp-live-bg"'));
@@ -438,6 +440,7 @@ void main() {
         expect(unchanged.statusCode, io.HttpStatus.ok);
         expect(jsonDecode(await unchanged.readAsString()), <String, Object?>{
           'revision': initialRevision,
+          'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
           'modules': const <Object?>[],
         });
 
@@ -472,6 +475,7 @@ void main() {
         expect(delta.statusCode, io.HttpStatus.ok);
         expect(jsonDecode(await delta.readAsString()), <String, Object?>{
           'revision': updatedRevision,
+          'scaffoldStream': dtdServices.widgetPreviewScaffoldStream,
           'modules': <Map<String, Object?>>[
             <String, Object?>{
               'src': 'packages/my_app/main.dart.lib.js?rev=$updatedRevision',
