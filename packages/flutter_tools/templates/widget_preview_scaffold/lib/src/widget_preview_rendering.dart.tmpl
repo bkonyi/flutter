@@ -673,8 +673,6 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
         },
       );
 
-      final Size? size = widget.preview.size;
-
       // Add support for selecting only previewed widgets via the widget
       // inspector.
       preview = ValueListenableBuilder(
@@ -682,28 +680,25 @@ class WidgetPreviewWidgetState extends State<WidgetPreviewWidget> {
             WidgetsBinding.instance.debugShowWidgetInspectorOverrideNotifier,
         builder: (context, enableWidgetInspector, child) {
           // Don't allow inspecting the error widget.
-          if (child is WidgetPreviewErrorWidget) {
-            return child;
+          if (child is WidgetPreviewErrorWidget || !enableWidgetInspector) {
+            return child!;
           }
-          if (enableWidgetInspector) {
-            return WidgetInspector(
-              // TODO(bkonyi): wire up inspector controls for individual previews or
-              // the entire preview environment. This currently requires users to
-              // to enable widget selection via the Widget Inspector tool in DevTools.
+          return WidgetInspector(
+            // TODO(bkonyi): wire up inspector controls for individual previews or
+            // the entire preview environment. This currently requires users to
+            // to enable widget selection via the Widget Inspector tool in DevTools.
 
-              // These buttons would be rendered on top of the previewed widget, so
-              // don't display them.
-              exitWidgetSelectionButtonBuilder: null,
-              moveExitWidgetSelectionButtonBuilder: null,
-              tapBehaviorButtonBuilder: null,
-              child: child!,
-            );
-          }
-          return child!;
+            // These buttons would be rendered on top of the previewed widget, so
+            // don't display them.
+            exitWidgetSelectionButtonBuilder: null,
+            moveExitWidgetSelectionButtonBuilder: null,
+            tapBehaviorButtonBuilder: null,
+            child: child!,
+          );
         },
         child: SizedBox(
-          width: size?.width == double.infinity ? null : size?.width,
-          height: size?.height == double.infinity ? null : size?.height,
+          width: widget.preview.finiteWidth,
+          height: widget.preview.finiteHeight,
           child: WidgetPreviewWrapper(
             previewerConstraints: maxSizeConstraints,
             onLayoutError: _handleLayoutError,
@@ -866,6 +861,26 @@ class WidgetPreviewTheming extends StatelessWidget {
   }
 }
 
+MediaQueryData _applyPreviewMediaQueryOverrides({
+  required MediaQueryData base,
+  required Brightness brightness,
+  double? height,
+  double? pixelRatio,
+  double? textScaleFactor,
+  double? width,
+}) {
+  return base.copyWith(
+    devicePixelRatio: pixelRatio,
+    platformBrightness: brightness,
+    size: width != null || height != null
+        ? Size(width ?? base.size.width, height ?? base.size.height)
+        : null,
+    textScaler: textScaleFactor != null
+        ? TextScaler.linear(textScaleFactor)
+        : null,
+  );
+}
+
 /// Wraps the previewed [child] with the correct [MediaQueryData] overrides
 /// based on [preview] and the current device [Brightness].
 class WidgetPreviewMediaQueryOverride extends StatelessWidget {
@@ -888,11 +903,14 @@ class WidgetPreviewMediaQueryOverride extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Brightness>(
       valueListenable: brightnessListenable,
-      builder: (context, brightness, _) {
+      builder: (BuildContext context, Brightness brightness, _) {
         return MediaQuery(
-          data: _buildMediaQueryOverride(
-            context: context,
+          data: _applyPreviewMediaQueryOverrides(
+            base: MediaQuery.of(context),
             brightness: brightness,
+            height: preview.finiteHeight,
+            textScaleFactor: preview.finiteTextScaleFactor,
+            width: preview.finiteWidth,
           ),
           // Use mediaQueryPreview instead of preview to avoid capturing preview
           // and creating an infinite loop.
@@ -900,36 +918,6 @@ class WidgetPreviewMediaQueryOverride extends StatelessWidget {
         );
       },
     );
-  }
-
-  MediaQueryData _buildMediaQueryOverride({
-    required BuildContext context,
-    required Brightness brightness,
-  }) {
-    var mediaQueryData = MediaQuery.of(
-      context,
-    ).copyWith(platformBrightness: brightness);
-
-    if (preview.textScaleFactor != null) {
-      mediaQueryData = mediaQueryData.copyWith(
-        textScaler: TextScaler.linear(preview.textScaleFactor!),
-      );
-    }
-
-    if (preview.size case final Size previewSize) {
-      mediaQueryData = mediaQueryData.copyWith(
-        size: Size(
-          previewSize.width.isFinite
-              ? previewSize.width
-              : mediaQueryData.size.width,
-          previewSize.height.isFinite
-              ? previewSize.height
-              : mediaQueryData.size.height,
-        ),
-      );
-    }
-
-    return mediaQueryData;
   }
 }
 
@@ -2331,32 +2319,28 @@ void _auditRenderedSubtree(
   root.visitChildren(visit);
 }
 
-bool _hasDescendantRenderErrorBox(RenderObject root) {
-  if (root is RenderErrorBox) {
+bool _anyRenderObject(RenderObject root, bool Function(RenderObject) test) {
+  if (test(root)) {
     return true;
   }
   var found = false;
   root.visitChildren((RenderObject child) {
-    if (!found && _hasDescendantRenderErrorBox(child)) {
+    if (!found && _anyRenderObject(child, test)) {
       found = true;
     }
   });
   return found;
 }
 
-bool _hasOverflowingRenderFlex(RenderObject root) {
-  if (root is RenderFlex &&
-      root.toStringShort().endsWith(kOverflowingRenderFlexSuffix)) {
-    return true;
-  }
-  var found = false;
-  root.visitChildren((RenderObject child) {
-    if (!found && _hasOverflowingRenderFlex(child)) {
-      found = true;
-    }
-  });
-  return found;
-}
+bool _hasDescendantRenderErrorBox(RenderObject root) =>
+    _anyRenderObject(root, (RenderObject node) => node is RenderErrorBox);
+
+bool _hasOverflowingRenderFlex(RenderObject root) => _anyRenderObject(
+  root,
+  (RenderObject node) =>
+      node is RenderFlex &&
+      node.toStringShort().endsWith(kOverflowingRenderFlexSuffix),
+);
 
 bool _isBuildPhaseError(FlutterErrorDetails details) {
   final String? contextDescription = details.context?.toDescription();
@@ -2480,22 +2464,14 @@ class WidgetPreviewEnvironment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    MediaQueryData mediaQueryData = MediaQuery.of(
-      context,
-    ).copyWith(devicePixelRatio: pixelRatio, platformBrightness: brightness);
-    if (textScaleFactor != null) {
-      mediaQueryData = mediaQueryData.copyWith(
-        textScaler: TextScaler.linear(textScaleFactor!),
-      );
-    }
-    if (width != null || height != null) {
-      mediaQueryData = mediaQueryData.copyWith(
-        size: Size(
-          width ?? mediaQueryData.size.width,
-          height ?? mediaQueryData.size.height,
-        ),
-      );
-    }
+    final MediaQueryData mediaQueryData = _applyPreviewMediaQueryOverrides(
+      base: MediaQuery.of(context),
+      brightness: brightness,
+      height: height,
+      pixelRatio: pixelRatio,
+      textScaleFactor: textScaleFactor,
+      width: width,
+    );
     final ThemeData baseTheme = brightness == Brightness.dark
         ? ThemeData.dark()
         : ThemeData.light();
@@ -2529,18 +2505,10 @@ class _StagedPreviewHost extends StatelessWidget {
         request.brightness ??
         preview.brightness ??
         MediaQuery.platformBrightnessOf(context);
-    final double? previewWidth = switch (preview.size?.width) {
-      final double w when w.isFinite => w,
-      _ => null,
-    };
-    final double? previewHeight = switch (preview.size?.height) {
-      final double h when h.isFinite => h,
-      _ => null,
-    };
-    final double? constrainedWidth = request.width ?? previewWidth;
-    final double? constrainedHeight = request.height ?? previewHeight;
+    final double? constrainedWidth = request.width ?? preview.finiteWidth;
+    final double? constrainedHeight = request.height ?? preview.finiteHeight;
     final double? resolvedTextScaleFactor = switch (request.textScaleFactor ??
-        preview.textScaleFactor) {
+        preview.finiteTextScaleFactor) {
       final double scale when scale.isFinite => scale,
       _ => null,
     };

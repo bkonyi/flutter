@@ -14,15 +14,16 @@ export '_url_stub.dart' if (dart.library.js_interop) '_url_web.dart';
 
 const _kZoomPrecisionScale = 10000.0;
 
+String? _nonEmpty(String? value) =>
+    value != null && value.isNotEmpty ? value : null;
+
 /// Parses URL fragment key/value pairs using query-string decoding after
 /// stripping any leading `'#'`, `'/'`, or `'?'` characters.
 Map<String, String> parseFragmentParameters(String fragment) {
-  var normalized = fragment.trim();
-  while (normalized.startsWith('#') ||
-      normalized.startsWith('/') ||
-      normalized.startsWith('?')) {
-    normalized = normalized.substring(1);
-  }
+  final String normalized = fragment.trim().replaceFirst(
+    RegExp(r'^[#/?]+'),
+    '',
+  );
   if (normalized.isEmpty) {
     return const <String, String>{};
   }
@@ -39,10 +40,9 @@ Map<String, String> parseFragmentParameters(String fragment) {
 String formatEmbedZoom(double zoom) {
   final double rounded =
       (zoom * _kZoomPrecisionScale).roundToDouble() / _kZoomPrecisionScale;
-  if (rounded == rounded.truncateToDouble()) {
-    return rounded.toInt().toString();
-  }
-  return rounded.toString();
+  return rounded == rounded.truncateToDouble()
+      ? rounded.toInt().toString()
+      : rounded.toString();
 }
 
 /// Returns [fragment] updated with [EmbedPreviewParams.kZoomParam] set to
@@ -75,9 +75,6 @@ const _kManagedEmbedQueryKeys = <String>{
 /// parameters stripped from `queryParameters`, while preserving host query
 /// parameters (such as `token`, `root`, or `conversationId`).
 Uri buildSanitizedEmbedUri(Uri currentUri, String fragment) {
-  final String normalized = fragment.startsWith('#')
-      ? fragment.substring(1)
-      : fragment;
   final preservedQuery = <String, List<String>>{
     for (final MapEntry(:String key, :List<String> value)
         in currentUri.queryParametersAll.entries)
@@ -90,7 +87,7 @@ Uri buildSanitizedEmbedUri(Uri currentUri, String fragment) {
     port: currentUri.hasPort ? currentUri.port : null,
     path: currentUri.path,
     queryParameters: preservedQuery.isEmpty ? null : preservedQuery,
-    fragment: normalized,
+    fragment: fragment.startsWith('#') ? fragment.substring(1) : fragment,
   );
 }
 
@@ -106,15 +103,12 @@ Uri resolveLiveRootUri(Uri baseUri) {
     final int lastSlash = path.lastIndexOf('/');
     path = lastSlash >= 0 ? path.substring(0, lastSlash + 1) : '/';
   }
-  if (path.isEmpty) {
-    path = '/';
-  }
   return Uri(
     scheme: baseUri.scheme,
     userInfo: baseUri.userInfo,
     host: baseUri.host,
     port: baseUri.hasPort ? baseUri.port : null,
-    path: path,
+    path: path.isEmpty ? '/' : path,
   );
 }
 
@@ -135,12 +129,8 @@ class EmbedPreviewParams {
     this.zoom,
   });
 
-  factory EmbedPreviewParams.fromCurrentUrl() {
-    return EmbedPreviewParams.fromFragment(
-      getUrlFragment(),
-      baseUri: getBaseUri(),
-    );
-  }
+  factory EmbedPreviewParams.fromCurrentUrl() =>
+      EmbedPreviewParams.fromFragment(getUrlFragment(), baseUri: getBaseUri());
 
   factory EmbedPreviewParams.parse(String fragment) =
       EmbedPreviewParams.fromFragment;
@@ -150,29 +140,26 @@ class EmbedPreviewParams {
       ...?baseUri?.queryParameters,
       ...parseFragmentParameters(fragment),
     };
-    final String? rawPreviewId = params[kPreviewIdParam];
-    final String? previewId = rawPreviewId != null && rawPreviewId.isNotEmpty
-        ? rawPreviewId
-        : null;
-    final String? rawDtdProxy = params[kDtdProxyParam];
-    final String? dtdProxy = rawDtdProxy != null && rawDtdProxy.isNotEmpty
-        ? rawDtdProxy
-        : null;
     final bool showControls =
-        params[kLiveParam] == kLiveEnabledValue ||
-        params[kLiveParam]?.toLowerCase() == _kTrueValue ||
+        _isTruthyParam(params[kLiveParam], kLiveEnabledValue) ||
         (baseUri != null && isLiveUriPath(baseUri));
     return EmbedPreviewParams(
-      brightness: _parseBrightness(params[kBrightnessParam]),
-      dtdProxy: dtdProxy,
+      brightness: switch (params[kBrightnessParam]) {
+        kLightBrightness => Brightness.light,
+        kDarkBrightness => Brightness.dark,
+        _ => null,
+      },
+      dtdProxy: _nonEmpty(params[kDtdProxyParam]),
       height: _parsePositiveFiniteDouble(params[kHeightParam]),
       isEmbed: params[kEmbedParam] == kEmbedEnabledValue || showControls,
-      previewId: previewId,
-      selectMode: _parseSelectMode(params[kSelectParam]),
+      previewId: _nonEmpty(params[kPreviewIdParam]),
+      selectMode: _isTruthyParam(params[kSelectParam], kSelectEnabledValue),
       showControls: showControls,
       textScale: _parsePositiveFiniteDouble(params[kTextScaleParam]),
       width: _parsePositiveFiniteDouble(params[kWidthParam]),
-      zoom: _parseZoom(params[kZoomParam]),
+      zoom: _parsePositiveFiniteDouble(
+        params[kZoomParam],
+      )?.clamp(kMinZoom, kMaxZoom),
     );
   }
 
@@ -233,6 +220,7 @@ class EmbedPreviewParams {
     bool clearHeight = false,
     bool clearPreviewId = false,
     bool clearWidth = false,
+    bool clearZoom = false,
     String? dtdProxy,
     double? height,
     bool? isEmbed,
@@ -242,20 +230,18 @@ class EmbedPreviewParams {
     double? textScale,
     double? width,
     double? zoom,
-  }) {
-    return EmbedPreviewParams(
-      brightness: clearBrightness ? null : (brightness ?? this.brightness),
-      dtdProxy: dtdProxy ?? this.dtdProxy,
-      height: clearHeight ? null : (height ?? this.height),
-      isEmbed: isEmbed ?? this.isEmbed,
-      previewId: clearPreviewId ? null : (previewId ?? this.previewId),
-      selectMode: selectMode ?? this.selectMode,
-      showControls: showControls ?? this.showControls,
-      textScale: textScale ?? this.textScale,
-      width: clearWidth ? null : (width ?? this.width),
-      zoom: zoom ?? this.zoom,
-    );
-  }
+  }) => EmbedPreviewParams(
+    brightness: clearBrightness ? null : (brightness ?? this.brightness),
+    dtdProxy: dtdProxy ?? this.dtdProxy,
+    height: clearHeight ? null : (height ?? this.height),
+    isEmbed: isEmbed ?? this.isEmbed,
+    previewId: clearPreviewId ? null : (previewId ?? this.previewId),
+    selectMode: selectMode ?? this.selectMode,
+    showControls: showControls ?? this.showControls,
+    textScale: textScale ?? this.textScale,
+    width: clearWidth ? null : (width ?? this.width),
+    zoom: clearZoom ? null : (zoom ?? this.zoom),
+  );
 
   /// Serializes this configuration into a canonical URL fragment query string
   /// without a leading `'#'`.
@@ -264,50 +250,28 @@ class EmbedPreviewParams {
       if (isEmbed) kEmbedParam: kEmbedEnabledValue,
       if (showControls && (baseUri == null || !isLiveUriPath(baseUri)))
         kLiveParam: kLiveEnabledValue,
-      if (previewId case final String id when id.isNotEmpty)
-        kPreviewIdParam: id,
-      if (brightness case final Brightness resolvedBrightness)
-        kBrightnessParam: resolvedBrightness == Brightness.dark
+      if (_nonEmpty(previewId) case final String id) kPreviewIdParam: id,
+      if (brightness case final Brightness b)
+        kBrightnessParam: b == Brightness.dark
             ? kDarkBrightness
             : kLightBrightness,
-      if (width case final double resolvedWidth)
-        kWidthParam: formatEmbedZoom(resolvedWidth),
-      if (height case final double resolvedHeight)
-        kHeightParam: formatEmbedZoom(resolvedHeight),
-      if (textScale case final double resolvedTextScale)
-        kTextScaleParam: formatEmbedZoom(resolvedTextScale),
-      if (zoom case final double resolvedZoom
-          when (resolvedZoom - kDefaultZoom).abs() > kZoomEpsilon)
-        kZoomParam: formatEmbedZoom(resolvedZoom),
+      if (width case final double w) kWidthParam: formatEmbedZoom(w),
+      if (height case final double h) kHeightParam: formatEmbedZoom(h),
+      if (textScale case final double s) kTextScaleParam: formatEmbedZoom(s),
+      if (zoom case final double z when (z - kDefaultZoom).abs() > kZoomEpsilon)
+        kZoomParam: formatEmbedZoom(z),
       if (selectMode) kSelectParam: kSelectEnabledValue,
-      if (dtdProxy case final String proxy when proxy.isNotEmpty)
-        kDtdProxyParam: proxy,
+      if (_nonEmpty(dtdProxy) case final String proxy) kDtdProxyParam: proxy,
     };
-    if (queryParams.isEmpty) {
-      return '';
-    }
-    return Uri(queryParameters: queryParams).query;
+    return queryParams.isEmpty ? '' : Uri(queryParameters: queryParams).query;
   }
 
   /// Returns a copy of this configuration with [zoom] clamped to
   /// `[kMinZoom, kMaxZoom]`, or cleared to `null` when at [kDefaultZoom].
   EmbedPreviewParams withZoom(double nextZoom) {
     final double clamped = nextZoom.clamp(kMinZoom, kMaxZoom);
-    final double? normalized = (clamped - kDefaultZoom).abs() <= kZoomEpsilon
-        ? null
-        : clamped;
-    return EmbedPreviewParams(
-      brightness: brightness,
-      dtdProxy: dtdProxy,
-      height: height,
-      isEmbed: isEmbed,
-      previewId: previewId,
-      selectMode: selectMode,
-      showControls: showControls,
-      textScale: textScale,
-      width: width,
-      zoom: normalized,
-    );
+    final bool isDefault = (clamped - kDefaultZoom).abs() <= kZoomEpsilon;
+    return copyWith(zoom: clamped, clearZoom: isDefault);
   }
 
   /// Resolves [dtdProxy] (or [kDefaultDtdProxyPath] when [isEmbed] is `true`)
@@ -322,8 +286,7 @@ class EmbedPreviewParams {
     final String wsScheme = baseUri.scheme == kHttpsScheme
         ? kWssScheme
         : kWsScheme;
-    final String? proxy = dtdProxy;
-    if (proxy != null && proxy.isNotEmpty) {
+    if (_nonEmpty(dtdProxy) case final String proxy) {
       final String normalizedPath = proxy.startsWith('/') ? proxy : '/$proxy';
       return Uri.parse('$wsScheme://${baseUri.authority}$normalizedPath');
     }
@@ -335,36 +298,18 @@ class EmbedPreviewParams {
     ).resolve(kDefaultDtdProxyPath).replace(scheme: wsScheme);
   }
 
-  static Brightness? _parseBrightness(String? value) => switch (value) {
-    kLightBrightness => Brightness.light,
-    kDarkBrightness => Brightness.dark,
-    _ => null,
-  };
-
-  static bool _parseSelectMode(String? value) =>
-      value == kSelectEnabledValue || value?.toLowerCase() == _kTrueValue;
+  static bool _isTruthyParam(String? value, String enabledValue) =>
+      value == enabledValue || value?.toLowerCase() == _kTrueValue;
 
   static double? _parsePositiveFiniteDouble(String? value) {
     if (value == null || value.isEmpty) {
       return null;
     }
     final double? parsed = double.tryParse(value);
-    if (parsed == null || !parsed.isFinite || parsed <= 0) {
-      return null;
-    }
-    return parsed;
+    return parsed != null && parsed.isFinite && parsed > 0 ? parsed : null;
   }
 
-  static double? _parseZoom(String? value) {
-    final double? parsed = _parsePositiveFiniteDouble(value);
-    if (parsed == null) {
-      return null;
-    }
-    return parsed.clamp(kMinZoom, kMaxZoom);
-  }
-
-  @override
-  int get hashCode => Object.hash(
+  Object get _equalityKey => (
     brightness,
     dtdProxy,
     height,
@@ -378,18 +323,9 @@ class EmbedPreviewParams {
   );
 
   @override
-  bool operator ==(Object other) {
-    return other is EmbedPreviewParams &&
-        other.runtimeType == EmbedPreviewParams &&
-        brightness == other.brightness &&
-        dtdProxy == other.dtdProxy &&
-        height == other.height &&
-        isEmbed == other.isEmbed &&
-        previewId == other.previewId &&
-        selectMode == other.selectMode &&
-        showControls == other.showControls &&
-        textScale == other.textScale &&
-        width == other.width &&
-        zoom == other.zoom;
-  }
+  int get hashCode => _equalityKey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EmbedPreviewParams && _equalityKey == other._equalityKey;
 }

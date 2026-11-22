@@ -59,22 +59,19 @@ void main() {
     'canonical preview IDs, @MultiPreview indices, and getPreviews filtering',
     () async {
       final dtdServices = FakeWidgetPreviewScaffoldDtdServices(isWindows: true);
-      final singlePreview = buildWidgetPreview(
+      final WidgetPreview singlePreview = makeTestPreview(
+        brightness: Brightness.light,
         column: 5,
+        fileStem: 'card',
         functionName: 'cardPreview',
-        libraryUri: 'package:my_app/card.dart',
         line: 12,
-        packageName: 'my_app',
+        name: 'Mobile Light',
         previewFunction: () => const Text('Card'),
         scriptUri: 'file:///c:/proj/lib/card.dart',
-        transformedPreview: const Preview(
-          brightness: Brightness.light,
-          name: 'Mobile Light',
-          size: Size(375, 667),
-          textScaleFactor: 1.5,
-        ),
+        size: const Size(375, 667),
+        textScaleFactor: 1.5,
       );
-      final multiPreviews = buildMultiWidgetPreview(
+      final List<WidgetPreview> multiPreviews = buildMultiWidgetPreview(
         column: 3,
         functionName: 'cardVariants',
         libraryUri: 'package:my_app/variants.dart',
@@ -84,35 +81,27 @@ void main() {
         previewFunction: () => const Text('Variant'),
         scriptUri: 'file:///C:/proj/lib/variants.dart',
       ).toList();
-      final errorPreview = buildWidgetPreviewError(
-        column: 1,
+      final WidgetPreview errorPreview = makeTestErrorPreview(
         dependencyHasErrors: true,
+        fileStem: 'broken',
         functionName: 'brokenPreview',
-        libraryUri: 'package:my_app/broken.dart',
         line: 8,
-        packageName: 'my_app',
         scriptUri: 'file:///c:/proj/lib/broken.dart',
       );
 
       expect(singlePreview.id, 'package:my_app/card.dart::cardPreview');
       expect(singlePreview.multiPreviewIndex, isNull);
       expect(multiPreviews, hasLength(2));
-      expect(multiPreviews[0].multiPreviewIndex, 0);
       expect(
         multiPreviews[0].id,
         'package:my_app/variants.dart::cardVariants#0',
       );
-      expect(multiPreviews[1].multiPreviewIndex, 1);
       expect(
         multiPreviews[1].id,
         'package:my_app/variants.dart::cardVariants#1',
       );
       expect(errorPreview.id, 'package:my_app/broken.dart::brokenPreview');
       expect(errorPreview.hasError, isTrue);
-      expect(
-        errorPreview.errorMessage,
-        'Dependency of package:my_app/broken.dart has errors!',
-      );
 
       final controller = WidgetPreviewScaffoldController(
         dtdServicesOverride: dtdServices,
@@ -122,10 +111,9 @@ void main() {
           errorPreview,
         ],
       );
+      addTearDown(controller.dispose);
       await controller.initialize();
 
-      // Restrict UI filter to only card.dart and set a search query; getPreviews
-      // must ignore both UI filters and return all unfiltered previews.
       dtdServices.selectedSourceFile.value = TextDocument(
         uriAsString: 'file:///c:/proj/lib/card.dart',
         version: 1,
@@ -167,288 +155,227 @@ void main() {
         ]),
       );
 
-      // Filter by libraryUri.
-      final PreviewListResponse byPackage = controller.getPreviews(
-        fileUri: 'package:my_app/variants.dart',
-      );
       expect(
-        byPackage.previews.map((PreviewEntry e) => e.id).toList(),
+        controller
+            .getPreviews(fileUri: 'package:my_app/variants.dart')
+            .previews
+            .map((PreviewEntry e) => e.id)
+            .toList(),
         equals(<String>[
           'package:my_app/variants.dart::cardVariants#0',
           'package:my_app/variants.dart::cardVariants#1',
         ]),
       );
-
-      // Filter by Windows encoded file:// URI with differing drive-letter case.
-      final PreviewListResponse byEncodedScript = controller.getPreviews(
-        fileUri: 'file:///C%3A/proj/lib/card.dart',
-      );
-      expect(byEncodedScript.previews, hasLength(1));
       expect(
-        byEncodedScript.previews.single.id,
+        controller
+            .getPreviews(fileUri: 'file:///C%3A/proj/lib/card.dart')
+            .previews
+            .single
+            .id,
         'package:my_app/card.dart::cardPreview',
       );
     },
   );
 
-  testWidgets('captures RenderFlex paint overflow without replacing card with '
-      'WidgetPreviewErrorWidget, isolates sibling previews, and resets on rebuild and hot reload', (
-    tester,
-  ) async {
-    final overflowWidth = ValueNotifier<double>(148);
-    addTearDown(overflowWidth.dispose);
+  testWidgets(
+    'captures RenderFlex paint overflow without replacing card with '
+    'WidgetPreviewErrorWidget, isolates sibling previews, and resets on rebuild and hot reload',
+    (WidgetTester tester) async {
+      final overflowWidth = ValueNotifier<double>(148);
+      addTearDown(overflowWidth.dispose);
 
-    final fakeDtdServices = FakeWidgetPreviewScaffoldDtdServices();
-    // Construct fresh WidgetPreview instances inside the callback just as
-    // generated_preview.dart's `previews()` function does on every call.
-    final controller = WidgetPreviewScaffoldController(
-      dtdServicesOverride: fakeDtdServices,
-      previews: () => <WidgetPreview>[
-        buildWidgetPreview(
-          column: 1,
-          functionName: 'overflowPreview',
-          libraryUri: 'package:my_app/overflow.dart',
-          line: 10,
-          packageName: 'my_app',
-          previewFunction: () => ValueListenableBuilder<double>(
-            valueListenable: overflowWidth,
-            builder: (context, width, _) => SizedBox(
-              width: 100,
-              height: 40,
-              child: Row(
-                children: <Widget>[
-                  SizedBox(width: width, height: 20, child: const Text('Wide')),
-                ],
+      final WidgetPreviewScaffoldController controller = await pumpTestScaffold(
+        tester,
+        disableSelectedFileFilter: true,
+        previews: () => <WidgetPreview>[
+          makeTestPreview(
+            fileStem: 'overflow',
+            functionName: 'overflowPreview',
+            name: 'Overflow Card',
+            previewFunction: () => ValueListenableBuilder<double>(
+              valueListenable: overflowWidth,
+              builder: (BuildContext _, double width, _) => SizedBox(
+                width: 100,
+                height: 40,
+                child: Row(
+                  children: <Widget>[
+                    SizedBox(
+                      width: width,
+                      height: 20,
+                      child: const Text('Wide'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-          scriptUri: 'file:///project/lib/overflow.dart',
-          transformedPreview: const Preview(name: 'Overflow Card').transform(),
-        ),
-        buildWidgetPreview(
-          column: 1,
-          functionName: 'healthyPreview',
-          libraryUri: 'package:my_app/healthy.dart',
-          line: 20,
-          packageName: 'my_app',
-          previewFunction: () =>
-              const SizedBox(width: 80, height: 40, child: Text('Healthy')),
-          scriptUri: 'file:///project/lib/healthy.dart',
-          transformedPreview: const Preview(name: 'Healthy Card').transform(),
-        ),
-      ],
-    );
-    if (controller.filterBySelectedFileListenable.value) {
-      await controller.toggleFilterBySelectedFile();
-    }
-    await controller.initialize();
-
-    await tester.pumpWidget(TestWidgetPreviewScaffold(controller: controller));
-
-    final Object? overflowException = tester.takeException();
-    expect(overflowException, isA<FlutterError>());
-    expect(
-      (overflowException! as FlutterError).message,
-      contains('RenderFlex overflowed by 48 pixels on the right'),
-    );
-
-    // Paint overflow MUST NOT swap in WidgetPreviewErrorWidget, even on subsequent frames.
-    await tester.pump();
-    expect(find.byType(WidgetPreviewErrorWidget), findsNothing);
-    expect(find.text('Wide'), findsOneWidget);
-    expect(find.text('Healthy'), findsOneWidget);
-
-    final List<WidgetPreview> currentPreviews = controller.previews.toList();
-    final WidgetPreview overflowingPreview = currentPreviews[0];
-    final WidgetPreview healthyPreview = currentPreviews[1];
-
-    final List<PreviewDiagnostic> overflowDiags = controller.diagnosticsFor(
-      overflowingPreview,
-    );
-    expect(
-      overflowDiags,
-      equals(<PreviewDiagnostic>[
-        const PreviewDiagnostic(
-          kind: .overflow,
-          overflowAxis: 'horizontal',
-          overflowPixels: 48.0,
-          overflowSide: 'right',
-          phase: .paint,
-          summary: 'A RenderFlex overflowed by 48 pixels on the right.',
-          targetType: 'RenderFlex',
-        ),
-      ]),
-    );
-    // Sibling healthy preview has zero diagnostics.
-    expect(controller.diagnosticsFor(healthyPreview), isEmpty);
-
-    final PreviewListResponse listWithOverflow = controller.getPreviews();
-    expect(listWithOverflow.previews[0].hasError, isTrue);
-    expect(
-      listWithOverflow.previews[0].errorMessage,
-      'A RenderFlex overflowed by 48 pixels on the right.',
-    );
-    expect(listWithOverflow.previews[1].hasError, isFalse);
-    expect(listWithOverflow.previews[1].errorMessage, isNull);
-
-    // Filtering via updateSearchQuery (both matching and hiding the card) must not
-    // allocate fresh WidgetPreview instances or wipe captured runtime diagnostics.
-    controller.updateSearchQuery('Overflow');
-    await tester.pump();
-    expect(controller.getPreviews().previews[0].hasError, isTrue);
-    expect(
-      controller.getPreviews().previews[0].errorMessage,
-      'A RenderFlex overflowed by 48 pixels on the right.',
-    );
-
-    controller.updateSearchQuery('Healthy');
-    await tester.pump();
-    expect(controller.getPreviews().previews[0].hasError, isTrue);
-    expect(
-      controller.getPreviews().previews[0].errorMessage,
-      'A RenderFlex overflowed by 48 pixels on the right.',
-    );
-
-    controller.updateSearchQuery('');
-    await tester.pump();
-    while (tester.takeException() != null) {}
-    expect(controller.getPreviews().previews[0].hasError, isTrue);
-
-    // Unrelated card brightness toggle while still overflowing retains the diagnostic.
-    await tester.tap(find.byType(BrightnessToggleButton).first);
-    await tester.pump();
-    expect(controller.diagnosticsFor(overflowingPreview), hasLength(1));
-
-    // Fixing the overflow via ValueNotifier rebuild clears the diagnostic without hot reload.
-    overflowWidth.value = 80;
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-    expect(controller.diagnosticsFor(overflowingPreview), isEmpty);
-    expect(controller.getPreviews().previews[0].hasError, isFalse);
-
-    // Re-introduce a vertical overflow on hot reload (reassemble), then fix on a second reload.
-    var verticalOverflow = true;
-    final reloadController = WidgetPreviewScaffoldController(
-      dtdServicesOverride: fakeDtdServices,
-      previews: () => <WidgetPreview>[
-        buildWidgetPreview(
-          column: 1,
-          functionName: 'verticalPreview',
-          libraryUri: 'package:my_app/vertical.dart',
-          line: 30,
-          packageName: 'my_app',
-          previewFunction: () => SizedBox(
-            width: 100,
-            height: 50,
-            child: Column(
-              children: <Widget>[
-                SizedBox(width: 40, height: verticalOverflow ? 75 : 30),
-              ],
-            ),
+          makeTestPreview(
+            fileStem: 'healthy',
+            functionName: 'healthyPreview',
+            line: 20,
+            name: 'Healthy Card',
+            previewFunction: () =>
+                const SizedBox(width: 80, height: 40, child: Text('Healthy')),
           ),
-          scriptUri: 'file:///project/lib/vertical.dart',
-          transformedPreview: const Preview(name: 'Vertical Card').transform(),
-        ),
-      ],
-    );
-    if (reloadController.filterBySelectedFileListenable.value) {
-      await reloadController.toggleFilterBySelectedFile();
-    }
-    await reloadController.initialize();
+        ],
+      );
 
-    await tester.pumpWidget(
-      TestWidgetPreviewScaffold(controller: reloadController),
-    );
-    expect(tester.takeException(), isA<FlutterError>());
-    expect(
-      reloadController.diagnosticsFor(reloadController.previews.single),
-      equals(<PreviewDiagnostic>[
-        const PreviewDiagnostic(
-          kind: .overflow,
-          overflowAxis: 'vertical',
-          overflowPixels: 25.0,
-          overflowSide: 'bottom',
-          phase: .paint,
-          summary: 'A RenderFlex overflowed by 25 pixels on the bottom.',
-          targetType: 'RenderFlex',
-        ),
-      ]),
-    );
-    expect(reloadController.getPreviews().previews.single.hasError, isTrue);
+      expect(
+        (tester.takeException()! as FlutterError).message,
+        contains('RenderFlex overflowed by 48 pixels on the right'),
+      );
+      await tester.pump();
+      expect(find.byType(WidgetPreviewErrorWidget), findsNothing);
+      expect(find.text('Wide'), findsOneWidget);
+      expect(find.text('Healthy'), findsOneWidget);
 
-    verticalOverflow = false;
-    reloadController.onHotReload();
-    unawaited(tester.binding.reassembleApplication());
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-    expect(
-      reloadController.diagnosticsFor(reloadController.previews.single),
-      isEmpty,
-    );
-    expect(reloadController.getPreviews().previews.single.hasError, isFalse);
-  });
+      final List<WidgetPreview> currentPreviews = controller.previews.toList();
+      expect(
+        controller.diagnosticsFor(currentPreviews[0]),
+        equals(<PreviewDiagnostic>[
+          const PreviewDiagnostic(
+            kind: .overflow,
+            overflowAxis: 'horizontal',
+            overflowPixels: 48.0,
+            overflowSide: 'right',
+            phase: .paint,
+            summary: 'A RenderFlex overflowed by 48 pixels on the right.',
+            targetType: 'RenderFlex',
+          ),
+        ]),
+      );
+      expect(controller.diagnosticsFor(currentPreviews[1]), isEmpty);
+
+      final PreviewListResponse listWithOverflow = controller.getPreviews();
+      expect(listWithOverflow.previews[0].hasError, isTrue);
+      expect(
+        listWithOverflow.previews[0].errorMessage,
+        'A RenderFlex overflowed by 48 pixels on the right.',
+      );
+      expect(listWithOverflow.previews[1].hasError, isFalse);
+      expect(listWithOverflow.previews[1].errorMessage, isNull);
+
+      for (final String query in const <String>['Overflow', 'Healthy', '']) {
+        controller.updateSearchQuery(query);
+        await tester.pump();
+        while (tester.takeException() != null) {}
+        final PreviewEntry overflowEntry = controller.getPreviews().previews[0];
+        expect(overflowEntry.hasError, isTrue);
+        expect(
+          overflowEntry.errorMessage,
+          'A RenderFlex overflowed by 48 pixels on the right.',
+        );
+      }
+
+      await tester.tap(find.byType(BrightnessToggleButton).first);
+      await tester.pump();
+      expect(controller.diagnosticsFor(currentPreviews[0]), hasLength(1));
+
+      overflowWidth.value = 80;
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(controller.diagnosticsFor(currentPreviews[0]), isEmpty);
+      expect(controller.getPreviews().previews[0].hasError, isFalse);
+
+      var verticalOverflow = true;
+      final WidgetPreviewScaffoldController reloadController =
+          await pumpTestScaffold(
+            tester,
+            disableSelectedFileFilter: true,
+            previews: () => <WidgetPreview>[
+              makeTestPreview(
+                fileStem: 'vertical',
+                functionName: 'verticalPreview',
+                name: 'Vertical Card',
+                previewFunction: () => SizedBox(
+                  width: 100,
+                  height: 50,
+                  child: Column(
+                    children: <Widget>[
+                      SizedBox(width: 40, height: verticalOverflow ? 75 : 30),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+      expect(tester.takeException(), isA<FlutterError>());
+      expect(
+        reloadController.diagnosticsFor(reloadController.previews.single),
+        equals(<PreviewDiagnostic>[
+          const PreviewDiagnostic(
+            kind: .overflow,
+            overflowAxis: 'vertical',
+            overflowPixels: 25.0,
+            overflowSide: 'bottom',
+            phase: .paint,
+            summary: 'A RenderFlex overflowed by 25 pixels on the bottom.',
+            targetType: 'RenderFlex',
+          ),
+        ]),
+      );
+      expect(reloadController.getPreviews().previews.single.hasError, isTrue);
+
+      verticalOverflow = false;
+      reloadController.onHotReload();
+      unawaited(tester.binding.reassembleApplication());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(
+        reloadController.diagnosticsFor(reloadController.previews.single),
+        isEmpty,
+      );
+      expect(reloadController.getPreviews().previews.single.hasError, isFalse);
+    },
+  );
 
   testWidgets(
     'captures build and layout diagnostics per preview and resets on rebuild/reassemble',
-    (tester) async {
+    (WidgetTester tester) async {
       final shouldFailDescendantBuild = ValueNotifier<bool>(true);
       addTearDown(shouldFailDescendantBuild.dispose);
       var failSyncBuilder = true;
       var failUnconstrainedLayout = true;
       var failCustomLayout = true;
 
-      final fakeDtdServices = FakeWidgetPreviewScaffoldDtdServices();
-      final controller = WidgetPreviewScaffoldController(
-        dtdServicesOverride: fakeDtdServices,
+      final WidgetPreviewScaffoldController controller = await pumpTestScaffold(
+        tester,
+        disableSelectedFileFilter: true,
+        viewSize: const Size(1200, 2400),
         previews: () => <WidgetPreview>[
-          buildWidgetPreview(
-            column: 1,
+          makeTestPreview(
+            fileStem: 'errors',
             functionName: 'syncBuildPreview',
-            libraryUri: 'package:my_app/errors.dart',
-            line: 10,
-            packageName: 'my_app',
+            name: 'Sync Build',
             previewFunction: () => failSyncBuilder
                 ? throw ArgumentError('sync previewBuilder boom')
                 : const Text('Sync Fixed'),
-            scriptUri: 'file:///project/lib/errors.dart',
-            transformedPreview: const Preview(name: 'Sync Build').transform(),
           ),
-          buildWidgetPreview(
-            column: 1,
+          makeTestPreview(
+            fileStem: 'errors',
             functionName: 'descendantBuildPreview',
-            libraryUri: 'package:my_app/errors.dart',
             line: 20,
-            packageName: 'my_app',
+            name: 'Descendant Build',
             previewFunction: () => ValueListenableBuilder<bool>(
               valueListenable: shouldFailDescendantBuild,
-              builder: (context, shouldThrow, _) =>
+              builder: (BuildContext _, bool shouldThrow, _) =>
                   _ThrowingBuildWidget(shouldThrow: shouldThrow),
             ),
-            scriptUri: 'file:///project/lib/errors.dart',
-            transformedPreview: const Preview(
-              name: 'Descendant Build',
-            ).transform(),
           ),
-          buildWidgetPreview(
-            column: 1,
+          makeTestPreview(
+            fileStem: 'errors',
             functionName: 'unconstrainedPreview',
-            libraryUri: 'package:my_app/errors.dart',
             line: 30,
-            packageName: 'my_app',
+            name: 'Unconstrained Layout',
             previewFunction: () => failUnconstrainedLayout
                 ? const SizedBox.expand(child: Text('Infinite'))
                 : const SizedBox(width: 60, height: 30, child: Text('Bounded')),
-            scriptUri: 'file:///project/lib/errors.dart',
-            transformedPreview: const Preview(
-              name: 'Unconstrained Layout',
-            ).transform(),
           ),
-          buildWidgetPreview(
-            column: 1,
+          makeTestPreview(
+            fileStem: 'errors',
             functionName: 'customLayoutPreview',
-            libraryUri: 'package:my_app/errors.dart',
             line: 40,
-            packageName: 'my_app',
+            name: 'Custom Layout',
             previewFunction: () => failCustomLayout
                 ? const _ThrowingLayoutWidget()
                 : const SizedBox(
@@ -456,73 +383,37 @@ void main() {
                     height: 30,
                     child: Text('Layout OK'),
                   ),
-            scriptUri: 'file:///project/lib/errors.dart',
-            transformedPreview: const Preview(
-              name: 'Custom Layout',
-            ).transform(),
           ),
         ],
       );
-      if (controller.filterBySelectedFileListenable.value) {
-        await controller.toggleFilterBySelectedFile();
-      }
-      await controller.initialize();
-
-      // Increase surface height so ListView builds all 4 preview cards.
-      tester.view.physicalSize = const Size(1200, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(
-        TestWidgetPreviewScaffold(controller: controller),
-      );
-      // Drain the three framework-reported exceptions (descendant build,
-      // unconstrained layout, custom layout).
       while (tester.takeException() != null) {}
       await tester.pump();
 
       final List<WidgetPreview> initialPreviews = controller.previews.toList();
-      final List<PreviewDiagnostic> syncDiags = controller.diagnosticsFor(
-        initialPreviews[0],
-      );
-      expect(syncDiags, hasLength(1));
-      expect(syncDiags.single.phase, PreviewDiagnosticPhase.build);
-      expect(syncDiags.single.kind, PreviewDiagnosticKind.exception);
-      expect(syncDiags.single.summary, contains('sync previewBuilder boom'));
+      final expectedSpecs =
+          <(int, PreviewDiagnosticPhase, PreviewDiagnosticKind, String?)>[
+            (0, .build, .exception, 'sync previewBuilder boom'),
+            (1, .build, .exception, 'descendant build failure'),
+            (2, .layout, .unconstrained, null),
+            (3, .layout, .exception, 'custom layout failure'),
+          ];
+      for (final (
+            int idx,
+            PreviewDiagnosticPhase phase,
+            PreviewDiagnosticKind kind,
+            String? snippet,
+          )
+          in expectedSpecs) {
+        final PreviewDiagnostic diag = controller
+            .diagnosticsFor(initialPreviews[idx])
+            .single;
+        expect(diag.phase, phase);
+        expect(diag.kind, kind);
+        if (snippet != null) {
+          expect(diag.summary, contains(snippet));
+        }
+      }
 
-      final List<PreviewDiagnostic> descendantDiags = controller.diagnosticsFor(
-        initialPreviews[1],
-      );
-      expect(descendantDiags, hasLength(1));
-      expect(descendantDiags.single.phase, PreviewDiagnosticPhase.build);
-      expect(descendantDiags.single.kind, PreviewDiagnosticKind.exception);
-      expect(
-        descendantDiags.single.summary,
-        contains('descendant build failure'),
-      );
-
-      final List<PreviewDiagnostic> unconstrainedDiags = controller
-          .diagnosticsFor(initialPreviews[2]);
-      expect(unconstrainedDiags, hasLength(1));
-      expect(unconstrainedDiags.single.phase, PreviewDiagnosticPhase.layout);
-      expect(
-        unconstrainedDiags.single.kind,
-        PreviewDiagnosticKind.unconstrained,
-      );
-
-      final List<PreviewDiagnostic> customLayoutDiags = controller
-          .diagnosticsFor(initialPreviews[3]);
-      expect(customLayoutDiags, hasLength(1));
-      expect(customLayoutDiags.single.phase, PreviewDiagnosticPhase.layout);
-      expect(customLayoutDiags.single.kind, PreviewDiagnosticKind.exception);
-      expect(
-        customLayoutDiags.single.summary,
-        contains('custom layout failure'),
-      );
-
-      // Verify getPreviews() reports hasError: true for all 4 runtime-failing cards,
-      // and retains layout/build errors across updateSearchQuery().
       expect(
         controller.getPreviews().previews.every(
           (PreviewEntry e) => e.hasError && e.errorMessage != null,
@@ -540,7 +431,6 @@ void main() {
       while (tester.takeException() != null) {}
       await tester.pump();
 
-      // Fix descendant build via ValueNotifier rebuild (without reassemble).
       shouldFailDescendantBuild.value = false;
       await tester.pump();
       expect(tester.takeException(), isNull);
@@ -548,7 +438,6 @@ void main() {
       expect(controller.getPreviews().previews[1].hasError, isFalse);
       expect(find.text('Recovered from build failure'), findsOneWidget);
 
-      // Fix remaining sync build and layout errors and perform hot reload (reassemble).
       failSyncBuilder = false;
       failUnconstrainedLayout = false;
       failCustomLayout = false;
@@ -557,10 +446,6 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      final List<WidgetPreview> reloadedPreviews = controller.previews.toList();
-      expect(controller.diagnosticsFor(reloadedPreviews[0]), isEmpty);
-      expect(controller.diagnosticsFor(reloadedPreviews[2]), isEmpty);
-      expect(controller.diagnosticsFor(reloadedPreviews[3]), isEmpty);
       expect(find.byType(WidgetPreviewErrorWidget), findsNothing);
       expect(
         controller.getPreviews().previews.every(

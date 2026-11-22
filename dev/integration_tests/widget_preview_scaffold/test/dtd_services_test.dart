@@ -8,7 +8,6 @@ import 'dart:io'
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
-import 'package:flutter/widget_previews.dart';
 import 'package:flutter/widgets.dart'
     show Brightness, Size, SizedBox, WidgetsFlutterBinding;
 import 'package:flutter_tools/src/artifacts.dart';
@@ -28,7 +27,6 @@ import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/fake.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
-import 'package:widget_preview_scaffold/src/utils.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart'
     as scaffold_preview;
@@ -38,6 +36,8 @@ import '../../../../packages/flutter_tools/test/src/common.dart';
 import '../../../../packages/flutter_tools/test/src/fake_process_manager.dart'
     show ProcessManager;
 import '../../../../packages/flutter_tools/test/src/fakes.dart';
+import 'utils/widget_preview_scaffold_test_utils.dart'
+    show makeTestErrorPreview, makeTestPreview;
 
 const _kProjectRootPath = '/project';
 
@@ -50,22 +50,18 @@ class _LocalProcessManager extends Fake implements ProcessManager {
     bool includeParentEnvironment = true,
     bool runInShell = false,
     ProcessStartMode mode = ProcessStartMode.normal,
-  }) {
-    return Process.start(
-      command.first.toString(),
-      <String>[for (final Object arg in command.skip(1)) arg.toString()],
-      workingDirectory: workingDirectory,
-      environment: environment,
-      includeParentEnvironment: includeParentEnvironment,
-      runInShell: runInShell,
-      mode: mode,
-    );
-  }
+  }) => Process.start(
+    command.first.toString(),
+    <String>[for (final Object arg in command.skip(1)) arg.toString()],
+    workingDirectory: workingDirectory,
+    environment: environment,
+    includeParentEnvironment: includeParentEnvironment,
+    runInShell: runInShell,
+    mode: mode,
+  );
 }
 
-class FakeFlutterProject extends Fake implements FlutterProject {
-  FakeFlutterProject();
-}
+class FakeFlutterProject extends Fake implements FlutterProject {}
 
 class FakeAnalysisServer extends Fake implements AnalysisServer {
   @override
@@ -97,14 +93,20 @@ String _resolveDartBinaryPath() {
     final String root when root.isNotEmpty => root,
     _ => path.normalize(path.absolute('..', '..', '..')),
   };
-  final String dartBinaryName = platform.isWindows ? 'dart.exe' : 'dart';
   return path.join(
     flutterRoot,
     'bin',
     'cache',
     'dart-sdk',
     'bin',
-    dartBinaryName,
+    platform.isWindows ? 'dart.exe' : 'dart',
+  );
+}
+
+void _stubDevToolsAddress(WidgetPreviewDtdServices server) {
+  server.setDevToolsServerAddress(
+    devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
+    applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
   );
 }
 
@@ -147,8 +149,6 @@ void main() {
       onSyncPreviews: onSyncPreviews,
       previewAnalytics: WidgetPreviewAnalytics(
         analytics: getInitializedFakeAnalyticsInstance(
-          // We don't care about anything written to the file system by analytics, so we're safe
-          // to use a different file system here.
           fs: MemoryFileSystem.test(),
           fakeFlutterVersion: FakeFlutterVersion(),
         ),
@@ -162,33 +162,35 @@ void main() {
     return server;
   }
 
+  Future<WidgetPreviewScaffoldDtdServices> connectPrimaryScaffold() async {
+    final dtd = WidgetPreviewScaffoldDtdServices();
+    scaffoldDtd = dtd;
+    await dtd.connect(dtdUri: dtdServer.dtdUri);
+    return dtd;
+  }
+
   group('$WidgetPreviewDtdServices', () {
     testWithoutContext(
       'handles ${WidgetPreviewDtdServices.kHotRestartPreviewer} and '
       '${WidgetPreviewDtdServices.kHotReloadPreviewer} invocations',
       () async {
-        final hotRestartRequestCompleter = Completer<void>();
-        final hotReloadRequestCompleter = Completer<void>();
+        final hotRestartCompleter = Completer<void>();
+        final hotReloadCompleter = Completer<void>();
         dtdServer = await launchDtdServer(
-          onHotReloadPreviewer: () async {
-            hotReloadRequestCompleter.complete();
-          },
-          onHotRestartPreviewerRequest: hotRestartRequestCompleter.complete,
+          onHotReloadPreviewer: () async => hotReloadCompleter.complete(),
+          onHotRestartPreviewerRequest: hotRestartCompleter.complete,
         );
 
-        final dtd = WidgetPreviewScaffoldDtdServices();
-        scaffoldDtd = dtd;
+        final WidgetPreviewScaffoldDtdServices dtd =
+            await connectPrimaryScaffold();
         expect(
           dtd.scaffoldServiceName,
           WidgetPreviewDtdServices.kWidgetPreviewScaffoldServiceRoot,
         );
-        await dtd.connect(dtdUri: dtdServer.dtdUri);
-
         await dtd.hotRestartPreviewer();
-        await hotRestartRequestCompleter.future;
-
+        await hotRestartCompleter.future;
         await dtd.hotReloadPreviewer();
-        await hotReloadRequestCompleter.future;
+        await hotReloadCompleter.future;
       },
     );
 
@@ -200,23 +202,18 @@ void main() {
         dtdServer = await launchDtdServer(
           webPreviewUriProvider: () => currentWebUri,
         );
-
-        final dtd = WidgetPreviewScaffoldDtdServices();
-        scaffoldDtd = dtd;
-        await dtd.connect(dtdUri: dtdServer.dtdUri);
+        final WidgetPreviewScaffoldDtdServices dtd =
+            await connectPrimaryScaffold();
         await dtdServer.waitForScaffoldConnected();
 
-        // Returns null when web preview URL is unavailable (kNoValueForKey).
         expect(await dtd.getWebPreviewUrl(), isNull);
 
-        // Returns active web preview Uri once available.
         final expectedWebUri = Uri.parse('http://127.0.0.1:8080');
         currentWebUri = expectedWebUri;
         expect(await dtd.getWebPreviewUrl(), expectedWebUri);
 
-        final Map<String, Object?>? info = await dtd.getServiceInfo();
-        expect(info, isNotNull);
-        expect(info![PreviewServiceInfo.kType], PreviewServiceInfo.kTypeName);
+        final Map<String, Object?> info = (await dtd.getServiceInfo())!;
+        expect(info[PreviewServiceInfo.kType], PreviewServiceInfo.kTypeName);
         expect(info[PreviewServiceInfo.kDtdUri], dtdServer.dtdUri.toString());
         expect(info[PreviewServiceInfo.kProjectRoot], _kProjectRootPath);
         expect(
@@ -242,22 +239,12 @@ void main() {
     testWithoutContext(
       'handles ${WidgetPreviewDtdServices.kGetDevToolsUri} invocation',
       () async {
-        // Start DTD and register the widget preview DTD services.
         dtdServer = await launchDtdServer();
-
-        // Connect to the DTD instance and invoke the getDevToolsUri endpoint.
-        final dtd = WidgetPreviewScaffoldDtdServices();
-        scaffoldDtd = dtd;
-        await dtd.connect(dtdUri: dtdServer.dtdUri);
-
-        final Future<Uri> devToolsUriResponseFuture = dtd.getDevToolsUri();
-
-        dtdServer.setDevToolsServerAddress(
-          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
-          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
-        );
-        final Uri actualDevToolsUri = await dtdServer.devToolsServerAddress;
-        expect(await devToolsUriResponseFuture, actualDevToolsUri);
+        final WidgetPreviewScaffoldDtdServices dtd =
+            await connectPrimaryScaffold();
+        final Future<Uri> devToolsUriFuture = dtd.getDevToolsUri();
+        _stubDevToolsAddress(dtdServer);
+        expect(await devToolsUriFuture, await dtdServer.devToolsServerAddress);
       },
     );
 
@@ -265,52 +252,31 @@ void main() {
       'can set and retrieve values from $PersistentPreferences',
       () async {
         dtdServer = await launchDtdServer();
-
-        // The properties file should be created by the PersistentProperties constructor.
         final File preferencesFile = dtdServer.preferences.file;
-        expect(preferencesFile.existsSync(), true);
+        expect(preferencesFile.existsSync(), isTrue);
 
-        // Connect to the DTD instance.
-        final dtd = WidgetPreviewScaffoldDtdServices();
-        scaffoldDtd = dtd;
-        await dtd.connect(dtdUri: dtdServer.dtdUri);
-
+        final WidgetPreviewScaffoldDtdServices dtd =
+            await connectPrimaryScaffold();
         const kTestKey = 'myKey';
+        const kFlagKey = 'flag';
 
-        // The preferences file should be empty.
-        expect(await dtd.getPreference(kTestKey), null);
+        expect(await dtd.getPreference(kTestKey), isNull);
         expect(preferencesFile.readAsStringSync(), isEmpty);
 
-        // Set a preference and ensure it's read back.
-        const kFirstValue = 'foo';
-        await dtd.setPreference(kTestKey, kFirstValue);
-        expect(await dtd.getPreference(kTestKey), kFirstValue);
-        expect(
-          json.decode(preferencesFile.readAsStringSync()),
-          <String, Object?>{kTestKey: kFirstValue},
-        );
+        for (final String val in const <String>['foo', 'bar']) {
+          await dtd.setPreference(kTestKey, val);
+          expect(await dtd.getPreference(kTestKey), val);
+          expect(
+            json.decode(preferencesFile.readAsStringSync()),
+            <String, Object?>{kTestKey: val},
+          );
+        }
 
-        // Overwrite kTestKey and ensure it's read back.
-        const kSecondValue = 'bar';
-        await dtd.setPreference(kTestKey, kSecondValue);
-        expect(await dtd.getPreference(kTestKey), kSecondValue);
-        expect(
-          json.decode(preferencesFile.readAsStringSync()),
-          <String, Object?>{kTestKey: kSecondValue},
-        );
-
-        // Write a flag.
-        const kFlagKey = 'flag';
         await dtd.setPreference(kFlagKey, true);
-        expect(await dtd.getFlag(kFlagKey), true);
-        expect(
-          json.decode(preferencesFile.readAsStringSync()),
-          <String, Object?>{kFlagKey: true, kTestKey: kSecondValue},
-        );
+        expect(await dtd.getFlag(kFlagKey), isTrue);
 
-        // Remove an entry.
         await dtd.setPreference(kTestKey, null);
-        expect(await dtd.getPreference(kTestKey), null);
+        expect(await dtd.getPreference(kTestKey), isNull);
         expect(
           json.decode(preferencesFile.readAsStringSync()),
           <String, Object?>{kFlagKey: true},
@@ -334,55 +300,43 @@ void main() {
             );
           },
         );
-        dtdServer.setDevToolsServerAddress(
-          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
-          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
-        );
+        _stubDevToolsAddress(dtdServer);
 
         final dtd = WidgetPreviewScaffoldDtdServices();
         scaffoldDtd = dtd;
         final controller = WidgetPreviewScaffoldController(
           dtdServicesOverride: dtd,
           previews: () => <scaffold_preview.WidgetPreview>[
-            buildWidgetPreview(
+            makeTestPreview(
+              brightness: Brightness.light,
               column: 5,
+              fileStem: 'card',
               functionName: 'cardPreview',
-              libraryUri: 'package:my_app/card.dart',
+              group: 'Cards',
               line: 12,
-              packageName: 'my_app',
+              name: 'Mobile Light',
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/card.dart',
-              transformedPreview: const Preview(
-                brightness: Brightness.light,
-                group: 'Cards',
-                name: 'Mobile Light',
-                size: Size(375, 667),
-              ),
+              size: const Size(375, 667),
             ),
-            buildWidgetPreviewError(
-              column: 1,
-              dependencyHasErrors: false,
+            makeTestErrorPreview(
+              fileStem: 'broken',
               functionName: 'brokenPreview',
-              libraryUri: 'package:my_app/broken.dart',
               line: 20,
-              packageName: 'my_app',
-              scriptUri: 'file:///project/lib/broken.dart',
             ),
           ],
         );
 
         await dtd.connect(dtdUri: dtdServer.dtdUri);
         await dtdServer.waitForScaffoldConnected();
-
-        // Direct scaffold getPreviews call over DTD (ignoring UI selected-file filter).
         expect(controller.filterBySelectedFileListenable.value, isTrue);
-        final scaffoldResponse = await dtd.dtd.call(
-          dtd.scaffoldServiceName,
-          WidgetPreviewScaffoldDtdServices.kGetPreviews,
-        );
-        final allPreviews = PreviewListResponse.fromDTDResponse(
-          scaffoldResponse,
-        );
+
+        final PreviewListResponse allPreviews =
+            PreviewListResponse.fromDTDResponse(
+              await dtd.dtd.call(
+                dtd.scaffoldServiceName,
+                WidgetPreviewScaffoldDtdServices.kGetPreviews,
+              ),
+            );
         expect(allPreviews.previews, hasLength(2));
         expect(
           allPreviews.previews.first.id,
@@ -399,16 +353,17 @@ void main() {
           'package:my_app/broken.dart has errors!',
         );
 
-        // Tool listPreviews call over DTD (syncs by default and forwards fileUri).
-        final filteredToolResponse = await dtd.dtd.call(
-          WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
-          WidgetPreviewDtdServices.kListPreviews,
-          params: <String, Object?>{'fileUri': 'package:my_app/card.dart'},
-        );
+        final PreviewListResponse filteredList =
+            PreviewListResponse.fromDTDResponse(
+              await dtd.dtd.call(
+                WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
+                WidgetPreviewDtdServices.kListPreviews,
+                params: <String, Object?>{
+                  'fileUri': 'package:my_app/card.dart',
+                },
+              ),
+            );
         expect(syncCalls, 1);
-        final filteredList = PreviewListResponse.fromDTDResponse(
-          filteredToolResponse,
-        );
         expect(filteredList.previews, hasLength(1));
         expect(
           filteredList.previews.single.id,
@@ -418,7 +373,6 @@ void main() {
         expect(filteredList.previews.single.height, 667.0);
         expect(filteredList.previews.single.brightness, 'light');
 
-        // sync: false skips onSyncPreviews.
         await dtd.dtd.call(
           WidgetPreviewDtdServices.kWidgetPreviewServiceRoot,
           WidgetPreviewDtdServices.kListPreviews,
@@ -433,54 +387,34 @@ void main() {
       'service and enforces wire schema and error codes over DTD',
       () async {
         dtdServer = await launchDtdServer();
-        dtdServer.setDevToolsServerAddress(
-          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
-          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
-        );
+        _stubDevToolsAddress(dtdServer);
 
         final dtd = WidgetPreviewScaffoldDtdServices();
         scaffoldDtd = dtd;
         final controller = WidgetPreviewScaffoldController(
           dtdServicesOverride: dtd,
           previews: () => <scaffold_preview.WidgetPreview>[
-            buildWidgetPreview(
-              column: 5,
+            makeTestPreview(
+              fileStem: 'card',
               functionName: 'cardPreview',
-              libraryUri: 'package:my_app/card.dart',
-              line: 12,
-              packageName: 'my_app',
+              name: 'Mobile Light',
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/card.dart',
-              transformedPreview: const Preview(name: 'Mobile Light'),
             ),
-            buildWidgetPreview(
-              column: 1,
+            makeTestPreview(
+              fileStem: 'a',
               functionName: 'dupOne',
-              libraryUri: 'package:my_app/a.dart',
-              line: 20,
-              packageName: 'my_app',
+              name: 'Shared',
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/a.dart',
-              transformedPreview: const Preview(name: 'Shared'),
             ),
-            buildWidgetPreview(
-              column: 1,
+            makeTestPreview(
+              fileStem: 'b',
               functionName: 'dupTwo',
-              libraryUri: 'package:my_app/b.dart',
-              line: 30,
-              packageName: 'my_app',
+              name: 'Shared',
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/b.dart',
-              transformedPreview: const Preview(name: 'Shared'),
             ),
-            buildWidgetPreviewError(
-              column: 1,
-              dependencyHasErrors: false,
+            makeTestErrorPreview(
+              fileStem: 'broken',
               functionName: 'brokenPreview',
-              libraryUri: 'package:my_app/broken.dart',
-              line: 40,
-              packageName: 'my_app',
-              scriptUri: 'file:///project/lib/broken.dart',
             ),
           ],
         );
@@ -517,21 +451,22 @@ void main() {
         await dtd.connect(dtdUri: dtdServer.dtdUri);
         await dtdServer.waitForScaffoldConnected();
 
-        // Explicit null optional parameters and integer numbers decode cleanly.
-        final dtdResponse = await dtd.dtd.call(
-          dtd.scaffoldServiceName,
-          WidgetPreviewScaffoldDtdServices.kCapturePreview,
-          params: <String, Object?>{
-            'previewId': 'Mobile Light',
-            'width': 375,
-            'height': null,
-            'pixelRatio': null,
-            'brightness': 'dark',
-            'textScaleFactor': 1.5,
-            'includeImage': null,
-          },
-        );
-        final parsed = CapturePreviewResponse.fromDTDResponse(dtdResponse);
+        final CapturePreviewResponse parsed =
+            CapturePreviewResponse.fromDTDResponse(
+              await dtd.dtd.call(
+                dtd.scaffoldServiceName,
+                WidgetPreviewScaffoldDtdServices.kCapturePreview,
+                params: <String, Object?>{
+                  'previewId': 'Mobile Light',
+                  'width': 375,
+                  'height': null,
+                  'pixelRatio': null,
+                  'brightness': 'dark',
+                  'textScaleFactor': 1.5,
+                  'includeImage': null,
+                },
+              ),
+            );
         expect(parsed.previewId, 'package:my_app/card.dart::cardPreview');
         expect(parsed.name, 'Mobile Light');
         expect(parsed.renderedWidth, 375.0);
@@ -557,16 +492,16 @@ void main() {
         expect(lastRequest!.textScaleFactor, 1.5);
         expect(lastRequest!.includeImage, isTrue);
 
-        // Compile-error preview short-circuits with compile_error diagnostic.
-        final brokenResponse = CapturePreviewResponse.fromDTDResponse(
-          await dtd.dtd.call(
-            dtd.scaffoldServiceName,
-            WidgetPreviewScaffoldDtdServices.kCapturePreview,
-            params: <String, Object?>{
-              'previewId': 'package:my_app/broken.dart::brokenPreview',
-            },
-          ),
-        );
+        final CapturePreviewResponse brokenResponse =
+            CapturePreviewResponse.fromDTDResponse(
+              await dtd.dtd.call(
+                dtd.scaffoldServiceName,
+                WidgetPreviewScaffoldDtdServices.kCapturePreview,
+                params: <String, Object?>{
+                  'previewId': 'package:my_app/broken.dart::brokenPreview',
+                },
+              ),
+            );
         expect(brokenResponse.hasErrors, isTrue);
         expect(brokenResponse.imageBase64, isNull);
         expect(
@@ -574,68 +509,43 @@ void main() {
           PreviewDiagnosticKind.compileError,
         );
 
-        // Error 101 on unknown preview and 102 on ambiguous name.
-        await expectLater(
-          dtd.dtd.call(
-            dtd.scaffoldServiceName,
-            WidgetPreviewScaffoldDtdServices.kCapturePreview,
-            params: <String, Object?>{'previewId': 'Unknown'},
-          ),
-          throwsA(
-            isA<RpcException>().having(
-              (RpcException e) => e.code,
-              'code',
-              WidgetPreviewDtdServices.kPreviewNotFoundErrorCode,
+        for (final (Map<String, Object?> params, int expectedCode)
+            in <(Map<String, Object?>, int)>[
+              (
+                <String, Object?>{'previewId': 'Unknown'},
+                WidgetPreviewDtdServices.kPreviewNotFoundErrorCode,
+              ),
+              (
+                <String, Object?>{'previewId': 'Shared'},
+                WidgetPreviewDtdServices.kAmbiguousPreviewNameErrorCode,
+              ),
+              (
+                <String, Object?>{
+                  'previewId': 'Mobile Light',
+                  'brightness': 'sepia',
+                },
+                RpcErrorCodes.kInvalidParams,
+              ),
+              (
+                <String, Object?>{'previewId': 'Mobile Light', 'width': 0},
+                RpcErrorCodes.kInvalidParams,
+              ),
+            ]) {
+          await expectLater(
+            dtd.dtd.call(
+              dtd.scaffoldServiceName,
+              WidgetPreviewScaffoldDtdServices.kCapturePreview,
+              params: params,
             ),
-          ),
-        );
-        await expectLater(
-          dtd.dtd.call(
-            dtd.scaffoldServiceName,
-            WidgetPreviewScaffoldDtdServices.kCapturePreview,
-            params: <String, Object?>{'previewId': 'Shared'},
-          ),
-          throwsA(
-            isA<RpcException>().having(
-              (RpcException e) => e.code,
-              'code',
-              WidgetPreviewDtdServices.kAmbiguousPreviewNameErrorCode,
+            throwsA(
+              isA<RpcException>().having(
+                (RpcException e) => e.code,
+                'code',
+                expectedCode,
+              ),
             ),
-          ),
-        );
-
-        // Invalid parameters throw -32602 (RpcErrorCodes.kInvalidParams).
-        await expectLater(
-          dtd.dtd.call(
-            dtd.scaffoldServiceName,
-            WidgetPreviewScaffoldDtdServices.kCapturePreview,
-            params: <String, Object?>{
-              'previewId': 'Mobile Light',
-              'brightness': 'sepia',
-            },
-          ),
-          throwsA(
-            isA<RpcException>().having(
-              (RpcException e) => e.code,
-              'code',
-              RpcErrorCodes.kInvalidParams,
-            ),
-          ),
-        );
-        await expectLater(
-          dtd.dtd.call(
-            dtd.scaffoldServiceName,
-            WidgetPreviewScaffoldDtdServices.kCapturePreview,
-            params: <String, Object?>{'previewId': 'Mobile Light', 'width': 0},
-          ),
-          throwsA(
-            isA<RpcException>().having(
-              (RpcException e) => e.code,
-              'code',
-              RpcErrorCodes.kInvalidParams,
-            ),
-          ),
-        );
+          );
+        }
       },
     );
 
@@ -643,12 +553,8 @@ void main() {
       'viewer-only readOnly connect skips service registration and Connected, and reloads on PreviewReloaded',
       () async {
         dtdServer = await launchDtdServer();
-        dtdServer.setDevToolsServerAddress(
-          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
-          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
-        );
+        _stubDevToolsAddress(dtdServer);
 
-        // Observe all events posted to WidgetPreviewScaffold stream.
         final observerDtd = await DartToolingDaemon.connect(dtdServer.dtdUri!);
         addTearDown(observerDtd.close);
         final observedEvents = <DTDEvent>[];
@@ -660,48 +566,38 @@ void main() {
           WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot,
         );
 
-        // Connect primary scaffold normally so PreviewScaffold methods exist.
         final primaryDtd = WidgetPreviewScaffoldDtdServices();
         scaffoldDtd = primaryDtd;
         WidgetPreviewScaffoldController(
           dtdServicesOverride: primaryDtd,
           previews: () => <scaffold_preview.WidgetPreview>[
-            buildWidgetPreview(
-              column: 1,
+            makeTestPreview(
+              fileStem: 'card',
               functionName: 'primaryCard',
-              libraryUri: 'package:my_app/card.dart',
-              line: 10,
-              packageName: 'my_app',
+              name: 'Primary',
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/card.dart',
-              transformedPreview: const Preview(name: 'Primary'),
             ),
           ],
         );
         await primaryDtd.connect(dtdUri: dtdServer.dtdUri);
         await dtdServer.waitForScaffoldConnected();
         await pumpEventQueue();
-        expect(
-          observedEvents
-              .where(
-                (DTDEvent e) =>
-                    e.kind ==
-                    WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
-              )
-              .length,
-          1,
-        );
 
-        // Connect a second viewer-only client via embed=1 URL fragment and
-        // explicit readOnly: true without colliding on PreviewScaffold RPCs.
+        int countConnectedEvents() => observedEvents
+            .where(
+              (DTDEvent e) =>
+                  e.kind ==
+                  WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
+            )
+            .length;
+        expect(countConnectedEvents(), 1);
+
         debugSetUrlFragment(
           'embed=1&previewId=Primary&dtdProxy=/dtd_ws',
           baseUri: Uri.parse('https://preview.proxy.example:8443/'),
         );
-        final EmbedPreviewParams parsed = EmbedPreviewParams.fromCurrentUrl();
-        expect(parsed.isEmbed, isTrue);
         expect(
-          parsed.resolveDtdProxyUri(getBaseUri()),
+          EmbedPreviewParams.fromCurrentUrl().resolveDtdProxyUri(getBaseUri()),
           Uri.parse('wss://preview.proxy.example:8443/dtd_ws'),
         );
 
@@ -712,20 +608,8 @@ void main() {
         addTearDown(viewerDtd.dispose);
         await viewerDtd.connect(dtdUri: dtdServer.dtdUri, readOnly: true);
         await pumpEventQueue();
+        expect(countConnectedEvents(), 1);
 
-        // No second Connected event was posted by the viewer-only client.
-        expect(
-          observedEvents
-              .where(
-                (DTDEvent e) =>
-                    e.kind ==
-                    WidgetPreviewDtdServices.kWidgetPreviewConnectedEvent,
-              )
-              .length,
-          1,
-        );
-
-        // Primary scaffold RPCs continue routing cleanly without collision.
         final DTDResponse primaryList = await observerDtd.call(
           primaryDtd.scaffoldServiceName,
           WidgetPreviewScaffoldDtdServices.kGetPreviews,
@@ -735,12 +619,10 @@ void main() {
           hasLength(1),
         );
 
-        // Broadcasting PreviewReloaded triggers reload only on the viewer client.
         await dtdServer.postPreviewReloaded(fullRestart: false);
         await pumpEventQueue();
         expect(viewerReloadCallbacks, 1);
 
-        // Default viewer without onPreviewReloaded triggers reloadWindow().
         final defaultViewerDtd = WidgetPreviewScaffoldDtdServices();
         addTearDown(defaultViewerDtd.dispose);
         await defaultViewerDtd.connect(dtdUri: dtdServer.dtdUri);
@@ -749,7 +631,6 @@ void main() {
         expect(viewerReloadCallbacks, 2);
         expect(debugReloadCount, 1);
 
-        // Verify PreviewReloaded payload data was preserved on the stream.
         final List<DTDEvent> reloadedEvents = observedEvents
             .where(
               (DTDEvent e) =>
@@ -766,7 +647,6 @@ void main() {
           isTrue,
         );
 
-        // Disposal unsubscribes from further PreviewReloaded events.
         await viewerDtd.dispose();
         await defaultViewerDtd.dispose();
         await dtdServer.postPreviewReloaded(fullRestart: false);
@@ -780,10 +660,7 @@ void main() {
       'viewer-only mode hot-reloads modules in-place and refreshes controller without reloadWindow, falling back on fullRestart or error',
       () async {
         dtdServer = await launchDtdServer();
-        dtdServer.setDevToolsServerAddress(
-          devToolsServerAddress: Uri.http('localhost:8282', 'devtools'),
-          applicationUri: Uri(scheme: 'ws', host: 'localhost', port: 1234),
-        );
+        _stubDevToolsAddress(dtdServer);
 
         debugSetUrlFragment(
           'embed=1&previewId=*',
@@ -797,10 +674,7 @@ void main() {
         debugSetInitialLiveRevision(serverRevision);
         debugSetHotReloadHandler((int sinceRevision) async {
           observedSinceRevisions.add(sinceRevision);
-          if (shouldFailHotReload) {
-            return null;
-          }
-          return serverRevision;
+          return shouldFailHotReload ? null : serverRevision;
         });
 
         final viewerDtd = WidgetPreviewScaffoldDtdServices();
@@ -808,54 +682,39 @@ void main() {
         final controller = WidgetPreviewScaffoldController(
           dtdServicesOverride: viewerDtd,
           previews: () => <scaffold_preview.WidgetPreview>[
-            buildWidgetPreview(
-              column: 1,
+            makeTestPreview(
+              fileStem: 'card',
               functionName: 'liveCard',
-              libraryUri: 'package:my_app/card.dart',
-              line: 10,
-              packageName: 'my_app',
+              name: currentTitle,
               previewFunction: () => const SizedBox(),
-              scriptUri: 'file:///project/lib/card.dart',
-              transformedPreview: Preview(name: currentTitle),
             ),
           ],
         );
 
         await viewerDtd.connect(dtdUri: dtdServer.dtdUri, readOnly: true);
         expect(controller.previews.single.name, 'Before Reload');
-        expect(controller.previewsRevisionListenable.value, 0);
 
-        // Incremental reload (fullRestart: false) updates in-place with zero window reloads.
-        currentTitle = 'After In-Place Reload';
-        serverRevision = 5;
-        await dtdServer.postPreviewReloaded(fullRestart: false);
-        await pumpEventQueue();
-
-        expect(observedSinceRevisions, <int>[4]);
-        expect(debugHotReloadCount, 1);
-        expect(debugReloadCount, 0);
-        expect(controller.previewsRevisionListenable.value, 1);
-        expect(controller.previews.single.name, 'After In-Place Reload');
-
-        // Subsequent incremental reload advances sinceRevision to 5 -> 6.
-        currentTitle = 'Second In-Place Reload';
-        serverRevision = 6;
-        await dtdServer.postPreviewReloaded(fullRestart: false);
-        await pumpEventQueue();
-
+        for (final (String nextTitle, int nextRev, int expectedRevCount)
+            in const <(String, int, int)>[
+              ('After In-Place Reload', 5, 1),
+              ('Second In-Place Reload', 6, 2),
+            ]) {
+          currentTitle = nextTitle;
+          serverRevision = nextRev;
+          await dtdServer.postPreviewReloaded(fullRestart: false);
+          await pumpEventQueue();
+          expect(debugHotReloadCount, expectedRevCount);
+          expect(debugReloadCount, 0);
+          expect(controller.previewsRevisionListenable.value, expectedRevCount);
+          expect(controller.previews.single.name, nextTitle);
+        }
         expect(observedSinceRevisions, <int>[4, 5]);
-        expect(debugHotReloadCount, 2);
-        expect(debugReloadCount, 0);
-        expect(controller.previewsRevisionListenable.value, 2);
-        expect(controller.previews.single.name, 'Second In-Place Reload');
 
-        // fullRestart: true bypasses in-place hot reload and triggers reloadWindow().
         await dtdServer.postPreviewReloaded(fullRestart: true);
         await pumpEventQueue();
         expect(debugHotReloadCount, 2);
         expect(debugReloadCount, 1);
 
-        // Failed in-place hot reload (returning null) falls back cleanly to reloadWindow().
         shouldFailHotReload = true;
         await dtdServer.postPreviewReloaded(fullRestart: false);
         await pumpEventQueue();
@@ -882,7 +741,6 @@ void main() {
       await fakeDtd.firstSocket()!.close();
       await pumpEventQueue();
       await viewerDtd.dispose();
-      // Wait past the 1s first reconnect backoff step to confirm cancellation.
       await Future<void>.delayed(const Duration(milliseconds: 1200));
       expect(fakeDtd.connectionCount(), 1);
     });

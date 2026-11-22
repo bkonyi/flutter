@@ -7,10 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:widget_preview_scaffold/src/embed_selection_inspector.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
-
-export 'package:widget_preview_scaffold/src/embed_selection_inspector.dart';
 
 const _kBadgeBackgroundColor = Color(0xFF1D4ED8);
 const _kBadgeBorderRadius = 4.0;
@@ -18,16 +15,21 @@ const _kBadgeEstimatedWidth = 52.0;
 const _kBadgeFontSize = 11.0;
 const _kBadgeHeight = 20.0;
 const _kBadgeHorizontalPadding = 5.0;
+const _kBadgeOffset = 2.0;
+const _kBadgePointOffset = 4.0;
+const _kBadgeRemoveFontSize = 13.0;
 const _kBadgeSpacing = 4.0;
 const _kBrightnessKey = 'brightness';
 const _kHeightKey = 'height';
 const _kIdKey = 'id';
 const _kIndexKey = 'index';
+const _kKeyKey = 'key';
 const _kKindKey = 'kind';
+const _kMaxExtractedTextLength = 80;
+const _kMaxInspectedWidgets = 12;
 const _kMinRegionDragDistance = 4.0;
-const _kPointCrosshairArm = 7.0;
-const _kPointDotRadius = 3.0;
-const _kPointOverlayExtent = 16.0;
+const _kPointHitInflation = 2.0;
+const _kPointOverlayExtent = 14.0;
 const _kPreviewHeightKey = 'previewHeight';
 const _kPreviewIdKey = 'previewId';
 const _kPreviewNameKey = 'previewName';
@@ -36,12 +38,248 @@ const _kSelectionBorderColor = Color(0xFF2563EB);
 const _kSelectionBorderWidth = 1.5;
 const _kSelectionFillColor = Color(0x242563EB);
 const _kSelectionIdPrefix = 'sel-';
+const _kTextKey = 'text';
 const _kTextScaleKey = 'textScale';
+const _kWidgetKey = 'widget';
 const _kWidgetsKey = 'widgets';
 const _kWidthKey = 'width';
 const _kXKey = 'x';
 const _kYKey = 'y';
 const _kZoomKey = 'zoom';
+
+const _kSelectionBoxDecoration = BoxDecoration(
+  color: _kSelectionFillColor,
+  border: Border.fromBorderSide(
+    BorderSide(color: _kSelectionBorderColor, width: _kSelectionBorderWidth),
+  ),
+);
+
+const _kPointPinDecoration = BoxDecoration(
+  color: _kSelectionFillColor,
+  shape: BoxShape.circle,
+  border: Border.fromBorderSide(
+    BorderSide(color: _kSelectionBorderColor, width: _kSelectionBorderWidth),
+  ),
+);
+
+const _kPlumbingWidgetTypes = <String>{
+  'AbsorbPointer',
+  'Actions',
+  'Align',
+  'AnimatedDefaultTextStyle',
+  'AnimatedPhysicalModel',
+  'AnimatedTheme',
+  'BlockSemantics',
+  'Builder',
+  'Center',
+  'ClipRRect',
+  'ClipRect',
+  'ColoredBox',
+  'ConstrainedBox',
+  'DecoratedBox',
+  'DefaultAssetBundle',
+  'DefaultTextStyle',
+  'Directionality',
+  'EnableWidgetInspectorScope',
+  'ExcludeSemantics',
+  'Focus',
+  'FocusScope',
+  'FocusTraversalGroup',
+  'IconTheme',
+  'IgnorePointer',
+  'KeyedSubtree',
+  'Listener',
+  'Localizations',
+  'MediaQuery',
+  'MergeSemantics',
+  'MouseRegion',
+  'NotificationListener',
+  'Opacity',
+  'Padding',
+  'PhysicalModel',
+  'PreviewWidget',
+  'RepaintBoundary',
+  'Semantics',
+  'Shortcuts',
+  'SizedBox',
+  'StatefulBuilder',
+  'Theme',
+  'Transform',
+  'WidgetInspector',
+  'WidgetPreviewLocalizations',
+  'WidgetPreviewTheming',
+  'WidgetPreviewWrapper',
+  'WidgetPreviewerWindowConstraints',
+};
+
+/// Geometry classification for an interactive preview selection.
+enum EmbedSelectionKind {
+  point('point'),
+  region('region');
+
+  const EmbedSelectionKind(this.wireValue);
+
+  final String wireValue;
+}
+
+/// Summary of a rendered Flutter widget intersecting a preview selection.
+@immutable
+class EmbedSelectedWidgetInfo {
+  const EmbedSelectedWidgetInfo({
+    required this.height,
+    required this.widget,
+    required this.width,
+    required this.x,
+    required this.y,
+    this.key,
+    this.text,
+  });
+
+  final int height;
+  final String? key;
+  final String? text;
+  final String widget;
+  final int width;
+  final int x;
+  final int y;
+
+  int get area => width * height;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    _kWidgetKey: widget,
+    if (key case final String k when k.isNotEmpty) _kKeyKey: k,
+    if (text case final String t when t.isNotEmpty) _kTextKey: t,
+    _kXKey: x,
+    _kYKey: y,
+    _kWidthKey: width,
+    _kHeightKey: height,
+  };
+}
+
+/// Inspects the rendered [Element] subtree rooted at [rootContext] and returns
+/// up to [_kMaxInspectedWidgets] rendered [RenderBox] widgets intersecting the
+/// selection in [surfaceBox]-local logical pixels.
+List<EmbedSelectedWidgetInfo> inspectPreviewSubtree({
+  required int height,
+  required EmbedSelectionKind kind,
+  required BuildContext? rootContext,
+  required RenderBox surfaceBox,
+  required int width,
+  required int x,
+  required int y,
+}) {
+  if (rootContext is! Element || !rootContext.mounted || !surfaceBox.attached) {
+    return const <EmbedSelectedWidgetInfo>[];
+  }
+  final queryRect = Rect.fromLTWH(
+    x.toDouble(),
+    y.toDouble(),
+    width.toDouble(),
+    height.toDouble(),
+  );
+  final pointTarget = Offset(x.toDouble(), y.toDouble());
+  final candidates = <({EmbedSelectedWidgetInfo info, int order})>[];
+  var traversalCounter = 0;
+
+  void visit(Element element, {required bool insideTextWidget}) {
+    if (!element.mounted) {
+      return;
+    }
+    final Widget currentWidget = element.widget;
+    final bool isTextWidget = currentWidget is Text;
+    final String typeName = currentWidget.runtimeType.toString();
+    final int genericIndex = typeName.indexOf('<');
+    final String baseType = genericIndex > 0
+        ? typeName.substring(0, genericIndex)
+        : typeName;
+    final bool shouldSkipWidget =
+        typeName.startsWith('_') ||
+        (currentWidget.key == null &&
+            (_kPlumbingWidgetTypes.contains(baseType) ||
+                (insideTextWidget && currentWidget is RichText)));
+
+    if (!shouldSkipWidget && element.renderObject is RenderBox) {
+      final box = element.renderObject! as RenderBox;
+      if (box.attached && box.hasSize && !box.size.isEmpty) {
+        final Rect localBounds = MatrixUtils.transformRect(
+          box.getTransformTo(surfaceBox),
+          Offset.zero & box.size,
+        );
+        final bool intersects = switch (kind) {
+          .region => localBounds.overlaps(queryRect),
+          .point =>
+            localBounds.inflate(_kPointHitInflation).contains(pointTarget),
+        };
+        if (intersects) {
+          candidates.add((
+            info: EmbedSelectedWidgetInfo(
+              height: math.max(1, localBounds.height.round()),
+              key: currentWidget.key?.toString(),
+              text: _extractConciseText(currentWidget),
+              widget: typeName,
+              width: math.max(1, localBounds.width.round()),
+              x: localBounds.left.round(),
+              y: localBounds.top.round(),
+            ),
+            order: traversalCounter++,
+          ));
+        }
+      }
+    }
+
+    element.visitChildElements((Element child) {
+      visit(child, insideTextWidget: insideTextWidget || isTextWidget);
+    });
+  }
+
+  rootContext.visitChildElements((Element child) {
+    visit(child, insideTextWidget: false);
+  });
+
+  int metadataScore(EmbedSelectedWidgetInfo info) =>
+      (info.key != null ? 2 : 0) + (info.text != null ? 1 : 0);
+
+  candidates.sort((a, b) {
+    final int byArea = a.info.area.compareTo(b.info.area);
+    if (byArea != 0) {
+      return byArea;
+    }
+    final int byScore = metadataScore(b.info).compareTo(metadataScore(a.info));
+    return byScore != 0 ? byScore : a.order.compareTo(b.order);
+  });
+
+  final deduplicated = <EmbedSelectedWidgetInfo>[];
+  final seen = <(String, int, int, int, int)>{};
+  for (final (:EmbedSelectedWidgetInfo info, order: _) in candidates) {
+    if (seen.add((info.widget, info.x, info.y, info.width, info.height))) {
+      deduplicated.add(info);
+      if (deduplicated.length >= _kMaxInspectedWidgets) {
+        break;
+      }
+    }
+  }
+  return deduplicated;
+}
+
+String? _extractConciseText(Widget widget) {
+  final String? raw = switch (widget) {
+    Text(:final String? data, :final InlineSpan? textSpan) =>
+      data ?? textSpan?.toPlainText(),
+    RichText(:final InlineSpan text) => text.toPlainText(),
+    EditableText(:final TextEditingController controller) => controller.text,
+    _ => null,
+  };
+  if (raw == null) {
+    return null;
+  }
+  final String collapsed = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (collapsed.isEmpty) {
+    return null;
+  }
+  return collapsed.length <= _kMaxExtractedTextLength
+      ? collapsed
+      : '${collapsed.substring(0, _kMaxExtractedTextLength - 3)}...';
+}
 
 /// Single point or region selection recorded on a widget preview surface.
 @immutable
@@ -50,7 +288,6 @@ class EmbedSelectionEntry {
     required this.brightness,
     required this.height,
     required this.id,
-    required this.index,
     required this.kind,
     required this.previewHeight,
     required this.previewId,
@@ -67,7 +304,6 @@ class EmbedSelectionEntry {
   final Brightness brightness;
   final int height;
   final String id;
-  final int index;
   final EmbedSelectionKind kind;
   final int previewHeight;
   final String previewId;
@@ -80,30 +316,7 @@ class EmbedSelectionEntry {
   final int y;
   final double zoom;
 
-  EmbedSelectionEntry withIndex(int nextIndex) {
-    if (nextIndex == index) {
-      return this;
-    }
-    return EmbedSelectionEntry(
-      brightness: brightness,
-      height: height,
-      id: id,
-      index: nextIndex,
-      kind: kind,
-      previewHeight: previewHeight,
-      previewId: previewId,
-      previewName: previewName,
-      previewWidth: previewWidth,
-      textScale: textScale,
-      widgets: widgets,
-      width: width,
-      x: x,
-      y: y,
-      zoom: zoom,
-    );
-  }
-
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toJson({required int index}) => <String, Object?>{
     _kIdKey: id,
     _kIndexKey: index,
     _kKindKey: kind.wireValue,
@@ -139,7 +352,7 @@ String formatEmbedSelectionContext({
     if (projectRoot case final String root when root.isNotEmpty)
       'Project: $root',
   ];
-  for (final EmbedSelectionEntry entry in selections) {
+  for (final (int i, EmbedSelectionEntry entry) in selections.indexed) {
     final String previewLabel =
         entry.previewName != null && entry.previewName!.isNotEmpty
         ? '${entry.previewName} (${entry.previewId})'
@@ -150,7 +363,7 @@ String formatEmbedSelectionContext({
         'region (${entry.x}, ${entry.y}) ${entry.width}x${entry.height}',
     };
     lines.add(
-      '#${entry.index} $previewLabel - $geometry in '
+      '#${i + 1} $previewLabel - $geometry in '
       '${entry.previewWidth}x${entry.previewHeight} '
       '[${entry.brightness.name}, textScale=${formatEmbedZoom(entry.textScale)}, '
       'zoom=${formatEmbedZoom(entry.zoom)}]',
@@ -186,7 +399,8 @@ class EmbedSelectionController extends ChangeNotifier {
       List<EmbedSelectionEntry>.unmodifiable(_selections);
 
   List<Map<String, Object?>> get selectionsJson => <Map<String, Object?>>[
-    for (final EmbedSelectionEntry entry in _selections) entry.toJson(),
+    for (final (int i, EmbedSelectionEntry entry) in _selections.indexed)
+      entry.toJson(index: i + 1),
   ];
 
   /// Synchronizes [selectMode] when outer URL [EmbedPreviewParams] change.
@@ -232,7 +446,6 @@ class EmbedSelectionController extends ChangeNotifier {
       brightness: brightness,
       height: height,
       id: '$_kSelectionIdPrefix${++_selectionCounter}',
-      index: _selections.length + 1,
       kind: kind,
       previewHeight: previewHeight,
       previewId: previewId,
@@ -253,26 +466,22 @@ class EmbedSelectionController extends ChangeNotifier {
   /// Removes the selection matching [selectionId] and renumbers remaining
   /// entries `1..K`.
   void removeSelectionById(String selectionId) {
-    final int removeIndex = _selections.indexWhere(
+    final int previousLength = _selections.length;
+    _selections.removeWhere(
       (EmbedSelectionEntry entry) => entry.id == selectionId,
     );
-    if (removeIndex < 0) {
-      return;
+    if (_selections.length != previousLength) {
+      notifyListeners();
     }
-    _selections.removeAt(removeIndex);
-    for (var i = 0; i < _selections.length; i++) {
-      _selections[i] = _selections[i].withIndex(i + 1);
-    }
-    notifyListeners();
   }
 
   /// Clears all active selections.
   void clearSelections() {
-    final bool hadSelections = _selections.isNotEmpty;
-    _selections.clear();
-    if (hadSelections) {
-      notifyListeners();
+    if (_selections.isEmpty) {
+      return;
     }
+    _selections.clear();
+    notifyListeners();
   }
 
   /// Handles `Escape` key presses: exits [selectMode] first if active, or
@@ -339,38 +548,35 @@ class _EmbedSelectablePreviewSurfaceState
   Offset? _dragStartLocal;
   Offset? _dragCurrentLocal;
 
-  bool get _isDragging => _activePointerId != null;
-
-  Offset _clampToSurface(Offset localOffset, Size size) {
-    return Offset(
-      localOffset.dx.clamp(0.0, math.max(0.0, size.width)),
-      localOffset.dy.clamp(0.0, math.max(0.0, size.height)),
-    );
-  }
+  Offset _clampToSurface(Offset localOffset, Size size) => Offset(
+    localOffset.dx.clamp(0.0, math.max(0.0, size.width)),
+    localOffset.dy.clamp(0.0, math.max(0.0, size.height)),
+  );
 
   RenderBox? _resolveSurfaceBox() {
     final RenderObject? renderObject = _surfaceKey.currentContext
         ?.findRenderObject();
-    if (renderObject is RenderBox &&
-        renderObject.attached &&
-        renderObject.hasSize) {
-      return renderObject;
-    }
-    return null;
+    return renderObject is RenderBox &&
+            renderObject.attached &&
+            renderObject.hasSize
+        ? renderObject
+        : null;
+  }
+
+  void _clearActiveDrag() {
+    setState(() {
+      _activePointerId = null;
+      _dragStartLocal = null;
+      _dragCurrentLocal = null;
+    });
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (_activePointerId != null) {
-      return;
-    }
-    if (event.kind == PointerDeviceKind.mouse &&
-        (event.buttons & kPrimaryMouseButton) == 0) {
-      return;
-    }
-    final bool shouldIntercept =
-        widget.selectionController.selectMode ||
-        HardwareKeyboard.instance.isShiftPressed;
-    if (!shouldIntercept) {
+    if (_activePointerId != null ||
+        (event.kind == PointerDeviceKind.mouse &&
+            (event.buttons & kPrimaryMouseButton) == 0) ||
+        (!widget.selectionController.selectMode &&
+            !HardwareKeyboard.instance.isShiftPressed)) {
       return;
     }
     final RenderBox? surfaceBox = _resolveSurfaceBox();
@@ -395,28 +601,20 @@ class _EmbedSelectablePreviewSurfaceState
     if (event.pointer != _activePointerId) {
       return;
     }
-    final RenderBox? surfaceBox = _resolveSurfaceBox();
-    if (surfaceBox == null) {
-      return;
+    if (_resolveSurfaceBox() case final RenderBox surfaceBox) {
+      setState(() {
+        _dragCurrentLocal = _clampToSurface(
+          surfaceBox.globalToLocal(event.position),
+          surfaceBox.size,
+        );
+      });
     }
-    final Offset localCurrent = _clampToSurface(
-      surfaceBox.globalToLocal(event.position),
-      surfaceBox.size,
-    );
-    setState(() {
-      _dragCurrentLocal = localCurrent;
-    });
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
-    if (event.pointer != _activePointerId) {
-      return;
+    if (event.pointer == _activePointerId) {
+      _clearActiveDrag();
     }
-    setState(() {
-      _activePointerId = null;
-      _dragStartLocal = null;
-      _dragCurrentLocal = null;
-    });
   }
 
   void _handlePointerUp(PointerUpEvent event) {
@@ -425,11 +623,7 @@ class _EmbedSelectablePreviewSurfaceState
     }
     final RenderBox? surfaceBox = _resolveSurfaceBox();
     final Offset? start = _dragStartLocal;
-    setState(() {
-      _activePointerId = null;
-      _dragStartLocal = null;
-      _dragCurrentLocal = null;
-    });
+    _clearActiveDrag();
     if (surfaceBox == null || start == null) {
       return;
     }
@@ -440,14 +634,13 @@ class _EmbedSelectablePreviewSurfaceState
     );
     final int previewWidth = surfaceSize.width.round();
     final int previewHeight = surfaceSize.height.round();
-    final double dragDistance = (end - start).distance;
 
     final EmbedSelectionKind kind;
     final int x;
     final int y;
     final int width;
     final int height;
-    if (dragDistance < _kMinRegionDragDistance) {
+    if ((end - start).distance < _kMinRegionDragDistance) {
       kind = .point;
       x = end.dx.round().clamp(0, previewWidth);
       y = end.dy.round().clamp(0, previewHeight);
@@ -456,35 +649,19 @@ class _EmbedSelectablePreviewSurfaceState
     } else {
       kind = .region;
       final rawRect = Rect.fromPoints(start, end);
-      var left = rawRect.left.round().clamp(0, previewWidth);
-      var top = rawRect.top.round().clamp(0, previewHeight);
-      final int right = rawRect.right.round().clamp(0, previewWidth);
-      final int bottom = rawRect.bottom.round().clamp(0, previewHeight);
-      if (previewWidth > 0 && left >= previewWidth) {
-        left = previewWidth - 1;
-      }
-      if (previewHeight > 0 && top >= previewHeight) {
-        top = previewHeight - 1;
-      }
-      final int maxAllowedWidth = math.max(1, previewWidth - left);
-      final int maxAllowedHeight = math.max(1, previewHeight - top);
-      x = left;
-      y = top;
-      width = math.max(1, right - left).clamp(1, maxAllowedWidth);
-      height = math.max(1, bottom - top).clamp(1, maxAllowedHeight);
+      final int maxLeft = math.max(0, previewWidth - 1);
+      final int maxTop = math.max(0, previewHeight - 1);
+      x = rawRect.left.round().clamp(0, maxLeft);
+      y = rawRect.top.round().clamp(0, maxTop);
+      width = math
+          .max(1, rawRect.right.round().clamp(0, previewWidth) - x)
+          .clamp(1, math.max(1, previewWidth - x));
+      height = math
+          .max(1, rawRect.bottom.round().clamp(0, previewHeight) - y)
+          .clamp(1, math.max(1, previewHeight - y));
     }
 
     final GlobalKey contentKey = widget.previewContentKey ?? _fallbackChildKey;
-    final List<EmbedSelectedWidgetInfo> inspectedWidgets =
-        inspectPreviewSubtree(
-          height: height,
-          kind: kind,
-          rootContext: contentKey.currentContext,
-          surfaceBox: surfaceBox,
-          width: width,
-          x: x,
-          y: y,
-        );
     widget.selectionController.addSelection(
       brightness: widget.brightness,
       height: height,
@@ -494,7 +671,15 @@ class _EmbedSelectablePreviewSurfaceState
       previewName: widget.previewName,
       previewWidth: previewWidth,
       textScale: widget.textScale,
-      widgets: inspectedWidgets,
+      widgets: inspectPreviewSubtree(
+        height: height,
+        kind: kind,
+        rootContext: contentKey.currentContext,
+        surfaceBox: surfaceBox,
+        width: width,
+        x: x,
+        y: y,
+      ),
       width: width,
       x: x,
       y: y,
@@ -513,13 +698,8 @@ class _EmbedSelectablePreviewSurfaceState
     return ListenableBuilder(
       listenable: selectionController,
       builder: (BuildContext context, Widget? _) {
-        final bool selectMode = selectionController.selectMode;
-        final bool suppressChildPointers = selectMode || _isDragging;
-        final previewSelections = <EmbedSelectionEntry>[
-          for (final EmbedSelectionEntry entry
-              in selectionController.selections)
-            if (entry.previewId == previewId) entry,
-        ];
+        final bool suppressChildPointers =
+            selectionController.selectMode || _activePointerId != null;
         final Rect? marqueeRect = switch ((
           _dragStartLocal,
           _dragCurrentLocal,
@@ -530,16 +710,16 @@ class _EmbedSelectablePreviewSurfaceState
           ),
           _ => null,
         };
-
-        final Widget wrappedChild = previewContentKey == null
-            ? KeyedSubtree(key: _fallbackChildKey, child: child)
-            : child;
-
         return Stack(
           key: _surfaceKey,
           clipBehavior: Clip.none,
           children: <Widget>[
-            IgnorePointer(ignoring: suppressChildPointers, child: wrappedChild),
+            IgnorePointer(
+              ignoring: suppressChildPointers,
+              child: previewContentKey == null
+                  ? KeyedSubtree(key: _fallbackChildKey, child: child)
+                  : child,
+            ),
             Positioned.fill(
               child: MouseRegion(
                 cursor: suppressChildPointers
@@ -554,206 +734,148 @@ class _EmbedSelectablePreviewSurfaceState
                   onPointerMove: _handlePointerMove,
                   onPointerUp: _handlePointerUp,
                   onPointerCancel: _handlePointerCancel,
-                  child: marqueeRect != null
-                      ? IgnorePointer(
-                          child: CustomPaint(
-                            key: ValueKey<String>(
-                              'embed-selection-marquee-$previewId',
-                            ),
-                            painter: _MarqueePainter(rect: marqueeRect),
-                          ),
-                        )
-                      : const SizedBox.expand(),
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),
-            for (final EmbedSelectionEntry entry in previewSelections)
-              ..._buildSelectionOverlayWidgets(entry),
+            if (marqueeRect != null)
+              Positioned.fromRect(
+                rect: marqueeRect,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    key: ValueKey<String>('embed-selection-marquee-$previewId'),
+                    decoration: _kSelectionBoxDecoration,
+                  ),
+                ),
+              ),
+            for (final (int i, EmbedSelectionEntry entry)
+                in selectionController.selections.indexed)
+              if (entry.previewId == previewId)
+                ..._buildSelectionOverlayWidgets(entry, i + 1),
           ],
         );
       },
     );
   }
 
-  List<Widget> _buildSelectionOverlayWidgets(EmbedSelectionEntry entry) {
-    final double maxLeft = math.max(
-      0.0,
-      entry.previewWidth.toDouble() - _kBadgeEstimatedWidth,
-    );
-    final double maxTop = math.max(
-      0.0,
-      entry.previewHeight.toDouble() - _kBadgeHeight,
-    );
+  List<Widget> _buildSelectionOverlayWidgets(
+    EmbedSelectionEntry entry,
+    int displayIndex,
+  ) {
     final double rawBadgeTop = switch (entry.kind) {
       .region =>
-        entry.y >= (_kBadgeHeight + 2.0)
-            ? entry.y.toDouble() - _kBadgeHeight - 2.0
-            : entry.y.toDouble() + 2.0,
-      .point => entry.y.toDouble() - _kBadgeHeight - 4.0,
+        entry.y >= (_kBadgeHeight + _kBadgeOffset)
+            ? entry.y - _kBadgeHeight - _kBadgeOffset
+            : entry.y + _kBadgeOffset,
+      .point => entry.y - _kBadgeHeight - _kBadgePointOffset,
     };
-    final double badgeLeft = entry.x.toDouble().clamp(0.0, maxLeft);
-    final double badgeTop = rawBadgeTop.clamp(0.0, maxTop);
-
+    final double badgeLeft = entry.x.toDouble().clamp(
+      0.0,
+      math.max(0.0, entry.previewWidth - _kBadgeEstimatedWidth),
+    );
+    final double badgeTop = rawBadgeTop.clamp(
+      0.0,
+      math.max(0.0, entry.previewHeight - _kBadgeHeight),
+    );
+    final overlayKey = ValueKey<String>('embed-selection-overlay-${entry.id}');
     final Widget indicator = switch (entry.kind) {
       .region => Positioned(
-        key: ValueKey<String>('embed-selection-overlay-${entry.id}'),
+        key: overlayKey,
         left: entry.x.toDouble(),
         top: entry.y.toDouble(),
         width: entry.width.toDouble(),
         height: entry.height.toDouble(),
-        child: IgnorePointer(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: _kSelectionFillColor,
-              border: Border.all(
-                color: _kSelectionBorderColor,
-                width: _kSelectionBorderWidth,
-              ),
-            ),
-          ),
+        child: const IgnorePointer(
+          child: DecoratedBox(decoration: _kSelectionBoxDecoration),
         ),
       ),
       .point => Positioned(
-        key: ValueKey<String>('embed-selection-overlay-${entry.id}'),
-        left: entry.x.toDouble() - (_kPointOverlayExtent / 2.0),
-        top: entry.y.toDouble() - (_kPointOverlayExtent / 2.0),
+        key: overlayKey,
+        left: entry.x - (_kPointOverlayExtent / 2),
+        top: entry.y - (_kPointOverlayExtent / 2),
         width: _kPointOverlayExtent,
         height: _kPointOverlayExtent,
         child: const IgnorePointer(
-          child: CustomPaint(painter: _PointPinPainter()),
+          child: DecoratedBox(decoration: _kPointPinDecoration),
         ),
       ),
     };
 
-    final Widget badgeContent = Directionality(
-      textDirection: TextDirection.ltr,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _kBadgeBackgroundColor,
-          borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
+    final Widget badge = Positioned(
+      left: badgeLeft,
+      top: badgeTop,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: entry.previewWidth > 0
+              ? entry.previewWidth.toDouble()
+              : _kBadgeEstimatedWidth,
         ),
-        child: SizedBox(
-          height: _kBadgeHeight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: _kBadgeHorizontalPadding,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                IgnorePointer(
-                  child: Text(
-                    '#${entry.index}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: _kBadgeFontSize,
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
-                    ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: _kBadgeBackgroundColor,
+                borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
+              ),
+              child: SizedBox(
+                height: _kBadgeHeight,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _kBadgeHorizontalPadding,
                   ),
-                ),
-                const SizedBox(width: _kBadgeSpacing),
-                MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    key: ValueKey<String>('embed-selection-remove-${entry.id}'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => widget.selectionController.removeSelectionById(
-                      entry.id,
-                    ),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 2.0),
-                      child: Text(
-                        '\u00D7',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13.0,
-                          fontWeight: FontWeight.bold,
-                          height: 1.0,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      IgnorePointer(
+                        child: Text(
+                          '#$displayIndex',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: _kBadgeFontSize,
+                            fontWeight: FontWeight.w600,
+                            height: 1.0,
+                          ),
                         ),
                       ),
-                    ),
+                      const SizedBox(width: _kBadgeSpacing),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          key: ValueKey<String>(
+                            'embed-selection-remove-${entry.id}',
+                          ),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => widget.selectionController
+                              .removeSelectionById(entry.id),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: _kBadgeOffset,
+                            ),
+                            child: Text(
+                              '\u00D7',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: _kBadgeRemoveFontSize,
+                                fontWeight: FontWeight.bold,
+                                height: 1.0,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
 
-    final Widget badge = Positioned(
-      left: badgeLeft,
-      top: badgeTop,
-      child:
-          entry.previewWidth > 0 && entry.previewWidth < _kBadgeEstimatedWidth
-          ? ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: entry.previewWidth.toDouble(),
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: badgeContent,
-              ),
-            )
-          : badgeContent,
-    );
-
     return <Widget>[indicator, badge];
   }
-}
-
-class _MarqueePainter extends CustomPainter {
-  const _MarqueePainter({required this.rect});
-
-  final Rect rect;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final fillPaint = Paint()
-      ..color = _kSelectionFillColor
-      ..style = PaintingStyle.fill;
-    final borderPaint = Paint()
-      ..color = _kSelectionBorderColor
-      ..strokeWidth = _kSelectionBorderWidth
-      ..style = PaintingStyle.stroke;
-    canvas
-      ..drawRect(rect, fillPaint)
-      ..drawRect(rect, borderPaint);
-  }
-
-  @override
-  bool shouldRepaint(_MarqueePainter oldDelegate) => oldDelegate.rect != rect;
-}
-
-class _PointPinPainter extends CustomPainter {
-  const _PointPinPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2.0, size.height / 2.0);
-    final strokePaint = Paint()
-      ..color = _kSelectionBorderColor
-      ..strokeWidth = _kSelectionBorderWidth
-      ..style = PaintingStyle.stroke;
-    final fillPaint = Paint()
-      ..color = _kSelectionBorderColor
-      ..style = PaintingStyle.fill;
-    canvas
-      ..drawLine(
-        Offset(center.dx - _kPointCrosshairArm, center.dy),
-        Offset(center.dx + _kPointCrosshairArm, center.dy),
-        strokePaint,
-      )
-      ..drawLine(
-        Offset(center.dx, center.dy - _kPointCrosshairArm),
-        Offset(center.dx, center.dy + _kPointCrosshairArm),
-        strokePaint,
-      )
-      ..drawCircle(center, _kPointDotRadius, fillPaint);
-  }
-
-  @override
-  bool shouldRepaint(_PointPinPainter oldDelegate) => false;
 }

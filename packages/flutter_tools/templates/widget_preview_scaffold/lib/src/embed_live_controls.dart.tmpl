@@ -2,11 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
+import 'dart:async' show unawaited;
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/embed_selection.dart';
@@ -15,9 +14,10 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 
 const _kBarBackgroundColor = Color(0xFF1E1E1E);
 const _kBarBorderColor = Color(0xFF333333);
+const _kChipFontSize = 11.0;
+const _kChipRemoveIconSize = 14.0;
 const _kCompactFontSize = 12.0;
 const _kCompactLabelFontSize = 11.0;
-const _kCopiedResetDelay = Duration(seconds: 2);
 const _kDesktopPresetWidth = 1280.0;
 const _kDimensionFieldBorderRadius = 6.0;
 const _kDimensionFieldPadding = EdgeInsets.all(6);
@@ -41,6 +41,25 @@ const _kResizeGripThickness = 4.0;
 const _kResizeHandleThickness = 12.0;
 const _kSelectedAccentColor = Color(0xFF2563EB);
 const _kTabletPresetWidth = 768.0;
+
+const _kWidthPresets = <({Key key, String label, double? width})>[
+  (key: Key('embed-live-width-responsive'), label: 'Responsive', width: null),
+  (
+    key: Key('embed-live-width-375'),
+    label: '375px',
+    width: _kMobilePresetWidth,
+  ),
+  (
+    key: Key('embed-live-width-768'),
+    label: '768px',
+    width: _kTabletPresetWidth,
+  ),
+  (
+    key: Key('embed-live-width-1280'),
+    label: '1280px',
+    width: _kDesktopPresetWidth,
+  ),
+];
 
 /// Top toolbar for `/live` and `#live=1` embed mode, providing preview
 /// selection, brightness, Light+Dark split, viewport presets, zoom, bounds
@@ -92,19 +111,8 @@ class EmbedLiveTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final double zoom = params.zoom ?? EmbedPreviewParams.kDefaultZoom;
-    final bool canZoomOut =
-        zoom > EmbedPreviewParams.kMinZoom + EmbedPreviewParams.kZoomEpsilon;
-    final bool canZoomIn =
-        zoom < EmbedPreviewParams.kMaxZoom - EmbedPreviewParams.kZoomEpsilon;
     final String selectedPreviewValue =
         resolvedPreviewId ?? EmbedPreviewParams.kAllPreviewsValue;
-    final bool isResponsive = params.width == null && params.height == null;
-    final bool isMobile =
-        params.width == _kMobilePresetWidth && params.height == null;
-    final bool isTablet =
-        params.width == _kTabletPresetWidth && params.height == null;
-    final bool isDesktop =
-        params.width == _kDesktopPresetWidth && params.height == null;
 
     return Theme(
       data: ThemeData.dark(),
@@ -134,22 +142,26 @@ class EmbedLiveTopBar extends StatelessWidget {
                       style: _compactButtonStyle(),
                       child: const Text('All Previews'),
                     ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-brightness-light'),
-                    label: 'Light',
-                    selected:
-                        !isSplitBrightness &&
-                        params.brightness == Brightness.light,
-                    onPressed: () => _selectBrightness(Brightness.light),
-                  ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-brightness-dark'),
-                    label: 'Dark',
-                    selected:
-                        !isSplitBrightness &&
-                        params.brightness == Brightness.dark,
-                    onPressed: () => _selectBrightness(Brightness.dark),
-                  ),
+                  for (final (Brightness target, Key key, String label)
+                      in const <(Brightness, Key, String)>[
+                        (
+                          Brightness.light,
+                          Key('embed-live-brightness-light'),
+                          'Light',
+                        ),
+                        (
+                          Brightness.dark,
+                          Key('embed-live-brightness-dark'),
+                          'Dark',
+                        ),
+                      ])
+                    _buildToggleButton(
+                      key: key,
+                      label: label,
+                      selected:
+                          !isSplitBrightness && params.brightness == target,
+                      onPressed: () => _selectBrightness(target),
+                    ),
                   _buildToggleButton(
                     key: const Key('embed-live-split-brightness'),
                     label: 'Light + Dark',
@@ -157,56 +169,25 @@ class EmbedLiveTopBar extends StatelessWidget {
                     onPressed: () =>
                         onSplitBrightnessChanged(!isSplitBrightness),
                   ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-width-responsive'),
-                    label: 'Responsive',
-                    selected: isResponsive,
-                    onPressed: () => onParamsChanged(
-                      params.copyWith(clearWidth: true, clearHeight: true),
-                    ),
-                  ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-width-375'),
-                    label: '375px',
-                    selected: isMobile,
-                    onPressed: () => onParamsChanged(
-                      params.copyWith(
-                        width: _kMobilePresetWidth,
-                        clearHeight: true,
+                  for (final (:Key key, :String label, :double? width)
+                      in _kWidthPresets)
+                    _buildToggleButton(
+                      key: key,
+                      label: label,
+                      selected: params.width == width && params.height == null,
+                      onPressed: () => onParamsChanged(
+                        params.copyWith(
+                          width: width,
+                          clearWidth: width == null,
+                          clearHeight: true,
+                        ),
                       ),
                     ),
-                  ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-width-768'),
-                    label: '768px',
-                    selected: isTablet,
-                    onPressed: () => onParamsChanged(
-                      params.copyWith(
-                        width: _kTabletPresetWidth,
-                        clearHeight: true,
-                      ),
-                    ),
-                  ),
-                  _buildToggleButton(
-                    key: const Key('embed-live-width-1280'),
-                    label: '1280px',
-                    selected: isDesktop,
-                    onPressed: () => onParamsChanged(
-                      params.copyWith(
-                        width: _kDesktopPresetWidth,
-                        clearHeight: true,
-                      ),
-                    ),
-                  ),
                   _ViewportSizeInputs(
                     onParamsChanged: onParamsChanged,
                     params: params,
                   ),
-                  _buildZoomControls(
-                    zoom: zoom,
-                    canZoomOut: canZoomOut,
-                    canZoomIn: canZoomIn,
-                  ),
+                  _buildZoomControls(zoom),
                   _buildToggleButton(
                     key: const Key('embed-live-bounds-toggle'),
                     label: 'Bounds',
@@ -215,16 +196,15 @@ class EmbedLiveTopBar extends StatelessWidget {
                   ),
                   ListenableBuilder(
                     listenable: selectionController,
-                    builder: (BuildContext context, Widget? _) {
-                      return _buildToggleButton(
-                        key: const Key('embed-live-select-toggle'),
-                        label: 'Select',
-                        selected: selectionController.selectMode,
-                        onPressed: () => selectionController.setSelectMode(
-                          !selectionController.selectMode,
+                    builder: (BuildContext context, Widget? _) =>
+                        _buildToggleButton(
+                          key: const Key('embed-live-select-toggle'),
+                          label: 'Select',
+                          selected: selectionController.selectMode,
+                          onPressed: () => selectionController.setSelectMode(
+                            !selectionController.selectMode,
+                          ),
                         ),
-                      );
-                    },
                   ),
                   if (resolvedPreviewId case final String previewId)
                     CopyFeedbackButton(
@@ -242,7 +222,10 @@ class EmbedLiveTopBar extends StatelessWidget {
                   ),
                   Text(
                     isSyncing ? 'Syncing...' : '${previews.length} preview(s)',
-                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                    style: const TextStyle(
+                      fontSize: _kCompactFontSize,
+                      color: Colors.white70,
+                    ),
                   ),
                 ],
               ),
@@ -266,14 +249,14 @@ class EmbedLiveTopBar extends StatelessWidget {
                       child: Text(
                         error,
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: _kCompactFontSize,
                           color: _kErrorTextColor,
                         ),
                       ),
                     ),
                     IconButton(
                       key: const Key('embed-live-error-dismiss'),
-                      icon: const Icon(Icons.close, size: 16),
+                      icon: const Icon(Icons.close, size: _kDropdownIconSize),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                       onPressed: onDismissSyncError,
@@ -306,7 +289,10 @@ class EmbedLiveTopBar extends StatelessWidget {
   }
 
   Widget _buildPreviewSelector(String selectedValue) {
-    final String selectedLabel = _selectedPreviewLabel(selectedValue);
+    const itemTextStyle = TextStyle(
+      fontSize: _kCompactFontSize,
+      color: Colors.white,
+    );
     return MenuAnchor(
       style: const MenuStyle(
         backgroundColor: WidgetStatePropertyAll<Color>(_kBarBackgroundColor),
@@ -320,10 +306,7 @@ class EmbedLiveTopBar extends StatelessWidget {
               onParamsChanged(params.copyWith(clearPreviewId: true)),
           child: Text(
             'All Previews (${previews.length})',
-            style: const TextStyle(
-              fontSize: _kCompactFontSize,
-              color: Colors.white,
-            ),
+            style: itemTextStyle,
           ),
         ),
         for (final WidgetPreview preview in previews)
@@ -334,51 +317,46 @@ class EmbedLiveTopBar extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: _kMenuMaxItemWidth),
               child: Text(
                 _formatPreviewLabel(preview),
-                style: const TextStyle(
-                  fontSize: _kCompactFontSize,
-                  color: Colors.white,
-                ),
+                style: itemTextStyle,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ),
       ],
-      builder:
-          (BuildContext context, MenuController menuController, Widget? _) {
-            return ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: _kPreviewSelectorMaxWidth,
-              ),
-              child: OutlinedButton(
-                key: const Key('embed-live-preview-selector'),
-                onPressed: () => menuController.isOpen
-                    ? menuController.close()
-                    : menuController.open(),
-                style: _compactButtonStyle(),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Flexible(
-                      child: Text(
-                        selectedLabel,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+      builder: (BuildContext _, MenuController menuController, Widget? _) =>
+          ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: _kPreviewSelectorMaxWidth,
+            ),
+            child: OutlinedButton(
+              key: const Key('embed-live-preview-selector'),
+              onPressed: () => menuController.isOpen
+                  ? menuController.close()
+                  : menuController.open(),
+              style: _compactButtonStyle(),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Flexible(
+                    child: Text(
+                      _selectedPreviewLabel(selectedValue),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(width: _kInlineControlGap),
-                    const Icon(Icons.arrow_drop_down, size: _kDropdownIconSize),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: _kInlineControlGap),
+                  const Icon(Icons.arrow_drop_down, size: _kDropdownIconSize),
+                ],
               ),
-            );
-          },
+            ),
+          ),
     );
   }
 
-  Widget _buildZoomControls({
-    required double zoom,
-    required bool canZoomOut,
-    required bool canZoomIn,
-  }) {
+  Widget _buildZoomControls(double zoom) {
+    final bool canZoomOut =
+        zoom > EmbedPreviewParams.kMinZoom + EmbedPreviewParams.kZoomEpsilon;
+    final bool canZoomIn =
+        zoom < EmbedPreviewParams.kMaxZoom - EmbedPreviewParams.kZoomEpsilon;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -390,14 +368,14 @@ class EmbedLiveTopBar extends StatelessWidget {
           style: _compactButtonStyle(),
           child: const Text('-'),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: _kInlineControlGap),
         OutlinedButton(
           key: const Key('embed-live-zoom-reset'),
           onPressed: () => onZoomChanged(EmbedPreviewParams.kDefaultZoom),
           style: _compactButtonStyle(),
           child: Text('${(zoom * 100).round()}%'),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: _kInlineControlGap),
         OutlinedButton(
           key: const Key('embed-live-zoom-in'),
           onPressed: canZoomIn
@@ -413,16 +391,14 @@ class EmbedLiveTopBar extends StatelessWidget {
   Widget _buildToggleButton({
     required Key key,
     required String label,
-    required bool selected,
     required VoidCallback onPressed,
-  }) {
-    return OutlinedButton(
-      key: key,
-      onPressed: onPressed,
-      style: _compactButtonStyle(selected: selected),
-      child: Text(label),
-    );
-  }
+    required bool selected,
+  }) => OutlinedButton(
+    key: key,
+    onPressed: onPressed,
+    style: _compactButtonStyle(selected: selected),
+    child: Text(label),
+  );
 }
 
 /// Bottom selection tray for `/live` and `#live=1`, rendered only when at least
@@ -443,10 +419,8 @@ class EmbedLiveSelectionBar extends StatefulWidget {
 
 class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
   final _noteController = TextEditingController();
-  var _copied = false;
   var _isSending = false;
   String? _sendError;
-  Timer? _copiedResetTimer;
 
   @override
   void initState() {
@@ -456,38 +430,12 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
 
   @override
   void dispose() {
-    _copiedResetTimer?.cancel();
-    _noteController
-      ..removeListener(_onNoteChanged)
-      ..dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
   void _onNoteChanged() {
-    setState(() {
-      if (_sendError != null) {
-        _sendError = null;
-      }
-    });
-  }
-
-  Future<void> _copyContext(List<EmbedSelectionEntry> selections) async {
-    final String text = formatEmbedSelectionContext(selections: selections);
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) {
-      return;
-    }
-    _copiedResetTimer?.cancel();
-    setState(() {
-      _copied = true;
-    });
-    _copiedResetTimer = Timer(_kCopiedResetDelay, () {
-      if (mounted) {
-        setState(() {
-          _copied = false;
-        });
-      }
-    });
+    setState(() => _sendError = null);
   }
 
   Future<void> _sendToChat(List<EmbedSelectionEntry> selections) async {
@@ -510,9 +458,7 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
         selections: widget.selectionController.selectionsJson,
         brightness: params.brightness?.name,
         previewId: params.previewId,
-        previewName: selections.isNotEmpty
-            ? selections.first.previewName
-            : null,
+        previewName: selections.firstOrNull?.previewName,
         textScale: params.textScale != null
             ? formatEmbedZoom(params.textScale!)
             : null,
@@ -524,17 +470,14 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
       }
       _noteController.clear();
       widget.selectionController.clearSelections();
-      setState(() {
-        _isSending = false;
-      });
+      setState(() => _isSending = false);
     } on Object catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendError = error.toString();
+        });
       }
-      setState(() {
-        _isSending = false;
-        _sendError = error.toString();
-      });
     }
   }
 
@@ -569,27 +512,31 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: <Widget>[
-                      for (final EmbedSelectionEntry entry in selections)
+                      for (final (int i, EmbedSelectionEntry entry)
+                          in selections.indexed)
                         InputChip(
                           key: Key('embed-live-chip-${entry.id}'),
                           label: Text(
-                            '#${entry.index} ${entry.previewName ?? entry.previewId}',
-                            style: const TextStyle(fontSize: 11),
+                            '#${i + 1} ${entry.previewName ?? entry.previewId}',
+                            style: const TextStyle(fontSize: _kChipFontSize),
                           ),
                           deleteIcon: Icon(
                             Icons.close,
                             key: Key('embed-live-chip-remove-${entry.id}'),
-                            size: 14,
+                            size: _kChipRemoveIconSize,
                           ),
                           onDeleted: () => widget.selectionController
                               .removeSelectionById(entry.id),
                           visualDensity: VisualDensity.compact,
                         ),
-                      OutlinedButton(
+                      CopyFeedbackButton(
                         key: const Key('embed-live-copy-button'),
-                        onPressed: () => _copyContext(selections),
+                        copiedLabel: 'Copied!',
+                        label: 'Copy Context',
                         style: _compactButtonStyle(),
-                        child: Text(_copied ? 'Copied!' : 'Copy Context'),
+                        textToCopy: formatEmbedSelectionContext(
+                          selections: selections,
+                        ),
                       ),
                       OutlinedButton(
                         key: const Key('embed-live-clear-button'),
@@ -607,14 +554,11 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
                           child: TextField(
                             key: const Key('embed-live-note-input'),
                             controller: _noteController,
-                            style: const TextStyle(fontSize: 12),
+                            style: const TextStyle(fontSize: _kCompactFontSize),
                             decoration: const InputDecoration(
                               hintText: 'Ask about selected region(s)...',
                               isDense: true,
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 8,
-                              ),
+                              contentPadding: EdgeInsets.all(8),
                               border: OutlineInputBorder(),
                             ),
                             onSubmitted: (_) {
@@ -637,12 +581,12 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
                     ),
                     if (_sendError case final String error)
                       Padding(
-                        padding: const EdgeInsets.only(top: 4),
+                        padding: const EdgeInsets.only(top: _kInlineControlGap),
                         child: Text(
                           error,
                           key: const Key('embed-live-send-error'),
                           style: const TextStyle(
-                            fontSize: 11,
+                            fontSize: _kChipFontSize,
                             color: _kErrorTextColor,
                           ),
                         ),
@@ -658,19 +602,18 @@ class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
   }
 }
 
-ButtonStyle _compactButtonStyle({bool selected = false}) {
-  return OutlinedButton.styleFrom(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-    minimumSize: Size.zero,
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    textStyle: const TextStyle(fontSize: 12),
-    backgroundColor: selected ? _kSelectedAccentColor : null,
-    foregroundColor: Colors.white,
-    side: BorderSide(
-      color: selected ? _kSelectedAccentColor : _kBarBorderColor,
-    ),
-  );
-}
+ButtonStyle _compactButtonStyle({bool selected = false}) =>
+    OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      textStyle: const TextStyle(fontSize: _kCompactFontSize),
+      backgroundColor: selected ? _kSelectedAccentColor : null,
+      foregroundColor: Colors.white,
+      side: BorderSide(
+        color: selected ? _kSelectedAccentColor : _kBarBorderColor,
+      ),
+    );
 
 class _ViewportSizeInputs extends StatefulWidget {
   const _ViewportSizeInputs({
@@ -701,8 +644,16 @@ class _ViewportSizeInputsState extends State<_ViewportSizeInputs> {
   @override
   void initState() {
     super.initState();
-    _widthFocusNode.addListener(_handleWidthFocusChanged);
-    _heightFocusNode.addListener(_handleHeightFocusChanged);
+    _widthFocusNode.addListener(() {
+      if (!_widthFocusNode.hasFocus) {
+        _commitDimension(isWidth: true);
+      }
+    });
+    _heightFocusNode.addListener(() {
+      if (!_heightFocusNode.hasFocus) {
+        _commitDimension(isWidth: false);
+      }
+    });
   }
 
   @override
@@ -725,38 +676,21 @@ class _ViewportSizeInputsState extends State<_ViewportSizeInputs> {
     double? previous,
     double? current,
   ) {
-    if (previous == current) {
-      return;
-    }
-    final String formatted = _formatDimension(current);
-    if (controller.text != formatted) {
-      controller.text = formatted;
+    if (previous != current) {
+      final String formatted = _formatDimension(current);
+      if (controller.text != formatted) {
+        controller.text = formatted;
+      }
     }
   }
 
   @override
   void dispose() {
-    _widthFocusNode
-      ..removeListener(_handleWidthFocusChanged)
-      ..dispose();
-    _heightFocusNode
-      ..removeListener(_handleHeightFocusChanged)
-      ..dispose();
+    _widthFocusNode.dispose();
+    _heightFocusNode.dispose();
     _widthController.dispose();
     _heightController.dispose();
     super.dispose();
-  }
-
-  void _handleWidthFocusChanged() {
-    if (!_widthFocusNode.hasFocus) {
-      _commitDimension(isWidth: true);
-    }
-  }
-
-  void _handleHeightFocusChanged() {
-    if (!_heightFocusNode.hasFocus) {
-      _commitDimension(isWidth: false);
-    }
   }
 
   void _commitDimension({required bool isWidth}) {
@@ -771,9 +705,7 @@ class _ViewportSizeInputsState extends State<_ViewportSizeInputs> {
       controller.text = '';
       if (current != null) {
         widget.onParamsChanged(
-          isWidth
-              ? widget.params.copyWith(clearWidth: true)
-              : widget.params.copyWith(clearHeight: true),
+          widget.params.copyWith(clearWidth: isWidth, clearHeight: !isWidth),
         );
       }
       return;
@@ -933,12 +865,11 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
   Size? _currentLogicalFrameSize() {
     final RenderObject? renderObject = widget.logicalFrameKey.currentContext
         ?.findRenderObject();
-    if (renderObject is RenderBox &&
-        renderObject.attached &&
-        renderObject.hasSize) {
-      return renderObject.size;
-    }
-    return null;
+    return renderObject is RenderBox &&
+            renderObject.attached &&
+            renderObject.hasSize
+        ? renderObject.size
+        : null;
   }
 
   void _startDrag(_ResizeHandleKind kind) {
@@ -964,14 +895,12 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
     double? clampedWidth;
     double? clampedHeight;
     if (kind != _ResizeHandleKind.height) {
-      final double nextWidth = _dragWidth! + delta.dx / widget.zoom;
-      _dragWidth = nextWidth;
-      clampedWidth = math.max(_kMinResizeExtent, nextWidth).roundToDouble();
+      _dragWidth = _dragWidth! + delta.dx / widget.zoom;
+      clampedWidth = math.max(_kMinResizeExtent, _dragWidth!).roundToDouble();
     }
     if (kind != _ResizeHandleKind.width) {
-      final double nextHeight = _dragHeight! + delta.dy / widget.zoom;
-      _dragHeight = nextHeight;
-      clampedHeight = math.max(_kMinResizeExtent, nextHeight).roundToDouble();
+      _dragHeight = _dragHeight! + delta.dy / widget.zoom;
+      clampedHeight = math.max(_kMinResizeExtent, _dragHeight!).roundToDouble();
     }
     widget.onParamsChanged(
       widget.params.copyWith(height: clampedHeight, width: clampedWidth),
@@ -1004,27 +933,22 @@ class _EmbedLiveResizableFrameState extends State<EmbedLiveResizableFrame> {
     final Color color = _hoveredKind == kind || _activeKind == kind
         ? _kGripHoverColor
         : _kGripColor;
-    final Widget grip = switch (kind) {
-      _ResizeHandleKind.width || _ResizeHandleKind.height => DecoratedBox(
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(_kResizeGripRadius),
-        ),
-        child: SizedBox(
-          width: kind == _ResizeHandleKind.width
-              ? _kResizeGripThickness
-              : _kResizeGripLength,
-          height: kind == _ResizeHandleKind.width
-              ? _kResizeGripLength
-              : _kResizeGripThickness,
-        ),
-      ),
-      _ResizeHandleKind.corner => Icon(
-        Icons.south_east,
-        size: _kResizeCornerIconSize,
-        color: color,
-      ),
-    };
+    final Widget grip = kind == _ResizeHandleKind.corner
+        ? Icon(Icons.south_east, size: _kResizeCornerIconSize, color: color)
+        : DecoratedBox(
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(_kResizeGripRadius),
+            ),
+            child: SizedBox(
+              width: kind == _ResizeHandleKind.width
+                  ? _kResizeGripThickness
+                  : _kResizeGripLength,
+              height: kind == _ResizeHandleKind.width
+                  ? _kResizeGripLength
+                  : _kResizeGripThickness,
+            ),
+          );
     return MouseRegion(
       key: key,
       cursor: cursor,

@@ -230,33 +230,25 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     reloadWindow();
   }
 
+  static bool _hasParam(Parameters params, String key) =>
+      params.value != null && params[key].valueOr(null) != null;
+
   Future<Map<String, Object?>> _getPreviews(Parameters params) async {
-    final String? fileUri =
-        params.value == null || params[kFileUri].valueOr(null) == null
-        ? null
-        : params[kFileUri].asString;
+    final String? fileUri = _hasParam(params, kFileUri)
+        ? params[kFileUri].asString
+        : null;
     final PreviewListResponse response =
-        onGetPreviews?.call(fileUri: fileUri) ??
-        const PreviewListResponse(previews: <PreviewEntry>[]);
+        onGetPreviews?.call(fileUri: fileUri) ?? PreviewListResponse.empty;
     return response.toJson();
   }
 
   Future<Map<String, Object?>> _capturePreview(Parameters params) async {
-    if (params.value == null || params[kPreviewId].valueOr(null) == null) {
+    if (!_hasParam(params, kPreviewId)) {
       throw RpcException.invalidParams(
         'Missing required parameter "$kPreviewId".',
       );
     }
-    final String previewId = params[kPreviewId].asString;
-    final double? width = _optionalPositiveDouble(params, kWidth);
-    final double? height = _optionalPositiveDouble(params, kHeight);
-    final double? pixelRatio = _optionalPositiveDouble(params, kPixelRatio);
-    final double? textScaleFactor = _optionalPositiveDouble(
-      params,
-      kTextScaleFactor,
-    );
-    final Brightness? brightness =
-        params.value == null || params[kBrightness].valueOr(null) == null
+    final Brightness? brightness = !_hasParam(params, kBrightness)
         ? null
         : switch (params[kBrightness].asString) {
             'light' => Brightness.light,
@@ -265,14 +257,6 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
               'Parameter "$kBrightness" must be "light" or "dark", got: "$other".',
             ),
           };
-    final bool includeImage =
-        params.value == null ||
-        params[kIncludeImage].valueOr(null) == null ||
-        params[kIncludeImage].asBool;
-    final int? pumpMs =
-        params.value == null || params[kPumpMs].valueOr(null) == null
-        ? null
-        : params[kPumpMs].asInt;
     final Future<CapturePreviewResponse> Function(PreviewCaptureRequest)?
     captureCallback = onCapturePreview;
     if (captureCallback == null) {
@@ -284,20 +268,21 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     final CapturePreviewResponse response = await captureCallback(
       PreviewCaptureRequest(
         brightness: brightness,
-        height: height,
-        includeImage: includeImage,
-        pixelRatio: pixelRatio,
-        previewId: previewId,
-        pumpMs: pumpMs,
-        textScaleFactor: textScaleFactor,
-        width: width,
+        height: _optionalPositiveDouble(params, kHeight),
+        includeImage:
+            !_hasParam(params, kIncludeImage) || params[kIncludeImage].asBool,
+        pixelRatio: _optionalPositiveDouble(params, kPixelRatio),
+        previewId: params[kPreviewId].asString,
+        pumpMs: _hasParam(params, kPumpMs) ? params[kPumpMs].asInt : null,
+        textScaleFactor: _optionalPositiveDouble(params, kTextScaleFactor),
+        width: _optionalPositiveDouble(params, kWidth),
       ),
     );
     return response.toJson();
   }
 
   static double? _optionalPositiveDouble(Parameters params, String key) {
-    if (params.value == null || params[key].valueOr(null) == null) {
+    if (!_hasParam(params, key)) {
       return null;
     }
     final double value = params[key].asNum.toDouble();

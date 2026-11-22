@@ -49,9 +49,6 @@ class EmbedPreviewScaffold extends StatefulWidget {
 }
 
 class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
-  static const _kBadgeBorderRadius = 4.0;
-  static const _kBadgeHorizontalPadding = 6.0;
-  static const _kBadgeVerticalPadding = 2.0;
   static const _kCardContentPadding = 12.0;
   static const _kCardHeaderChevronSize = 18.0;
   static const _kCardHeaderHoverAlpha = 0.06;
@@ -92,10 +89,9 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   }
 
   void _handleParamsChanged(EmbedPreviewParams nextParams) {
-    if (nextParams == _params) {
-      return;
+    if (nextParams != _params) {
+      widget.onParamsChanged?.call(nextParams);
     }
-    widget.onParamsChanged?.call(nextParams);
   }
 
   Future<void> _handleSyncPressed() async {
@@ -114,24 +110,20 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       }
       if (compileSuccess) {
         _selectionController.clearSelections();
-        setState(() {
-          _isSyncing = false;
-          _syncErrorMessage = null;
-        });
-      } else {
-        setState(() {
-          _isSyncing = false;
-          _syncErrorMessage = errorMessage ?? 'Preview compilation failed.';
-        });
-      }
-    } on Object catch (error) {
-      if (!mounted) {
-        return;
       }
       setState(() {
         _isSyncing = false;
-        _syncErrorMessage = error.toString();
+        _syncErrorMessage = compileSuccess
+            ? null
+            : (errorMessage ?? 'Preview compilation failed.');
       });
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _syncErrorMessage = error.toString();
+        });
+      }
     }
   }
 
@@ -156,11 +148,10 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   }
 
   void _emitZoom(double targetZoom) {
-    final double clamped = targetZoom.clamp(kMinPreviewZoom, kMaxPreviewZoom);
-    if ((clamped - widget.currentZoom()).abs() <= kPreviewZoomEpsilon) {
-      return;
+    final double clamped = clampPreviewZoom(targetZoom);
+    if ((clamped - widget.currentZoom()).abs() > kPreviewZoomEpsilon) {
+      widget.onZoomChanged(clamped);
     }
-    widget.onZoomChanged(clamped);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
@@ -175,14 +166,12 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     if (event is KeyDownEvent &&
         key == LogicalKeyboardKey.escape &&
         !isAltPressed &&
-        !isCtrlOrMeta) {
-      if (_selectionController.selectMode ||
-          (!_isEditableTextFocused() &&
-              _selectionController.selections.isNotEmpty)) {
-        if (_selectionController.handleEscapeKey()) {
-          return KeyEventResult.handled;
-        }
-      }
+        !isCtrlOrMeta &&
+        (_selectionController.selectMode ||
+            (!_isEditableTextFocused() &&
+                _selectionController.selections.isNotEmpty)) &&
+        _selectionController.handleEscapeKey()) {
+      return KeyEventResult.handled;
     }
     if (isAltPressed || _isEditableTextFocused()) {
       return KeyEventResult.ignored;
@@ -333,32 +322,25 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                 EmbedLiveTopBar(
                                   isSplitBrightness: _isSplitBrightness,
                                   isSyncing: _isSyncing,
-                                  onBoundsToggled: () {
-                                    setState(() {
-                                      _showBounds = !_showBounds;
-                                    });
-                                  },
-                                  onDismissSyncError: () {
-                                    setState(() {
-                                      _syncErrorMessage = null;
-                                    });
-                                  },
+                                  onBoundsToggled: () => setState(
+                                    () => _showBounds = !_showBounds,
+                                  ),
+                                  onDismissSyncError: () =>
+                                      setState(() => _syncErrorMessage = null),
                                   onParamsChanged: _handleParamsChanged,
                                   onSplitBrightnessChanged: (bool enabled) {
                                     if (_isSplitBrightness != enabled) {
-                                      setState(() {
-                                        _isSplitBrightness = enabled;
-                                      });
+                                      setState(
+                                        () => _isSplitBrightness = enabled,
+                                      );
                                     }
                                   },
                                   onSyncPressed: _handleSyncPressed,
                                   onZoomChanged: _emitZoom,
                                   params: params,
-                                  previews: <WidgetPreview>[
-                                    for (final WidgetPreviewGroup group
-                                        in controller.allPreviewGroups)
-                                      ...group.previews,
-                                  ],
+                                  previews: controller.previews.toList(
+                                    growable: false,
+                                  ),
                                   resolvedPreviewId:
                                       lookup is PreviewLookupMatch
                                       ? lookup.preview.id
@@ -395,27 +377,18 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   })
   _resolvePreviewSettings(BuildContext context, WidgetPreview preview) {
     final EmbedPreviewParams params = _params;
-    final double? previewWidth = switch (preview.size?.width) {
-      final double w when w.isFinite => w,
-      _ => null,
-    };
-    final double? previewHeight = switch (preview.size?.height) {
-      final double h when h.isFinite => h,
-      _ => null,
-    };
-    final double? resolvedTextScale = switch (params.textScale ??
-        preview.textScaleFactor) {
-      final double scale when scale.isFinite && scale > 0 => scale,
-      _ => null,
-    };
+    final double? candidateScale =
+        params.textScale ?? preview.finiteTextScaleFactor;
     return (
       resolvedBrightness:
           params.brightness ??
           preview.brightness ??
           Theme.of(context).brightness,
-      resolvedHeight: params.height ?? previewHeight,
-      resolvedTextScale: resolvedTextScale,
-      resolvedWidth: params.width ?? previewWidth,
+      resolvedHeight: params.height ?? preview.finiteHeight,
+      resolvedTextScale: candidateScale != null && candidateScale > 0
+          ? candidateScale
+          : null,
+      resolvedWidth: params.width ?? preview.finiteWidth,
     );
   }
 
@@ -435,16 +408,15 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         child: Padding(
           padding: bodyPadding,
           child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints paneConstraints) {
-              return _buildPreviewSubtree(
-                brightnessOverride: brightness,
-                context: context,
-                fallbackWindowHeight: fallbackWindowHeight,
-                outerConstraints: paneConstraints,
-                preview: preview,
-                viewportConstraints: paneConstraints,
-              );
-            },
+            builder: (BuildContext context, BoxConstraints paneConstraints) =>
+                _buildPreviewSubtree(
+                  brightnessOverride: brightness,
+                  context: context,
+                  fallbackWindowHeight: fallbackWindowHeight,
+                  outerConstraints: paneConstraints,
+                  preview: preview,
+                  viewportConstraints: paneConstraints,
+                ),
           ),
         ),
       );
@@ -473,7 +445,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                   ),
                   if (badgeLabel != null) ...<Widget>[
                     const Spacer(),
-                    _buildBadge(theme: theme, label: badgeLabel),
+                    PreviewInfoBadge(label: badgeLabel),
                   ],
                 ],
               ),
@@ -496,7 +468,6 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     required BoxConstraints outerConstraints,
     required WidgetPreview preview,
   }) {
-    final ThemeData theme = Theme.of(context);
     final double availableWidth =
         (outerConstraints.hasBoundedWidth
             ? outerConstraints.maxWidth
@@ -509,7 +480,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
               : _kDefaultWindowSize.height) -
           _kGalleryPadding * 2,
     );
-    final bool canPlaceSideBySide =
+    final bool sideBySide =
         availableWidth >= _kMinSplitPaneExtent * 2 + _kCardSpacing;
     final (Widget lightPane, Widget darkPane) = _buildLightDarkPanes(
       badgeLabel: preview.name ?? preview.functionName,
@@ -517,7 +488,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
       expandVertically: true,
       lightKey: const Key('embed-split-light'),
       preview: preview,
-      theme: theme,
+      theme: Theme.of(context),
     );
     final sideBySideRow = Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -527,7 +498,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         Expanded(child: darkPane),
       ],
     );
-    if (canPlaceSideBySide && outerConstraints.hasBoundedHeight) {
+    if (sideBySide && outerConstraints.hasBoundedHeight) {
       return Padding(
         padding: const EdgeInsets.all(_kGalleryPadding),
         child: sideBySideRow,
@@ -535,7 +506,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(_kGalleryPadding),
-      child: canPlaceSideBySide
+      child: sideBySide
           ? SizedBox(height: paneHeight, child: sideBySideRow)
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -569,24 +540,19 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
     );
     final Brightness appliedBrightness =
         brightnessOverride ?? resolvedBrightness;
-
-    final double constraintWidth =
-        resolvedWidth ??
-        (outerConstraints.hasBoundedWidth
-            ? outerConstraints.maxWidth
-            : _kDefaultWindowSize.width);
-    final double constraintHeight =
-        resolvedHeight ??
-        fallbackWindowHeight ??
-        (outerConstraints.hasBoundedHeight
-            ? outerConstraints.maxHeight
-            : _kDefaultWindowSize.height);
     final windowConstraints = BoxConstraints.loose(
-      Size(constraintWidth, constraintHeight),
+      Size(
+        resolvedWidth ??
+            (outerConstraints.hasBoundedWidth
+                ? outerConstraints.maxWidth
+                : _kDefaultWindowSize.width),
+        resolvedHeight ??
+            fallbackWindowHeight ??
+            (outerConstraints.hasBoundedHeight
+                ? outerConstraints.maxHeight
+                : _kDefaultWindowSize.height),
+      ),
     );
-
-    final double appliedTextScale =
-        resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0);
 
     return WidgetPreviewEnvironment(
       brightness: appliedBrightness,
@@ -607,7 +573,8 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         resolvedWidth: resolvedWidth,
         selectionController: _selectionController,
         showBounds: _showBounds,
-        textScale: appliedTextScale,
+        textScale:
+            resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0),
         viewportConstraints: viewportConstraints,
         zoom: _zoom,
       ),
@@ -660,7 +627,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                     ),
                   ),
                   const SizedBox(width: _kGroupHeaderSpacing),
-                  _buildBadge(theme: theme, label: '${group.previews.length}'),
+                  PreviewInfoBadge(label: '${group.previews.length}'),
                 ],
               ),
             ),
@@ -686,9 +653,9 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   }) {
     final ThemeData theme = Theme.of(context);
     final (
-      :Brightness resolvedBrightness,
+      resolvedBrightness: _,
       :double? resolvedHeight,
-      :double? resolvedTextScale,
+      resolvedTextScale: _,
       :double? resolvedWidth,
     ) = _resolvePreviewSettings(
       context,
@@ -732,7 +699,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                   ),
                   if (sizeLabel != null) ...<Widget>[
                     const SizedBox(width: _kGroupHeaderSpacing),
-                    _buildBadge(theme: theme, label: sizeLabel),
+                    PreviewInfoBadge(label: sizeLabel),
                   ],
                   const SizedBox(width: _kGroupHeaderSpacing),
                   Icon(
@@ -784,46 +751,30 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                             preview: preview,
                             theme: theme,
                           );
-                          if (cardConstraints.maxWidth <
-                              _kMinSplitPaneExtent * 2 + _kCardSpacing) {
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: <Widget>[
-                                lightPane,
-                                const SizedBox(height: _kCardSpacing),
-                                darkPane,
-                              ],
-                            );
-                          }
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Expanded(child: lightPane),
-                              const SizedBox(width: _kCardSpacing),
-                              Expanded(child: darkPane),
-                            ],
-                          );
+                          return cardConstraints.maxWidth <
+                                  _kMinSplitPaneExtent * 2 + _kCardSpacing
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: <Widget>[
+                                    lightPane,
+                                    const SizedBox(height: _kCardSpacing),
+                                    darkPane,
+                                  ],
+                                )
+                              : Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Expanded(child: lightPane),
+                                    const SizedBox(width: _kCardSpacing),
+                                    Expanded(child: darkPane),
+                                  ],
+                                );
                         },
                   ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildBadge({required ThemeData theme, required String label}) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(_kBadgeBorderRadius),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: _kBadgeHorizontalPadding,
-          vertical: _kBadgeVerticalPadding,
-        ),
-        child: Text(label, style: theme.textTheme.labelSmall),
       ),
     );
   }
@@ -980,15 +931,6 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       :BoxConstraints viewportConstraints,
       :double zoom,
     ) = widget;
-    final wrapped = SizedBox(
-      width: resolvedWidth,
-      height: resolvedHeight,
-      child: WidgetPreviewWrapper(
-        previewerConstraints: previewerConstraints,
-        onLayoutError: _handleLayoutError,
-        child: child,
-      ),
-    );
     final constrained = ConstrainedBox(
       constraints: BoxConstraints(
         maxWidth:
@@ -1002,14 +944,14 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
                 ? viewportConstraints.maxHeight
                 : double.infinity),
       ),
-      child: wrapped,
-    );
-    final Widget boundedContent = KeyedSubtree(
-      key: _frameBoxKey,
-      child: _PreviewBoundsOverlay(
-        key: const Key('embed-bounds-overlay'),
-        enabled: widget.showBounds,
-        child: constrained,
+      child: SizedBox(
+        width: resolvedWidth,
+        height: resolvedHeight,
+        child: WidgetPreviewWrapper(
+          previewerConstraints: previewerConstraints,
+          onLayoutError: _handleLayoutError,
+          child: child,
+        ),
       ),
     );
     final selectable = EmbedSelectablePreviewSurface(
@@ -1020,7 +962,14 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       selectionController: selectionController,
       textScale: textScale,
       zoom: zoom,
-      child: boundedContent,
+      child: KeyedSubtree(
+        key: _frameBoxKey,
+        child: _PreviewBoundsOverlay(
+          key: const Key('embed-bounds-overlay'),
+          enabled: widget.showBounds,
+          child: constrained,
+        ),
+      ),
     );
     final double minWidth = viewportConstraints.hasBoundedWidth
         ? viewportConstraints.maxWidth
@@ -1129,9 +1078,8 @@ class _PreviewBoundsOverlay extends SingleChildRenderObjectWidget {
   final bool enabled;
 
   @override
-  _RenderPreviewBoundsOverlay createRenderObject(BuildContext context) {
-    return _RenderPreviewBoundsOverlay(enabled: enabled);
-  }
+  _RenderPreviewBoundsOverlay createRenderObject(BuildContext context) =>
+      _RenderPreviewBoundsOverlay(enabled: enabled);
 
   @override
   void updateRenderObject(
@@ -1153,11 +1101,10 @@ class _RenderPreviewBoundsOverlay extends RenderProxyBox {
   bool get enabled => _enabled;
 
   set enabled(bool value) {
-    if (_enabled == value) {
-      return;
+    if (_enabled != value) {
+      _enabled = value;
+      markNeedsPaint();
     }
-    _enabled = value;
-    markNeedsPaint();
   }
 
   @override

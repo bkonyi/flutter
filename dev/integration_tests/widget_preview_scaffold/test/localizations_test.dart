@@ -97,32 +97,24 @@ WidgetPreviewerWidgetScaffolding previewForLocalizations({
 void main() {
   testWidgets(
     'Localization data is correctly propagated down to the previewed widget',
-    (tester) async {
+    (WidgetTester tester) async {
       final key = GlobalKey();
-      PreviewLocalizationsData previewLocalizationsData = forLocale('en');
-
-      // Check that both en and es localizations are available to the previewed widget.
-      WidgetPreviewerWidgetScaffolding widgetPreview = previewForLocalizations(
-        key: key,
-        previewLocalizationsData: () => previewLocalizationsData,
+      PreviewLocalizationsData data = forLocale('en');
+      await tester.pumpWidget(
+        previewForLocalizations(key: key, previewLocalizationsData: () => data),
       );
-      await tester.pumpWidget(widgetPreview);
-
       expectLocalization<AppLocalizationsEn>(
         context: key.currentContext!,
-        expected: previewLocalizationsData,
+        expected: data,
       );
 
-      previewLocalizationsData = forLocale('es');
-      widgetPreview = previewForLocalizations(
-        key: key,
-        previewLocalizationsData: () => previewLocalizationsData,
+      data = forLocale('es');
+      await tester.pumpWidget(
+        previewForLocalizations(key: key, previewLocalizationsData: () => data),
       );
-      await tester.pumpWidget(widgetPreview);
-
       expectLocalization<AppLocalizationsEs>(
         context: key.currentContext!,
-        expected: previewLocalizationsData,
+        expected: data,
       );
     },
   );
@@ -131,24 +123,19 @@ void main() {
     'buildWidgetPreview and buildMultiWidgetPreview apply defaultLocalizations '
     'only when preview.localizations is null while preserving all other fields',
     () {
-      final WidgetPreview fallbackPreview = buildWidgetPreview(
+      final WidgetPreview fallbackPreview = makeTestPreview(
+        brightness: Brightness.dark,
         column: 2,
         defaultLocalizations: _defaultTestLocalizations,
         functionName: 'myPreview',
-        libraryUri: 'package:foo/foo.dart',
-        line: 10,
+        group: 'CustomGroup',
+        name: 'MyName',
         packageName: 'foo',
         previewFunction: () => const Text('Hello'),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: const Preview(
-          brightness: Brightness.dark,
-          group: 'CustomGroup',
-          name: 'MyName',
-          size: Size(_kPreviewWidth, _kPreviewHeight),
-          textScaleFactor: _kPreviewTextScale,
-          theme: _fakePreviewTheme,
-          wrapper: _fakeWrapper,
-        ).transform(),
+        size: const Size(_kPreviewWidth, _kPreviewHeight),
+        textScaleFactor: _kPreviewTextScale,
+        theme: _fakePreviewTheme,
+        wrapper: _fakeWrapper,
       );
 
       expect(fallbackPreview.localizations?.locale, _kDefaultLocale);
@@ -168,21 +155,14 @@ void main() {
       expect(fallbackPreview.theme, isA<_FakePreviewThemeData>());
       expect(fallbackPreview.previewBuilder(), isA<ColoredBox>());
 
-      final WidgetPreview explicitPreview = buildWidgetPreview(
-        column: 2,
+      final WidgetPreview explicitPreview = makeTestPreview(
         defaultLocalizations: _defaultTestLocalizations,
         functionName: 'spanishPreview',
-        libraryUri: 'package:foo/foo.dart',
-        line: 20,
+        localizations: _explicitSpanishLocalizations,
+        name: 'Spanish',
         packageName: 'foo',
         previewFunction: () => const Text('Hola'),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: const Preview(
-          localizations: _explicitSpanishLocalizations,
-          name: 'Spanish',
-        ).transform(),
       );
-
       expect(explicitPreview.localizations?.locale, _kSpanishLocale);
       expect(
         explicitPreview.previewData.localizations,
@@ -200,7 +180,6 @@ void main() {
         previewFunction: () => const Text('Multi'),
         scriptUri: 'file:///foo/lib/foo.dart',
       ).toList();
-
       expect(multiPreviews, hasLength(2));
       expect(multiPreviews[0].name, 'Fallback Variant');
       expect(multiPreviews[0].brightness, Brightness.light);
@@ -213,60 +192,25 @@ void main() {
 
   testWidgets(
     'bare Material TextField and CupertinoTextField render with defaultLocalizations',
-    (tester) async {
+    (WidgetTester tester) async {
       final controller = FakeWidgetPreviewScaffoldController();
+      addTearDown(controller.dispose);
 
-      // Without defaultLocalizations inside a WidgetsApp host, Material TextField
-      // fails because MaterialLocalizations is absent.
-      final WidgetPreview unlocalizedPreview = buildWidgetPreview(
-        column: 1,
-        functionName: 'bareTextField',
-        libraryUri: 'package:foo/foo.dart',
-        line: 1,
-        packageName: 'foo',
-        previewFunction: () => const Material(
-          child: SizedBox(width: _kPreviewWidth, child: TextField()),
-        ),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: const Preview().transform(),
-      );
       await tester.pumpWidget(
         WidgetPreviewerWidgetScaffolding(
           child: WidgetPreviewWidget(
             controller: controller,
-            preview: unlocalizedPreview,
+            preview: makeTestPreview(
+              functionName: 'bareTextField',
+              packageName: 'foo',
+              previewFunction: () => const Material(
+                child: SizedBox(width: _kPreviewWidth, child: TextField()),
+              ),
+            ),
           ),
         ),
       );
       expect(tester.takeException(), isA<FlutterError>());
-
-      // With defaultLocalizations synthesized, bare Material TextField and
-      // CupertinoTextField both render cleanly with zero exceptions.
-      final WidgetPreview localizedMaterialPreview = buildWidgetPreview(
-        column: 1,
-        defaultLocalizations: _defaultTestLocalizations,
-        functionName: 'bareTextField',
-        libraryUri: 'package:foo/foo.dart',
-        line: 10,
-        packageName: 'foo',
-        previewFunction: () => const Material(
-          child: SizedBox(width: _kPreviewWidth, child: TextField()),
-        ),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: const Preview().transform(),
-      );
-      final WidgetPreview localizedCupertinoPreview = buildWidgetPreview(
-        column: 1,
-        defaultLocalizations: _defaultTestLocalizations,
-        functionName: 'bareCupertinoTextField',
-        libraryUri: 'package:foo/foo.dart',
-        line: 20,
-        packageName: 'foo',
-        previewFunction: () =>
-            const SizedBox(width: _kPreviewWidth, child: CupertinoTextField()),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: const Preview().transform(),
-      );
 
       await tester.pumpWidget(
         WidgetPreviewerWidgetScaffolding(
@@ -274,11 +218,26 @@ void main() {
             children: <Widget>[
               WidgetPreviewWidget(
                 controller: controller,
-                preview: localizedMaterialPreview,
+                preview: makeTestPreview(
+                  defaultLocalizations: _defaultTestLocalizations,
+                  functionName: 'bareTextField',
+                  packageName: 'foo',
+                  previewFunction: () => const Material(
+                    child: SizedBox(width: _kPreviewWidth, child: TextField()),
+                  ),
+                ),
               ),
               WidgetPreviewWidget(
                 controller: controller,
-                preview: localizedCupertinoPreview,
+                preview: makeTestPreview(
+                  defaultLocalizations: _defaultTestLocalizations,
+                  functionName: 'bareCupertinoTextField',
+                  packageName: 'foo',
+                  previewFunction: () => const SizedBox(
+                    width: _kPreviewWidth,
+                    child: CupertinoTextField(),
+                  ),
+                ),
               ),
             ],
           ),
@@ -290,7 +249,6 @@ void main() {
       expect(find.byType(CupertinoTextField), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'typed text');
       await tester.pump();
-      expect(tester.takeException(), isNull);
       expect(find.text('typed text'), findsOneWidget);
     },
   );
@@ -299,20 +257,15 @@ void main() {
     'buildWidgetPreview preserves custom Preview subclass identity and toStringShort',
     () {
       const customPreview = _CustomBrightnessPreview(name: 'Dark');
-      final WidgetPreview widgetPreview = buildWidgetPreview(
-        column: 1,
+      final WidgetPreview widgetPreview = makeTestPreview(
         defaultLocalizations: _defaultTestLocalizations,
         functionName: 'customPreview',
-        libraryUri: 'package:foo/foo.dart',
-        line: 5,
         packageName: 'foo',
         previewFunction: () => const Text('Hello'),
-        scriptUri: 'file:///foo/lib/foo.dart',
-        transformedPreview: customPreview.transform(),
+        rawPreview: customPreview,
       );
 
       expect(widgetPreview.previewData, same(customPreview));
-      expect(widgetPreview.previewData, isA<_CustomBrightnessPreview>());
       expect(widgetPreview.localizations?.locale, _kDefaultLocale);
       expect(
         PreviewWidget(

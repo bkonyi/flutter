@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -17,98 +16,58 @@ import 'utils/widget_preview_scaffold_test_utils.dart';
 void main() {
   testWidgets(
     'Help message is displayed with link to documentation when no previews are detected',
-    (tester) async {
+    (WidgetTester tester) async {
       final currentPreviews = <WidgetPreview>[];
-
-      final controller = WidgetPreviewScaffoldController(
-        dtdServicesOverride: FakeWidgetPreviewScaffoldDtdServices(),
+      final WidgetPreviewScaffoldController controller = await pumpTestScaffold(
+        tester,
+        disableSelectedFileFilter: true,
         previews: () => currentPreviews,
-      );
-
-      if (controller.filterBySelectedFileListenable.value) {
-        // Don't filter by selected file.
-        await controller.toggleFilterBySelectedFile();
-      }
-      // Start with no previews populated and verify the help message is displayed with a link to
-      // documentation.
-      await tester.pumpWidget(
-        TestWidgetPreviewScaffold(controller: controller),
       );
 
       final Finder noPreviewDetectedFinder = find.byType(
         NoPreviewsDetectedWidget,
       );
-      final Finder widgetPreviewGroupWidgetFinder = find.byType(
-        WidgetPreviewGroupWidget,
-      );
-      final Finder widgetPreviewWidgetFinder = find.byType(WidgetPreviewWidget);
-      final Finder documentationUrlFinder = find.text(
+      final Finder groupFinder = find.byType(WidgetPreviewGroupWidget);
+      final Finder previewFinder = find.byType(WidgetPreviewWidget);
+      final Finder docUrlFinder = find.text(
         NoPreviewsDetectedWidget.documentationUrl.toString(),
       );
 
       expect(noPreviewDetectedFinder, findsOne);
-      expect(documentationUrlFinder, findsOne);
-      expect(widgetPreviewGroupWidgetFinder, findsNothing);
-      expect(widgetPreviewWidgetFinder, findsNothing);
+      expect(docUrlFinder, findsOne);
+      expect(groupFinder, findsNothing);
+      expect(previewFinder, findsNothing);
 
       currentPreviews.add(
-        WidgetPreview(
-          scriptUri: '',
-          libraryUri: '',
-          functionName: '',
-          line: -1,
-          column: -1,
+        WidgetPreview.test(
           builder: () => const Text('Foo'),
-          previewData: Preview(),
-          packageName: '',
+          previewData: const Preview(),
         ),
       );
-
-      // Fake a hot reload.
       controller.onHotReload();
-
-      // Add previews and verify the help message is gone.
       await tester.pumpWidget(
         TestWidgetPreviewScaffold(controller: controller),
       );
 
       expect(noPreviewDetectedFinder, findsNothing);
-      expect(documentationUrlFinder, findsNothing);
-      expect(widgetPreviewWidgetFinder, findsOne);
-      expect(widgetPreviewGroupWidgetFinder, findsOne);
+      expect(docUrlFinder, findsNothing);
+      expect(previewFinder, findsOne);
+      expect(groupFinder, findsOne);
     },
   );
 
   testWidgets(
     'StarterPreviewSnippetCard copies starter @Preview snippet to clipboard',
     (WidgetTester tester) async {
-      String? copiedText;
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        (MethodCall call) async {
-          if (call.method == 'Clipboard.setData') {
-            final Map<Object?, Object?> args =
-                call.arguments! as Map<Object?, Object?>;
-            copiedText = args['text'] as String?;
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
-          null,
-        ),
-      );
+      final ValueGetter<String?> readCopied = mockClipboardCapture(tester);
 
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: NoPreviewsDetectedWidget())),
       );
-
       await tester.tap(find.byKey(const Key('copy-starter-preview-snippet')));
       await tester.pump();
 
-      expect(copiedText, equals(kStarterPreviewSnippet));
+      expect(readCopied(), equals(kStarterPreviewSnippet));
       expect(find.text('Copied!'), findsOneWidget);
     },
   );

@@ -306,18 +306,6 @@ class WidgetPreviewScaffoldController {
           : (diagnostics.isNotEmpty
                 ? diagnostics.map((PreviewDiagnostic d) => d.summary).join('\n')
                 : null);
-      final double? width = switch (preview.size?.width) {
-        final double w when w.isFinite => w,
-        _ => null,
-      };
-      final double? height = switch (preview.size?.height) {
-        final double h when h.isFinite => h,
-        _ => null,
-      };
-      final double? textScaleFactor = switch (preview.textScaleFactor) {
-        final double scale when scale.isFinite => scale,
-        _ => null,
-      };
       entries.add(
         PreviewEntry(
           brightness: preview.brightness?.name,
@@ -326,7 +314,7 @@ class WidgetPreviewScaffoldController {
           functionName: preview.functionName,
           group: preview.previewData.group,
           hasError: hasError,
-          height: height,
+          height: preview.finiteHeight,
           id: preview.id,
           libraryUri: preview.libraryUri,
           line: preview.line,
@@ -334,8 +322,8 @@ class WidgetPreviewScaffoldController {
           name: preview.name,
           packageName: preview.packageName,
           scriptUri: preview.scriptUri,
-          textScaleFactor: textScaleFactor,
-          width: width,
+          textScaleFactor: preview.finiteTextScaleFactor,
+          width: preview.finiteWidth,
         ),
       );
     }

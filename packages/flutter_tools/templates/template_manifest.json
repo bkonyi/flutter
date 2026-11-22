@@ -382,7 +382,6 @@
     "templates/widget_preview_scaffold/lib/src/embed_live_controls.dart.tmpl",
     "templates/widget_preview_scaffold/lib/src/embed_preview.dart.tmpl",
     "templates/widget_preview_scaffold/lib/src/embed_selection.dart.tmpl",
-    "templates/widget_preview_scaffold/lib/src/embed_selection_inspector.dart.tmpl",
     "templates/widget_preview_scaffold/lib/src/widget_preview.dart.tmpl",
     "templates/widget_preview_scaffold/lib/src/widget_preview_inspector_service.dart.tmpl",
     "templates/widget_preview_scaffold/lib/src/widget_preview_rendering.dart.tmpl",
