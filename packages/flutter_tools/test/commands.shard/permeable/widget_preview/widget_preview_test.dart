@@ -62,8 +62,32 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake implements WidgetPreview
   final String widgetPreviewService = WidgetPreviewDtdServices.kWidgetPreviewServiceRoot;
 
   @override
+  final String widgetPreviewScaffoldService =
+      WidgetPreviewDtdServices.kWidgetPreviewScaffoldServiceRoot;
+
+  @override
   final String widgetPreviewScaffoldStream =
       WidgetPreviewDtdServices.kWidgetPreviewScaffoldStreamRoot;
+
+  @override
+  bool scaffoldConnected = false;
+
+  @override
+  void markScaffoldConnected() {
+    scaffoldConnected = true;
+  }
+
+  @override
+  void markScaffoldDisconnected() {
+    scaffoldConnected = false;
+  }
+
+  final postedReloadedEvents = <bool>[];
+
+  @override
+  Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    postedReloadedEvents.add(fullRestart);
+  }
 
   @override
   Future<void> launchAndConnect({required AnalysisServer analysisServer}) async {
@@ -160,6 +184,9 @@ class FakeCustomBrowserDevice extends Fake implements ChromiumDevice {
 
 class FakeResidentRunner extends Fake implements ResidentRunner {
   FakeResidentRunner({this.waitForAppToFinishCompleter});
+
+  @override
+  List<FlutterDevice> flutterDevices = const <FlutterDevice>[];
 
   final Completer<int>? waitForAppToFinishCompleter;
   int restartCount = 0;
@@ -729,24 +756,45 @@ import 'package:material_ui/material_ui.dart';
 Widget preview() => Text('Foo');''';
 
     const expectedGeneratedFileContents = '''
-// ignore_for_file: implementation_imports
+// ignore_for_file: deprecated_member_use, implementation_imports
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'widget_preview.dart' as _i1;
 import 'utils.dart' as _i2;
 import 'package:flutter_project/foo.dart' as _i3;
 import 'package:flutter/src/widget_previews/widget_previews.dart' as _i4;
+import 'package:flutter/widget_previews.dart' as _i5;
+import 'dart:ui' as _i6;
+import 'package:flutter/widgets.dart' as _i7;
+import 'package:material_ui/material_ui.dart' as _i8;
+import 'package:cupertino_ui/cupertino_ui.dart' as _i9;
+import 'package:flutter/material.dart' as _i10;
+import 'package:flutter/cupertino.dart' as _i11;
 
 List<_i1.WidgetPreview> previews() => [
   _i2.buildWidgetPreview(
     packageName: 'flutter_project',
     scriptUri: 'STRIPPED',
+    libraryUri: 'package:flutter_project/foo.dart',
+    functionName: 'preview',
     line: 4,
     column: 1,
+    defaultLocalizations: _defaultPreviewLocalizations,
     previewFunction: () => _i3.preview(),
     transformedPreview: const _i4.Preview(name: 'preview').transform(),
   ),
 ];
+_i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
+    const _i5.PreviewLocalizationsData(
+      locale: _i6.Locale('en', 'US'),
+      localizationsDelegates: <_i7.LocalizationsDelegate<Object?>>[
+        _i8.DefaultMaterialLocalizations.delegate,
+        _i9.DefaultCupertinoLocalizations.delegate,
+        _i7.DefaultWidgetsLocalizations.delegate,
+        _i10.DefaultMaterialLocalizations.delegate,
+        _i11.DefaultCupertinoLocalizations.delegate,
+      ],
+    );
 ''';
 
     group('LSP-based preview detection', () {
@@ -760,7 +808,7 @@ List<_i1.WidgetPreview> previews() => [
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',
@@ -817,7 +865,7 @@ List<_i1.WidgetPreview> previews() => [
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',
@@ -878,7 +926,7 @@ List<_i1.WidgetPreview> previews() => [
               .writeAsStringSync(samplePreviewFile);
 
           fakeDtdServices.nextUpdate = FlutterWidgetPreviews(
-            namespaces: <String, String>{
+            namespaces: const <String, String>{
               'widget_preview.dart': '_i1',
               'utils.dart': '_i2',
               'package:flutter_project/foo.dart': '_i3',
@@ -1268,6 +1316,7 @@ List<_i1.WidgetPreview> previews() => [
         expect(fakeResidentRunner.restartCount, 5);
         expect(fakeResidentRunner.maxConcurrentRestarts, 1);
         expect(fakeResidentRunner.fullRestartRequests, <bool>[false, false, false, false, true]);
+        expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false, false, false, true]);
 
         // 4. Ignore reload requests after the previewer has finished.
         fakeResidentRunner.waitForAppToFinishCompleter!.complete(0);

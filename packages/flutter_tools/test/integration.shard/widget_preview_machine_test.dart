@@ -10,7 +10,6 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/commands/widget_preview.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:http/http.dart';
-import 'package:process/process.dart';
 
 import '../src/common.dart';
 import 'test_data/basic_project.dart';
@@ -47,7 +46,6 @@ void main() {
   Process? process;
   DtdLauncher? dtdLauncher;
   final project = BasicProject();
-  const ProcessManager processManager = LocalProcessManager();
 
   setUp(() async {
     tempDir = createResolvedTempDirectorySync('widget_preview_test.');
@@ -130,6 +128,57 @@ void main() {
 
     testWithoutContext('launches web server', () async {
       await runWidgetPreviewMachineMode(expectedEvents: launchEvents, useWebServer: true);
+    });
+  });
+
+  group('flutter widget-preview list and snapshot --machine', () {
+    testWithoutContext('lists and captures snapshot end-to-end with headless Chrome', () async {
+      tempDir.childDirectory('lib').childFile('preview.dart').writeAsStringSync('''
+import 'package:flutter/widgets.dart';
+import 'package:flutter/widget_previews.dart';
+
+@Preview(name: 'MachineTestPreview')
+Widget machineTestPreview() => const Text('Hello');
+''');
+
+      final ProcessResult listResult = await processManager.run(<String>[
+        flutterBin,
+        'widget-preview',
+        'list',
+        '--machine',
+      ], workingDirectory: tempDir.path);
+      expect(listResult.exitCode, 0, reason: 'STDERR: ${listResult.stderr}');
+      final Object? listDecoded = jsonDecode(listResult.stdout as String);
+      expect(
+        listDecoded,
+        isA<Map<String, Object?>>().having(
+          (Map<String, Object?> m) => m['previews'],
+          'previews',
+          contains(
+            isA<Map<String, Object?>>().having(
+              (Map<String, Object?> p) => p['name'],
+              'name',
+              'MachineTestPreview',
+            ),
+          ),
+        ),
+      );
+
+      final ProcessResult snapshotResult = await processManager.run(<String>[
+        flutterBin,
+        'widget-preview',
+        'snapshot',
+        '--machine',
+        'MachineTestPreview',
+      ], workingDirectory: tempDir.path);
+      expect(snapshotResult.exitCode, 0, reason: 'STDERR: ${snapshotResult.stderr}');
+      final Object? snapshotDecoded = jsonDecode(snapshotResult.stdout as String);
+      expect(
+        snapshotDecoded,
+        isA<Map<String, Object?>>()
+            .having((Map<String, Object?> m) => m['hasErrors'], 'hasErrors', isFalse)
+            .having((Map<String, Object?> m) => m['imageBase64'], 'imageBase64', isNotEmpty),
+      );
     });
   });
 }
