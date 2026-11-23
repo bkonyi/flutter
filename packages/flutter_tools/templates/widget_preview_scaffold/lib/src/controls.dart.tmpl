@@ -5,10 +5,13 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'theme/theme.dart';
+import 'utils/url/url.dart';
 import 'widget_preview_scaffold_controller.dart';
 
 enum _PreviewSearchFilter {
@@ -22,108 +25,240 @@ enum _PreviewSearchFilter {
   final String label;
 }
 
-abstract class _SearchFilterConfig {
-  const _SearchFilterConfig(this.filter, this._controller);
+typedef _SearchFilterEntry = ({
+  _PreviewSearchFilter filter,
+  ValueListenable<bool> listenable,
+  bool Function() onToggle,
+});
 
-  final _PreviewSearchFilter filter;
-  final WidgetPreviewScaffoldController _controller;
+List<_SearchFilterEntry> _buildSearchFilters(
+  WidgetPreviewScaffoldController controller,
+) => <_SearchFilterEntry>[
+  (
+    filter: _PreviewSearchFilter.groupName,
+    listenable: controller.searchByGroupNameListenable,
+    onToggle: controller.toggleSearchByGroupName,
+  ),
+  (
+    filter: _PreviewSearchFilter.previewName,
+    listenable: controller.searchByPreviewNameListenable,
+    onToggle: controller.toggleSearchByPreviewName,
+  ),
+  (
+    filter: _PreviewSearchFilter.containingScript,
+    listenable: controller.searchByContainingScriptListenable,
+    onToggle: controller.toggleSearchByContainingScript,
+  ),
+  (
+    filter: _PreviewSearchFilter.containingPackage,
+    listenable: controller.searchByContainingPackageListenable,
+    onToggle: controller.toggleSearchByContainingPackage,
+  ),
+];
 
-  String get label => filter.label;
+/// Minimum supported preview zoom scale (`25%`).
+const kMinPreviewZoom = EmbedPreviewParams.kMinZoom;
 
-  ValueListenable<bool> listenable();
+/// Maximum supported preview zoom scale (`400%`).
+const kMaxPreviewZoom = EmbedPreviewParams.kMaxZoom;
 
-  bool onToggle();
+/// Default preview zoom scale (`100%`).
+const kDefaultPreviewZoom = EmbedPreviewParams.kDefaultZoom;
+
+/// Linear step increment for preview zoom controls and shortcuts (`25%`).
+const kPreviewZoomStep = EmbedPreviewParams.kZoomStep;
+
+/// Floating-point tolerance when comparing zoom levels against defaults/bounds.
+const kPreviewZoomEpsilon = EmbedPreviewParams.kZoomEpsilon;
+
+/// Clamps [zoom] to `[kMinPreviewZoom, kMaxPreviewZoom]`.
+double clampPreviewZoom(double zoom) =>
+    zoom.clamp(kMinPreviewZoom, kMaxPreviewZoom);
+
+/// Intercepts `Ctrl`/`Cmd` + scroll-wheel pointer signals via
+/// [PointerSignalResolver], accumulating fractional trackpad deltas before
+/// stepping [zoom] by [kPreviewZoomStep].
+class PreviewPointerScrollZoom extends StatefulWidget {
+  const PreviewPointerScrollZoom({
+    required this.child,
+    required this.onZoomChanged,
+    required this.zoom,
+    super.key,
+  });
+
+  /// Scroll delta threshold (in logical pixels) per discrete [kPreviewZoomStep].
+  static const kScrollDeltaPerZoomStep = 20.0;
+
+  /// Preview subtree wrapped by this scroll-zoom interceptor.
+  final Widget child;
+
+  /// Invoked with the clamped zoom multiplier whenever zoom changes.
+  final ValueChanged<double> onZoomChanged;
+
+  /// Current zoom multiplier.
+  final double zoom;
+
+  @override
+  State<PreviewPointerScrollZoom> createState() =>
+      _PreviewPointerScrollZoomState();
 }
 
-class _GroupSearchFilter extends _SearchFilterConfig {
-  const _GroupSearchFilter(WidgetPreviewScaffoldController controller)
-    : super(_PreviewSearchFilter.groupName, controller);
+class _PreviewPointerScrollZoomState extends State<PreviewPointerScrollZoom> {
+  double _accumulatedScrollDy = 0.0;
+  late double _currentZoom = widget.zoom;
 
   @override
-  ValueListenable<bool> listenable() => _controller.searchByGroupNameListenable;
+  void didUpdateWidget(PreviewPointerScrollZoom oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.zoom != widget.zoom) {
+      _currentZoom = widget.zoom;
+    }
+  }
+
+  void _handlePointerScroll(PointerScrollEvent event) {
+    final double dy = event.scrollDelta.dy;
+    if (dy == 0) {
+      return;
+    }
+    if (!HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed) {
+      _accumulatedScrollDy = 0.0;
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(
+      event,
+      _handleResolvedScroll,
+    );
+  }
+
+  void _handleResolvedScroll(PointerSignalEvent resolvedEvent) {
+    if (!mounted || resolvedEvent is! PointerScrollEvent) {
+      return;
+    }
+    final double dy = resolvedEvent.scrollDelta.dy;
+    if (dy * _accumulatedScrollDy < 0) {
+      _accumulatedScrollDy = 0.0;
+    }
+    const double threshold = PreviewPointerScrollZoom.kScrollDeltaPerZoomStep;
+    final double stepDelta;
+    if (dy.abs() >= threshold) {
+      _accumulatedScrollDy = 0.0;
+      stepDelta = dy < 0 ? kPreviewZoomStep : -kPreviewZoomStep;
+    } else {
+      _accumulatedScrollDy += dy;
+      if (_accumulatedScrollDy.abs() < threshold) {
+        return;
+      }
+      stepDelta = _accumulatedScrollDy < 0
+          ? kPreviewZoomStep
+          : -kPreviewZoomStep;
+      _accumulatedScrollDy = _accumulatedScrollDy.remainder(threshold);
+    }
+    final double nextZoom = clampPreviewZoom(_currentZoom + stepDelta);
+    if ((nextZoom - _currentZoom).abs() > kPreviewZoomEpsilon) {
+      _currentZoom = nextZoom;
+      widget.onZoomChanged(nextZoom);
+    }
+  }
 
   @override
-  bool onToggle() => _controller.toggleSearchByGroupName();
+  Widget build(BuildContext context) {
+    return _PointerScrollZoomCatcher(
+      onPointerScroll: _handlePointerScroll,
+      child: widget.child,
+    );
+  }
 }
 
-class _PreviewNameSearchFilter extends _SearchFilterConfig {
-  const _PreviewNameSearchFilter(WidgetPreviewScaffoldController controller)
-    : super(_PreviewSearchFilter.previewName, controller);
+class _PointerScrollZoomCatcher extends SingleChildRenderObjectWidget {
+  const _PointerScrollZoomCatcher({required this.onPointerScroll, super.child});
+
+  final ValueChanged<PointerScrollEvent> onPointerScroll;
 
   @override
-  ValueListenable<bool> listenable() =>
-      _controller.searchByPreviewNameListenable;
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderPointerScrollZoomCatcher(onPointerScroll: onPointerScroll);
+  }
 
   @override
-  bool onToggle() => _controller.toggleSearchByPreviewName();
+  void updateRenderObject(
+    BuildContext context,
+    _RenderPointerScrollZoomCatcher renderObject,
+  ) {
+    renderObject.onPointerScroll = onPointerScroll;
+  }
 }
 
-class _ContainingScriptSearchFilter extends _SearchFilterConfig {
-  const _ContainingScriptSearchFilter(
-    WidgetPreviewScaffoldController controller,
-  ) : super(_PreviewSearchFilter.containingScript, controller);
+class _RenderPointerScrollZoomCatcher extends RenderProxyBox {
+  _RenderPointerScrollZoomCatcher({required this.onPointerScroll});
+
+  ValueChanged<PointerScrollEvent> onPointerScroll;
 
   @override
-  ValueListenable<bool> listenable() =>
-      _controller.searchByContainingScriptListenable;
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    if (!size.contains(position)) {
+      return false;
+    }
+    if (HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed) {
+      // Prepend before hitTestChildren so this box registers first with
+      // PointerSignalResolver ahead of both outer and preview-internal Scrollables.
+      result.add(BoxHitTestEntry(this, position));
+      hitTestChildren(result, position: position);
+      return true;
+    }
+    if (hitTestChildren(result, position: position) || hitTestSelf(position)) {
+      result.add(BoxHitTestEntry(this, position));
+      return true;
+    }
+    return false;
+  }
 
   @override
-  bool onToggle() => _controller.toggleSearchByContainingScript();
-}
-
-class _ContainingPackageSearchFilter extends _SearchFilterConfig {
-  const _ContainingPackageSearchFilter(
-    WidgetPreviewScaffoldController controller,
-  ) : super(_PreviewSearchFilter.containingPackage, controller);
-
-  @override
-  ValueListenable<bool> listenable() =>
-      _controller.searchByContainingPackageListenable;
-
-  @override
-  bool onToggle() => _controller.toggleSearchByContainingPackage();
+  void handleEvent(PointerEvent event, HitTestEntry entry) {
+    if (event is PointerScrollEvent) {
+      onPointerScroll(event);
+    }
+  }
 }
 
 /// Provides controls to change the zoom level of a [WidgetPreview].
 class ZoomControls extends StatelessWidget {
-  /// Provides controls to change the zoom level of a [WidgetPreview].
   const ZoomControls({super.key, required this._transformationController});
-
-  static const double _minScale = 1.0;
-  static const double _maxScale = 4.0;
 
   final TransformationController _transformationController;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final ThemeData theme = Theme.of(context);
+    final Color onSurface = theme.colorScheme.onSurface;
+    final Color disabledColor = onSurface.withValues(alpha: 0.38);
     return _ControlDecorator(
       child: ValueListenableBuilder<Matrix4>(
         valueListenable: _transformationController,
-        builder: (context, matrix, _) {
+        builder: (BuildContext context, Matrix4 matrix, _) {
           final double scale = matrix.entry(0, 0);
-          final String scalePercentage = '${(scale * 100).toStringAsFixed(0)}%';
           return Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
+            children: <Widget>[
               IconButton(
                 tooltip: 'Zoom out',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale > _minScale ? _zoomOut : null,
+                onPressed: scale > kMinPreviewZoom + kPreviewZoomEpsilon
+                    ? () => _stepScale(-kPreviewZoomStep)
+                    : null,
                 icon: const Icon(Icons.zoom_out),
-                color: theme.colorScheme.onSurface,
-                disabledColor: theme.colorScheme.onSurface.withValues(
-                  alpha: 0.38,
-                ),
+                color: onSurface,
+                disabledColor: disabledColor,
               ),
               Flexible(
                 child: SizedBox(
                   width: 100,
                   height: defaultButtonHeight,
                   child: Slider(
-                    min: _minScale,
-                    max: _maxScale,
-                    value: scale.clamp(_minScale, _maxScale),
+                    min: kMinPreviewZoom,
+                    max: kMaxPreviewZoom,
+                    value: clampPreviewZoom(scale),
                     onChanged: _setScale,
                   ),
                 ),
@@ -131,30 +266,31 @@ class ZoomControls extends StatelessWidget {
               IconButton(
                 tooltip: 'Zoom in',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale < _maxScale ? _zoomIn : null,
+                onPressed: scale < kMaxPreviewZoom - kPreviewZoomEpsilon
+                    ? () => _stepScale(kPreviewZoomStep)
+                    : null,
                 icon: const Icon(Icons.zoom_in_sharp),
-                color: theme.colorScheme.onSurface,
-                disabledColor: theme.colorScheme.onSurface.withValues(
-                  alpha: 0.38,
-                ),
+                color: onSurface,
+                disabledColor: disabledColor,
               ),
               IconButton(
                 tooltip: 'Reset zoom',
                 style: theme.iconButtonTheme.style,
-                onPressed: scale != _minScale ? _reset : null,
+                onPressed:
+                    (scale - kDefaultPreviewZoom).abs() > kPreviewZoomEpsilon
+                    ? _reset
+                    : null,
                 icon: const Icon(Icons.zoom_out_map),
-                color: theme.colorScheme.onSurface,
-                disabledColor: theme.colorScheme.onSurface.withValues(
-                  alpha: 0.38,
-                ),
+                color: onSurface,
+                disabledColor: disabledColor,
               ),
               SizedBox(
                 width: 36,
                 child: Text(
-                  scalePercentage,
+                  '${(scale * 100).toStringAsFixed(0)}%',
                   textAlign: TextAlign.end,
                   style: TextStyle(
-                    color: theme.colorScheme.onSurface,
+                    color: onSurface,
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
@@ -167,18 +303,11 @@ class ZoomControls extends StatelessWidget {
     );
   }
 
-  void _zoomIn() {
-    final double currentScale = _transformationController.value.entry(0, 0);
-    _setScale(currentScale + 0.25);
-  }
-
-  void _zoomOut() {
-    final double currentScale = _transformationController.value.entry(0, 0);
-    _setScale(currentScale - 0.25);
-  }
+  void _stepScale(double delta) =>
+      _setScale(_transformationController.value.entry(0, 0) + delta);
 
   void _setScale(double scale) {
-    final double clampedScale = scale.clamp(_minScale, _maxScale);
+    final double clampedScale = clampPreviewZoom(scale);
     _transformationController.value = Matrix4.diagonal3Values(
       clampedScale,
       clampedScale,
@@ -199,7 +328,7 @@ class _ControlDecorator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.all(densePadding),
+      padding: const EdgeInsets.all(densePadding),
       decoration: BoxDecoration(
         color: Colors.grey[300],
         borderRadius: defaultBorderRadius,
@@ -217,19 +346,19 @@ class LayoutTypeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final ThemeData theme = Theme.of(context);
     return _ControlDecorator(
       child: ValueListenableBuilder<LayoutType>(
         valueListenable: controller.layoutTypeListenable,
-        builder: (context, selectedLayout, _) {
+        builder: (BuildContext context, LayoutType selectedLayout, _) {
           return Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
+            children: <Widget>[
               IconButton(
                 style: theme.iconButtonTheme.style,
                 visualDensity: VisualDensity.compact,
                 onPressed: () => controller.layoutType = LayoutType.gridView,
-                icon: Icon(Icons.grid_on),
+                icon: const Icon(Icons.grid_on),
                 color: selectedLayout == LayoutType.gridView
                     ? Colors.blue
                     : Colors.black,
@@ -237,7 +366,7 @@ class LayoutTypeSelector extends StatelessWidget {
               IconButton(
                 onPressed: () => controller.layoutType = LayoutType.listView,
                 visualDensity: VisualDensity.compact,
-                icon: Icon(Icons.view_list),
+                icon: const Icon(Icons.view_list),
                 color: selectedLayout == LayoutType.listView
                     ? Colors.blue
                     : Colors.black,
@@ -258,16 +387,15 @@ class WidgetInspectorToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ControlDecorator(
-      child: ValueListenableBuilder(
+      child: ValueListenableBuilder<bool>(
         valueListenable: controller.widgetInspectorVisible,
-        builder: (context, widgetInspectorVisible, _) {
-          final theme = Theme.of(context);
+        builder: (BuildContext context, bool widgetInspectorVisible, _) {
           return IconButton(
-            style: theme.iconButtonTheme.style,
+            style: Theme.of(context).iconButtonTheme.style,
             visualDensity: VisualDensity.compact,
             onPressed: controller.toggleWidgetInspectorVisible,
             // TODO(bkonyi): replace with widget inspector icon.
-            icon: Icon(Icons.image_search),
+            icon: const Icon(Icons.image_search),
             color: widgetInspectorVisible ? Colors.blue : Colors.black,
           );
         },
@@ -291,12 +419,12 @@ class FilterBySelectedFileToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ControlDecorator(
-      child: ValueListenableBuilder(
+      child: ValueListenableBuilder<bool>(
         valueListenable: controller.filterBySelectedFileListenable,
-        builder: (context, value, child) {
+        builder: (BuildContext context, bool value, _) {
           return IconButton(
             onPressed: controller.toggleFilterBySelectedFile,
-            icon: Icon(Icons.file_open),
+            icon: const Icon(Icons.file_open),
             color: value ? Colors.blue : Colors.black,
             tooltip: kTooltip,
           );
@@ -321,15 +449,11 @@ class SoftRestartButton extends StatelessWidget {
     return _ControlDecorator(
       child: IconButton(
         tooltip: 'Hot restart',
-        onPressed: _onRestart,
-        icon: Icon(Icons.refresh),
+        onPressed: () => softRestartListenable.value = true,
+        icon: const Icon(Icons.refresh),
         color: Colors.black,
       ),
     );
-  }
-
-  void _onRestart() {
-    softRestartListenable.value = true;
   }
 }
 
@@ -346,7 +470,7 @@ class WidgetPreviewerRestartButton extends StatelessWidget {
       child: IconButton(
         tooltip: 'Restart the Widget Previewer',
         onPressed: controller.dtdServices.hotRestartPreviewer,
-        icon: Icon(Icons.restart_alt),
+        icon: const Icon(Icons.restart_alt),
         color: Colors.black,
       ),
     );
@@ -368,17 +492,12 @@ class PreviewSearchControls extends StatefulWidget {
 
 class _PreviewSearchControlsState extends State<PreviewSearchControls> {
   late final TextEditingController _searchController;
-  late final List<_SearchFilterConfig> _searchFilters;
+  late List<_SearchFilterEntry> _searchFilters;
 
   @override
   void initState() {
     super.initState();
-    _searchFilters = <_SearchFilterConfig>[
-      _GroupSearchFilter(widget.controller),
-      _PreviewNameSearchFilter(widget.controller),
-      _ContainingScriptSearchFilter(widget.controller),
-      _ContainingPackageSearchFilter(widget.controller),
-    ];
+    _searchFilters = _buildSearchFilters(widget.controller);
     _searchController = TextEditingController(
       text: widget.controller.searchQueryListenable.value,
     );
@@ -399,14 +518,7 @@ class _PreviewSearchControlsState extends State<PreviewSearchControls> {
     widget.controller.searchQueryListenable.addListener(
       _syncControllerQueryToTextField,
     );
-    _searchFilters
-      ..clear()
-      ..addAll(<_SearchFilterConfig>[
-        _GroupSearchFilter(widget.controller),
-        _PreviewNameSearchFilter(widget.controller),
-        _ContainingScriptSearchFilter(widget.controller),
-        _ContainingPackageSearchFilter(widget.controller),
-      ]);
+    _searchFilters = _buildSearchFilters(widget.controller);
     _syncControllerQueryToTextField();
   }
 
@@ -420,11 +532,10 @@ class _PreviewSearchControlsState extends State<PreviewSearchControls> {
   }
 
   void _syncControllerQueryToTextField() {
-    final query = widget.controller.searchQueryListenable.value;
+    final String query = widget.controller.searchQueryListenable.value;
     if (_searchController.text == query) {
       return;
     }
-
     _searchController.value = _searchController.value.copyWith(
       text: query,
       selection: TextSelection.collapsed(offset: query.length),
@@ -434,11 +545,14 @@ class _PreviewSearchControlsState extends State<PreviewSearchControls> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
+    final ThemeData theme = Theme.of(context);
+    const iconConstraints = BoxConstraints(
+      minWidth: defaultButtonHeight,
+      minHeight: defaultButtonHeight,
+    );
     return _ControlDecorator(
       child: Row(
-        children: [
+        children: <Widget>[
           Expanded(
             child: SizedBox(
               height: defaultButtonHeight,
@@ -459,20 +573,14 @@ class _PreviewSearchControlsState extends State<PreviewSearchControls> {
                     vertical: densePadding,
                     horizontal: denseSpacing,
                   ),
-                  prefixIcon: Icon(
+                  prefixIcon: const Icon(
                     Icons.search,
                     size: defaultIconSize,
                     color: Colors.black54,
                   ),
-                  prefixIconConstraints: const BoxConstraints(
-                    minWidth: defaultButtonHeight,
-                    minHeight: defaultButtonHeight,
-                  ),
+                  prefixIconConstraints: iconConstraints,
                   suffixIcon: _SearchClearButton(controller: widget.controller),
-                  suffixIconConstraints: const BoxConstraints(
-                    minWidth: defaultButtonHeight,
-                    minHeight: defaultButtonHeight,
-                  ),
+                  suffixIconConstraints: iconConstraints,
                 ),
               ),
             ),
@@ -492,10 +600,10 @@ class _SearchClearButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final ThemeData theme = Theme.of(context);
     return ValueListenableBuilder<String>(
       valueListenable: controller.searchQueryListenable,
-      builder: (context, query, _) {
+      builder: (BuildContext context, String query, _) {
         if (query.isEmpty) {
           return const SizedBox.shrink();
         }
@@ -503,7 +611,7 @@ class _SearchClearButton extends StatelessWidget {
           tooltip: 'Clear search',
           style: theme.iconButtonTheme.style,
           visualDensity: VisualDensity.compact,
-          icon: Icon(Icons.clear, size: defaultIconSize),
+          icon: const Icon(Icons.clear, size: defaultIconSize),
           color: Colors.black,
           onPressed: () => controller.updateSearchQuery(''),
         );
@@ -515,20 +623,18 @@ class _SearchClearButton extends StatelessWidget {
 class _SearchFiltersMenuButton extends StatelessWidget {
   const _SearchFiltersMenuButton({required this.searchFilters});
 
-  final List<_SearchFilterConfig> searchFilters;
+  final List<_SearchFilterEntry> searchFilters;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final ThemeData theme = Theme.of(context);
     return ListenableBuilder(
-      listenable: Listenable.merge(
-        searchFilters
-            .map<Listenable>((filter) => filter.listenable())
-            .toList(growable: false),
-      ),
-      builder: (context, _) {
-        final allFiltersEnabled = searchFilters.every(
-          (filter) => filter.listenable().value,
+      listenable: Listenable.merge(<Listenable>[
+        for (final _SearchFilterEntry entry in searchFilters) entry.listenable,
+      ]),
+      builder: (BuildContext context, _) {
+        final bool allFiltersEnabled = searchFilters.every(
+          (_SearchFilterEntry entry) => entry.listenable.value,
         );
         return PopupMenuButton<_PreviewSearchFilter>(
           tooltip: 'Search fields',
@@ -537,38 +643,33 @@ class _SearchFiltersMenuButton extends StatelessWidget {
           iconSize: defaultIconSize,
           icon: const Icon(Icons.filter_list),
           onSelected: (_PreviewSearchFilter selected) {
-            final didToggle = searchFilters
-                .firstWhere((filter) => filter.filter == selected)
+            final bool didToggle = searchFilters
+                .firstWhere((_SearchFilterEntry e) => e.filter == selected)
                 .onToggle();
             if (!didToggle) {
-              _showNoRemainingSearchFilterSnackBar(context);
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'At least one search field must remain enabled.',
+                    ),
+                  ),
+                );
             }
           },
-          itemBuilder: (context) {
-            return searchFilters
-                .map(
-                  (filter) => CheckedPopupMenuItem<_PreviewSearchFilter>(
-                    value: filter.filter,
-                    checked: filter.listenable().value,
-                    child: Text(filter.label),
+          itemBuilder: (BuildContext context) =>
+              <CheckedPopupMenuItem<_PreviewSearchFilter>>[
+                for (final _SearchFilterEntry entry in searchFilters)
+                  CheckedPopupMenuItem<_PreviewSearchFilter>(
+                    value: entry.filter,
+                    checked: entry.listenable.value,
+                    child: Text(entry.filter.label),
                   ),
-                )
-                .toList(growable: false);
-          },
+              ],
         );
       },
     );
-  }
-
-  void _showNoRemainingSearchFilterSnackBar(BuildContext context) {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    scaffoldMessenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('At least one search field must remain enabled.'),
-        ),
-      );
   }
 }
 
@@ -587,22 +688,18 @@ class BrightnessToggleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Brightness>(
       valueListenable: brightnessListenable,
-      builder: (context, brightness, _) {
-        final brightness = brightnessListenable.value;
+      builder: (BuildContext context, Brightness brightness, _) {
         return _ControlDecorator(
           child: IconButton(
             tooltip: 'Switch to ${brightness.isLight ? 'dark' : 'light'} mode',
-            onPressed: _toggleBrightness,
+            onPressed: () =>
+                brightnessListenable.value = brightnessListenable.value.invert,
             icon: Icon(brightness.isLight ? Icons.dark_mode : Icons.light_mode),
             color: Colors.black,
           ),
         );
       },
     );
-  }
-
-  void _toggleBrightness() {
-    brightnessListenable.value = brightnessListenable.value.invert;
   }
 }
 

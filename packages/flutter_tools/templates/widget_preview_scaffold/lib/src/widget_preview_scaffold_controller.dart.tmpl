@@ -5,8 +5,10 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'dtd/dtd_services.dart';
 import 'widget_preview.dart';
@@ -69,7 +71,8 @@ class WidgetPreviewScaffoldController {
     _refreshPreviewsSnapshot();
     dtdServices
       ..onGetPreviews = getPreviews
-      ..onCapturePreview = capturePreview;
+      ..onCapturePreview = capturePreview
+      ..onInPlaceHotReload = _handleLiveInPlaceHotReload;
   }
 
   static const _kDefaultCapturePixelRatio = 1.0;
@@ -90,8 +93,12 @@ class WidgetPreviewScaffoldController {
   /// Initializes the controller by establishing a connection to DTD and
   /// listening for events.
   Future<void> initialize() async {
-    await dtdServices.connect();
+    final EmbedPreviewParams embedParams = EmbedPreviewParams.fromCurrentUrl();
+    await dtdServices.connect(readOnly: embedParams.isEmbed);
     _context = _createPathContext();
+    if (embedParams.isEmbed) {
+      return;
+    }
     _registerListeners();
     await Future.wait<void>([
       dtdServices
@@ -136,6 +143,11 @@ class WidgetPreviewScaffoldController {
     clearAllDiagnostics();
     _updateFilteredPreviewSet();
     _previewsRevision.value++;
+  }
+
+  Future<void> _handleLiveInPlaceHotReload() async {
+    await WidgetsBinding.instance.reassembleApplication();
+    onHotReload();
   }
 
   /// The active DTD connection used to communicate with other developer tooling.
@@ -474,7 +486,7 @@ class WidgetPreviewScaffoldController {
   final _previewsRevision = ValueNotifier<int>(0);
 
   /// The DevTools instance that's used to display the widget inspector within the previewer.
-  late Uri devToolsUri;
+  Uri? devToolsUri;
 
   /// Specifies if only previews from the currently selected source file should be rendered.
   ValueListenable<bool> get filterBySelectedFileListenable =>

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
@@ -11,6 +13,7 @@ import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
@@ -88,8 +91,10 @@ WidgetPreview makeTestErrorPreview({
 Future<WidgetPreviewScaffoldController> pumpTestScaffold(
   WidgetTester tester, {
   required PreviewsCallback previews,
+  Uri? baseUri,
   bool disableSelectedFileFilter = false,
   FakeWidgetPreviewScaffoldDtdServices? dtdServices,
+  String? fragment,
   IdeTheme? ideTheme,
   bool settle = false,
   Duration? stageFrameTimeout,
@@ -100,6 +105,9 @@ Future<WidgetPreviewScaffoldController> pumpTestScaffold(
     tester.view.physicalSize = viewSize;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+  }
+  if (fragment != null) {
+    debugSetUrlFragment(fragment, baseUri: baseUri);
   }
   final controller = WidgetPreviewScaffoldController(
     dtdServicesOverride: dtdServices ?? FakeWidgetPreviewScaffoldDtdServices(),
@@ -228,25 +236,38 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
   onCapturePreview;
 
+  @override
+  FutureOr<void> Function()? onInPlaceHotReload;
+
   Uri? lastConnectDtdUri;
+  bool? lastConnectReadOnly;
 
   @override
-  Future<void> connect({Uri? dtdUri}) async {
+  Future<void> connect({Uri? dtdUri, bool readOnly = false}) async {
     lastConnectDtdUri = dtdUri;
+    lastConnectReadOnly = readOnly;
   }
 
   @override
   Future<void> dispose() async {
-    selectedSourceFile.dispose();
-    editorServiceAvailable.dispose();
-    editorTheme.dispose();
+    if (!(lastConnectReadOnly ?? false)) {
+      selectedSourceFile.dispose();
+      editorServiceAvailable.dispose();
+      editorTheme.dispose();
+    }
   }
 
   bool hotRestartInvoked = false;
+  var syncViewerReloadCount = 0;
 
   @override
   Future<void> hotRestartPreviewer() async {
     hotRestartInvoked = true;
+  }
+
+  @override
+  Future<void> syncViewerReload() async {
+    syncViewerReloadCount++;
   }
 
   @override

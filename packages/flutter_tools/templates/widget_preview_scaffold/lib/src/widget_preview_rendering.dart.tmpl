@@ -28,8 +28,10 @@ import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/theme/theme.dart';
 
 import 'package:widget_preview_scaffold/src/controls.dart';
+import 'package:widget_preview_scaffold/src/embed_preview.dart';
 import 'package:widget_preview_scaffold/src/generated_preview.dart';
 import 'package:widget_preview_scaffold/src/utils.dart';
+import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_inspector_service.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
@@ -1027,6 +1029,14 @@ class ZoomablePreviewArea extends StatelessWidget {
   final TransformationController transformationController;
   final bool errorThrownDuringTreeConstruction;
 
+  void _setScale(double nextScale) {
+    transformationController.value = Matrix4.diagonal3Values(
+      nextScale,
+      nextScale,
+      1.0,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (errorThrownDuringTreeConstruction) {
@@ -1036,7 +1046,11 @@ class ZoomablePreviewArea extends StatelessWidget {
       listenable: transformationController,
       builder: (context, _) {
         final double scale = transformationController.value.entry(0, 0);
-        return ScaledScrollablePreview(scale: scale, child: child);
+        return PreviewPointerScrollZoom(
+          zoom: scale,
+          onZoomChanged: _setScale,
+          child: ScaledScrollablePreview(scale: scale, child: child),
+        );
       },
     );
   }
@@ -1556,14 +1570,23 @@ class PreviewAssetBundle extends PlatformAssetBundle {
 /// the preview scaffold project which prevents us from being able to use hot
 /// restart to iterate on this file.
 Future<void> mainImpl() async {
+  final initialEmbedParams = EmbedPreviewParams.fromCurrentUrl();
   final controller = WidgetPreviewScaffoldController(previews: previews);
-  await controller.initialize();
-  // WARNING: do not move this line. This constructor sets
-  // [WidgetInspectorService.instance] to the custom service for the widget
-  // previewer. If [WidgetsFlutterBinding.ensureInitialized()] is invoked before
-  // the custom service is set, inspector service extensions will be registered
-  // against the wrong service.
-  WidgetPreviewScaffoldInspectorService(dtdServices: controller.dtdServices);
+  try {
+    await controller.initialize();
+  } on Object {
+    if (!initialEmbedParams.isEmbed) {
+      rethrow;
+    }
+  }
+  if (!initialEmbedParams.isEmbed) {
+    // WARNING: do not move this line. This constructor sets
+    // [WidgetInspectorService.instance] to the custom service for the widget
+    // previewer. If [WidgetsFlutterBinding.ensureInitialized()] is invoked before
+    // the custom service is set, inspector service extensions will be registered
+    // against the wrong service.
+    WidgetPreviewScaffoldInspectorService(dtdServices: controller.dtdServices);
+  }
   final WidgetsBinding binding = WidgetsFlutterBinding.ensureInitialized();
   // Disable the injection of [WidgetInspector] into the widget tree built by
   // [WidgetsApp]. [WidgetInspector] instances will be created for each
@@ -1602,12 +1625,16 @@ class WidgetPreviewScaffold extends StatefulWidget {
   State<WidgetPreviewScaffold> createState() => _WidgetPreviewScaffoldState();
 }
 
-class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
+class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold>
+    with WidgetsBindingObserver {
   static const _kOffscreenStageOffset = -100000.0;
   static const _kMaxCaptureRasterDimension = 4096.0;
 
   WebViewController? _webViewController;
   FlutterExceptionHandler? _originalOnError;
+  late EmbedPreviewParams _embedParams;
+  late bool _isEmbedSession;
+  StreamSubscription<String>? _fragmentSubscription;
   final _activeStageSession = ValueNotifier<_StageCaptureSession?>(null);
   late final StagePreviewCaptureCallback _stageCaptureHost =
       _captureStagedPreview;
@@ -1615,12 +1642,26 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _embedParams = EmbedPreviewParams.fromCurrentUrl();
+    _isEmbedSession = _embedParams.isEmbed;
+    if (_isEmbedSession) {
+      unawaited(SystemNavigator.selectMultiEntryHistory());
+    }
+    _fragmentSubscription = onUrlFragmentChange.listen((String fragment) {
+      _applyEmbedParams(
+        EmbedPreviewParams.fromFragment(fragment, baseUri: getBaseUri()),
+      );
+    });
     _originalOnError = FlutterError.onError;
     FlutterError.onError = _handleFlutterError;
-    widget.controller.attachStageCaptureHost(_stageCaptureHost);
-    if (widget.enableWebView) {
-      _webViewController = WebViewController()
-        ..loadRequest(widget.controller.devToolsUri);
+    if (!_isEmbedSession) {
+      widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      if (widget.enableWebView) {
+        if (widget.controller.devToolsUri case final Uri devToolsUri) {
+          _webViewController = WebViewController()..loadRequest(devToolsUri);
+        }
+      }
     }
   }
 
@@ -1629,12 +1670,17 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.controller, widget.controller)) {
       oldWidget.controller.detachStageCaptureHost(_stageCaptureHost);
-      widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      if (!_isEmbedSession) {
+        widget.controller.attachStageCaptureHost(_stageCaptureHost);
+      }
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_fragmentSubscription?.cancel());
+    _fragmentSubscription = null;
     widget.controller.detachStageCaptureHost(_stageCaptureHost);
     _activeStageSession.dispose();
     if (FlutterError.onError == _handleFlutterError) {
@@ -1922,7 +1968,73 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
   }
 
   @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) {
+    final Uri uri = routeInformation.uri;
+    final String fragment = uri.fragment.isNotEmpty
+        ? uri.fragment
+        : uri.toString();
+    final routeParams = EmbedPreviewParams.fromFragment(
+      fragment,
+      baseUri: getBaseUri(),
+    );
+    if (routeParams.isEmbed) {
+      _applyEmbedParams(routeParams);
+      return SynchronousFuture<bool>(true);
+    }
+    if (_isEmbedSession || _embedParams.isEmbed) {
+      return SynchronousFuture<bool>(true);
+    }
+    return super.didPushRouteInformation(routeInformation);
+  }
+
+  void _applyEmbedParams(EmbedPreviewParams updated) {
+    if (!mounted || updated == _embedParams) {
+      return;
+    }
+    if (!_isEmbedSession && updated.isEmbed) {
+      widget.controller.detachStageCaptureHost(_stageCaptureHost);
+      unawaited(SystemNavigator.selectMultiEntryHistory());
+    }
+    setState(() {
+      _embedParams = updated;
+      if (updated.isEmbed) {
+        _isEmbedSession = true;
+      }
+    });
+  }
+
+  double _readEmbedZoom() =>
+      _embedParams.zoom ?? EmbedPreviewParams.kDefaultZoom;
+
+  void _handleEmbedZoomChanged(double zoom) {
+    final EmbedPreviewParams updated = _embedParams.withZoom(zoom);
+    if (updated == _embedParams) {
+      return;
+    }
+    _applyEmbedParams(updated);
+    notifyEmbedZoomChanged(updated.zoom ?? EmbedPreviewParams.kDefaultZoom);
+  }
+
+  void _handleEmbedParamsChanged(EmbedPreviewParams updated) {
+    if (updated == _embedParams) {
+      return;
+    }
+    _applyEmbedParams(updated);
+    replaceEmbedUrl(updated.toFragment(baseUri: getBaseUri()));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_isEmbedSession || _embedParams.isEmbed) {
+      return EmbedPreviewScaffold(
+        controller: widget.controller,
+        currentZoom: _readEmbedZoom,
+        ideTheme: widget.ideTheme,
+        onParamsChanged: _handleEmbedParamsChanged,
+        onZoomChanged: _handleEmbedZoomChanged,
+        params: _embedParams,
+      );
+    }
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: themeFor(

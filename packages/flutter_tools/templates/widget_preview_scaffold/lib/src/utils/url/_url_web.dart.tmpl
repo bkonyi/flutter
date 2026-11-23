@@ -4,7 +4,111 @@
 
 // NOTE: originally from package:devtools_app_shared
 
+import 'dart:async';
+import 'dart:convert';
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
+import 'dart:ui';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web/web.dart';
+
+import 'url.dart';
+
+const _kApiHotReloadPath = '__api/hot-reload';
+const _kApiSyncPath = '__api/sync';
+const _kBrightnessKey = 'brightness';
+const _kCacheNoStore = 'no-store';
+const _kCompileSuccessKey = 'compileSuccess';
+const _kDartDevEmbedderKey = 'dartDevEmbedder';
+const _kErrorKey = 'error';
+const _kErrorMessageKey = 'errorMessage';
+const _kFullRestartRequiredKey = 'fullRestartRequired';
+const _kHostKey = 'flutterWidgetPreviewHost';
+const _kHotReloadMethod = 'hotReload';
+const _kHotReloadTimeout = Duration(seconds: 5);
+const _kLibrariesKey = 'libraries';
+const _kLiveRevisionKey = '__wpLiveRevision';
+const _kMessageKey = 'message';
+const _kMethodPost = 'POST';
+const _kModulesKey = 'modules';
+const _kPreviewIdKey = 'previewId';
+const _kPreviewNameKey = 'previewName';
+const _kRevisionKey = 'revision';
+const _kScaffoldStreamKey = 'scaffoldStream';
+const _kSelectionsKey = 'selections';
+const _kSendSelectionMethod = 'sendSelection';
+const _kSinceParam = 'since';
+const _kSrcKey = 'src';
+const _kTextScaleKey = 'textScale';
+const _kViewportKey = 'viewport';
+const _kZoomKey = 'zoom';
+
+/// Typed JS interop view over `window.dartDevEmbedder` for in-place DDC module
+/// hot reload.
+extension type _DartDevEmbedder._(JSObject _) implements JSObject {
+  external JSPromise<JSAny?> hotReload(
+    JSArray<JSString> filesToLoad,
+    JSArray<JSString> librariesToReload,
+  );
+}
+
+/// Typed JS interop view over the host bridge injected on
+/// `window.flutterWidgetPreviewHost`.
+extension type _FlutterWidgetPreviewHost._(JSObject _) implements JSObject {
+  external JSAny? sendSelection(JSAny? payload);
+}
+
+/// Outcome of a `POST __api/sync` request from the live preview toolbar.
+typedef LiveSyncResult = ({bool compileSuccess, String? errorMessage});
+
+/// Callback signature for forwarding live preview selections and notes to an
+/// embedding host.
+typedef LiveSendSelectionHandler =
+    Future<void> Function({
+      required String message,
+      required List<Map<String, Object?>> selections,
+      String? brightness,
+      String? previewId,
+      String? previewName,
+      String? textScale,
+      String? viewport,
+      String? zoom,
+    });
+
+String? _debugUrlFragmentOverride;
+Uri? _debugBaseUriOverride;
+final _debugFragmentChangeController = StreamController<String>.broadcast(
+  sync: true,
+);
+StreamSubscription<Event>? _webFragmentSubscription;
+StreamSubscription<String>? _debugFragmentSubscription;
+final StreamController<String> _urlFragmentChangeController =
+    StreamController<String>.broadcast(
+      sync: true,
+      onListen: () {
+        _webFragmentSubscription ??= EventStreamProviders.hashChangeEvent
+            .forTarget(window)
+            .listen((_) => _urlFragmentChangeController.add(getUrlFragment()));
+        _debugFragmentSubscription ??= _debugFragmentChangeController.stream
+            .listen(_urlFragmentChangeController.add);
+      },
+      onCancel: () async {
+        final StreamSubscription<Event>? webSub = _webFragmentSubscription;
+        final StreamSubscription<String>? debugSub = _debugFragmentSubscription;
+        _webFragmentSubscription = null;
+        _debugFragmentSubscription = null;
+        await webSub?.cancel();
+        await debugSub?.cancel();
+      },
+    );
+var _debugReloadCount = 0;
+var _debugHotReloadCount = 0;
+int? _debugInitialLiveRevision;
+VoidCallback? _debugOnReloadCallback;
+Future<int?> Function(int sinceRevision)? _debugHotReloadHandler;
+Future<LiveSyncResult> Function()? _debugTriggerSyncHandler;
+LiveSendSelectionHandler? _debugSendSelectionHandler;
 
 Map<String, String> loadQueryParams({String Function(String)? urlModifier}) {
   var url = getWebUrl()!;
@@ -33,4 +137,354 @@ void updateQueryParameter(String key, String? value, {bool reload = false}) {
   if (reload) {
     window.location.reload();
   }
+}
+
+/// Returns the current URL fragment without any leading `'#'`, or a test
+/// override set via [debugSetUrlFragment].
+String getUrlFragment() {
+  if (_debugUrlFragmentOverride case final String override) {
+    return override;
+  }
+  final String hash = window.location.hash;
+  if (hash.isNotEmpty) {
+    return hash.startsWith('#') ? hash.substring(1) : hash;
+  }
+  return Uri.base.fragment;
+}
+
+/// Returns the current base [Uri] for resolving relative proxy paths.
+Uri getBaseUri() =>
+    _debugBaseUriOverride ??
+    Uri.tryParse(window.location.toString()) ??
+    Uri.base;
+
+/// Broadcasts updated URL fragments whenever the browser hash changes.
+Stream<String> get onUrlFragmentChange => _urlFragmentChangeController.stream;
+
+/// Reloads the current browser window, preserving the URL fragment.
+void reloadWindow() {
+  _debugReloadCount++;
+  if (_debugOnReloadCallback case final VoidCallback callback) {
+    callback();
+    return;
+  }
+  window.location.reload();
+}
+
+/// Replaces the current embed URL fragment via `history.replaceState` without
+/// adding a browser history entry and notifies [onUrlFragmentChange] listeners.
+void replaceEmbedUrl(String fragment) {
+  final Uri updatedUri = buildSanitizedEmbedUri(getBaseUri(), fragment);
+  if (_debugUrlFragmentOverride != null) {
+    _debugUrlFragmentOverride = updatedUri.fragment;
+  }
+  if (_debugBaseUriOverride != null) {
+    _debugBaseUriOverride = updatedUri;
+  }
+  window.history.replaceState(null, '', updatedUri.toString());
+  _debugFragmentChangeController.add(updatedUri.fragment);
+}
+
+/// Synchronizes interactive embed [zoom] changes with the URL fragment via
+/// `history.replaceState`.
+void notifyEmbedZoomChanged(double zoom) {
+  final String updatedFragment = buildUpdatedZoomFragment(
+    getUrlFragment(),
+    zoom,
+  );
+  final Uri updatedUri = buildSanitizedEmbedUri(getBaseUri(), updatedFragment);
+  if (_debugUrlFragmentOverride != null) {
+    _debugUrlFragmentOverride = updatedUri.fragment;
+  }
+  if (_debugBaseUriOverride != null) {
+    _debugBaseUriOverride = updatedUri;
+  }
+  window.history.replaceState(null, '', updatedUri.toString());
+}
+
+_FlutterWidgetPreviewHost? _resolveHostBridge() {
+  try {
+    final JSObject globalWindow = window as JSObject;
+    final JSAny? host = globalWindow.getProperty<JSAny?>(_kHostKey.toJS);
+    if (host == null || !host.isA<JSObject>()) {
+      return null;
+    }
+    final hostObj = host as JSObject;
+    final JSAny? sendFn = hostObj.getProperty<JSAny?>(
+      _kSendSelectionMethod.toJS,
+    );
+    if (sendFn == null || !sendFn.isA<JSFunction>()) {
+      return null;
+    }
+    return _FlutterWidgetPreviewHost._(hostObj);
+  } on Object {
+    return null;
+  }
+}
+
+/// Whether a host `window.flutterWidgetPreviewHost.sendSelection` callback (or
+/// test handler) is available.
+bool get canSendLiveSelection =>
+    _debugSendSelectionHandler != null || _resolveHostBridge() != null;
+
+_DartDevEmbedder? _resolveDartDevEmbedder() {
+  try {
+    final JSObject globalWindow = window as JSObject;
+    final JSAny? embedder = globalWindow.getProperty<JSAny?>(
+      _kDartDevEmbedderKey.toJS,
+    );
+    if (embedder == null || !embedder.isA<JSObject>()) {
+      return null;
+    }
+    final embedderObj = embedder as JSObject;
+    final JSAny? hotReloadFn = embedderObj.getProperty<JSAny?>(
+      _kHotReloadMethod.toJS,
+    );
+    if (hotReloadFn == null || !hotReloadFn.isA<JSFunction>()) {
+      return null;
+    }
+    return _DartDevEmbedder._(embedderObj);
+  } on Object {
+    return null;
+  }
+}
+
+/// Returns the initial [WebMemoryFS] revision stamped in
+/// `__embed_main_module.bootstrap.js`, or `null` if unavailable.
+int? get initialLiveRevision {
+  if (_debugInitialLiveRevision case final int rev) {
+    return rev;
+  }
+  final JSAny? raw = (window as JSObject).getProperty<JSAny?>(
+    _kLiveRevisionKey.toJS,
+  );
+  return raw != null && raw.isA<JSNumber>()
+      ? (raw as JSNumber).toDartInt
+      : null;
+}
+
+/// Fetches changed DDC modules since [sinceRevision] via
+/// `GET __api/hot-reload?since=<rev>` and hot-reloads them in-place using
+/// `window.dartDevEmbedder.hotReload`, returning the updated server revision or
+/// `null` if in-place hot reload is unavailable, `fullRestartRequired` is
+/// `true`, the server's `scaffoldStream` no longer matches
+/// [expectedScaffoldStream], or hot reload fails.
+Future<int?> hotReloadLiveModules({
+  required String expectedScaffoldStream,
+  required int sinceRevision,
+}) async {
+  _debugHotReloadCount++;
+  if (_debugHotReloadHandler case final handler?) {
+    return handler(sinceRevision);
+  }
+  final _DartDevEmbedder? embedder = _resolveDartDevEmbedder();
+  if (embedder == null) {
+    return null;
+  }
+  try {
+    final Uri rootUri = resolveLiveRootUri(getBaseUri());
+    final Uri hotReloadUri = rootUri.resolve(
+      '$_kApiHotReloadPath?$_kSinceParam=$sinceRevision',
+    );
+    final Response response = await window
+        .fetch(hotReloadUri.toString().toJS, RequestInit(cache: _kCacheNoStore))
+        .toDart;
+    if (!response.ok) {
+      return null;
+    }
+    final Object? decoded = jsonDecode((await response.text().toDart).toDart);
+    if (decoded case {_kFullRestartRequiredKey: true}) {
+      return null;
+    }
+    if (decoded case {
+      _kScaffoldStreamKey: final String stream,
+    } when stream != expectedScaffoldStream) {
+      return null;
+    }
+    if (decoded case {
+      _kRevisionKey: final int nextRevision,
+      _kModulesKey: final List<Object?> rawModules,
+    } when nextRevision >= sinceRevision) {
+      final filesToLoad = <JSString>[];
+      final librariesToReload = <JSString>[];
+      final seenLibraries = <String>{};
+      for (final Object? entry in rawModules) {
+        if (entry case {
+          _kSrcKey: final String rawSrc,
+          _kLibrariesKey: final List<Object?> rawLibraries,
+        } when rawSrc.isNotEmpty && rawLibraries.isNotEmpty) {
+          filesToLoad.add(rootUri.resolve(rawSrc).toString().toJS);
+          for (final Object? lib in rawLibraries) {
+            if (lib is String && lib.isNotEmpty && seenLibraries.add(lib)) {
+              librariesToReload.add(lib.toJS);
+            }
+          }
+        } else {
+          return null;
+        }
+      }
+      if (filesToLoad.isNotEmpty) {
+        await embedder
+            .hotReload(filesToLoad.toJS, librariesToReload.toJS)
+            .toDart
+            .timeout(_kHotReloadTimeout);
+      }
+      return nextRevision;
+    }
+    return null;
+  } on Object {
+    return null;
+  }
+}
+
+/// Triggers a preview sync/reload via `POST __api/sync` on the live server.
+Future<LiveSyncResult> triggerLiveSync() async {
+  if (_debugTriggerSyncHandler case final handler?) {
+    return handler();
+  }
+  final Uri uri = resolveLiveRootUri(getBaseUri()).resolve(_kApiSyncPath);
+  final Response response = await window
+      .fetch(
+        uri.toString().toJS,
+        RequestInit(method: _kMethodPost, cache: _kCacheNoStore),
+      )
+      .toDart;
+  final String body = (await response.text().toDart).toDart;
+  Object? decoded;
+  try {
+    decoded = jsonDecode(body);
+  } on FormatException {
+    decoded = null;
+  }
+  if (!response.ok) {
+    final String? error = decoded is Map<Object?, Object?>
+        ? decoded[_kErrorKey] as String? ??
+              decoded[_kErrorMessageKey] as String?
+        : null;
+    return (
+      compileSuccess: false,
+      errorMessage: error ?? 'Sync failed with status ${response.status}.',
+    );
+  }
+  if (decoded is Map<Object?, Object?>) {
+    final bool compileSuccess = decoded[_kCompileSuccessKey] != false;
+    final Object? rawError = decoded[_kErrorMessageKey] ?? decoded[_kErrorKey];
+    final String? errorMessage = rawError is String && rawError.isNotEmpty
+        ? rawError
+        : null;
+    return (compileSuccess: compileSuccess, errorMessage: errorMessage);
+  }
+  return (compileSuccess: true, errorMessage: null);
+}
+
+/// Sends the active [selections] and user [message] to the host via
+/// `window.flutterWidgetPreviewHost.sendSelection`.
+Future<void> sendLiveSelectionToHost({
+  required String message,
+  required List<Map<String, Object?>> selections,
+  String? brightness,
+  String? previewId,
+  String? previewName,
+  String? textScale,
+  String? viewport,
+  String? zoom,
+}) async {
+  if (_debugSendSelectionHandler case final handler?) {
+    await handler(
+      message: message,
+      selections: selections,
+      brightness: brightness,
+      previewId: previewId,
+      previewName: previewName,
+      textScale: textScale,
+      viewport: viewport,
+      zoom: zoom,
+    );
+    return;
+  }
+  final _FlutterWidgetPreviewHost? hostBridge = _resolveHostBridge();
+  if (hostBridge == null) {
+    throw StateError('Host selection handler is not available.');
+  }
+  final payload = <String, Object?>{
+    _kMessageKey: message,
+    _kSelectionsKey: selections,
+    if (previewId != null && previewId.isNotEmpty) _kPreviewIdKey: previewId,
+    if (previewName != null && previewName.isNotEmpty)
+      _kPreviewNameKey: previewName,
+    if (brightness != null && brightness.isNotEmpty)
+      _kBrightnessKey: brightness,
+    if (viewport != null && viewport.isNotEmpty) _kViewportKey: viewport,
+    if (textScale != null && textScale.isNotEmpty) _kTextScaleKey: textScale,
+    if (zoom != null && zoom.isNotEmpty) _kZoomKey: zoom,
+  };
+  final JSAny? result = hostBridge.sendSelection(payload.jsify());
+  if (result != null && result.isA<JSPromise>()) {
+    await (result as JSPromise<JSAny?>).toDart;
+  }
+}
+
+/// Number of times [reloadWindow] has been invoked in tests.
+@visibleForTesting
+int get debugReloadCount => _debugReloadCount;
+
+/// Number of times [hotReloadLiveModules] has been invoked in tests.
+@visibleForTesting
+int get debugHotReloadCount => _debugHotReloadCount;
+
+/// Updates the simulated URL fragment (and optional [baseUri]) for tests and
+/// notifies [onUrlFragmentChange] listeners.
+@visibleForTesting
+void debugSetUrlFragment(String fragment, {Uri? baseUri}) {
+  _debugUrlFragmentOverride = fragment;
+  if (baseUri != null) {
+    _debugBaseUriOverride = baseUri;
+  }
+  _debugFragmentChangeController.add(getUrlFragment());
+}
+
+/// Registers an optional callback invoked by [reloadWindow] during tests.
+@visibleForTesting
+void debugSetReloadHandler(VoidCallback? onReload) {
+  _debugOnReloadCallback = onReload;
+}
+
+/// Overrides [initialLiveRevision] during tests.
+@visibleForTesting
+void debugSetInitialLiveRevision(int? revision) {
+  _debugInitialLiveRevision = revision;
+}
+
+/// Registers an optional test handler for [hotReloadLiveModules].
+@visibleForTesting
+void debugSetHotReloadHandler(
+  Future<int?> Function(int sinceRevision)? handler,
+) {
+  _debugHotReloadHandler = handler;
+}
+
+/// Registers an optional test handler for [triggerLiveSync].
+@visibleForTesting
+void debugSetTriggerSyncHandler(Future<LiveSyncResult> Function()? handler) {
+  _debugTriggerSyncHandler = handler;
+}
+
+/// Registers an optional test handler for [sendLiveSelectionToHost].
+@visibleForTesting
+void debugSetSendSelectionHandler(LiveSendSelectionHandler? handler) {
+  _debugSendSelectionHandler = handler;
+}
+
+/// Resets all URL test overrides and counters.
+@visibleForTesting
+void debugResetUrlTestState() {
+  _debugUrlFragmentOverride = null;
+  _debugBaseUriOverride = null;
+  _debugReloadCount = 0;
+  _debugHotReloadCount = 0;
+  _debugInitialLiveRevision = null;
+  _debugOnReloadCallback = null;
+  _debugHotReloadHandler = null;
+  _debugTriggerSyncHandler = null;
+  _debugSendSelectionHandler = null;
 }
