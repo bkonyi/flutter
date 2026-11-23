@@ -28,6 +28,7 @@ import '../device.dart';
 import '../features.dart';
 import '../isolated/devfs_web.dart';
 import '../isolated/resident_web_runner.dart';
+import '../isolated/widget_preview_live_server.dart';
 import '../migrations/widget_preview_gitignore_migration.dart';
 import '../project.dart';
 import '../resident_runner.dart';
@@ -228,6 +229,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             'Enables the legacy preview detection mechanism that uses '
             'package:analyzer instead of LSP.',
         hide: !verbose,
+      )
+      ..addMultiOption(
+        kWebAllowOrigin,
+        help:
+            'Additional Origin values allowed for fetch and WebSocket requests to the widget '
+            'preview live server (classic <script> loads omit Origin and require Host to be '
+            'loopback or the configured hostname).',
+        hide: !verbose,
       );
   }
 
@@ -237,6 +246,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
   static const kLaunchPreviewer = 'launch-previewer';
   static const kHeadless = 'headless';
   static const kWebServer = 'web-server';
+  static const kWebAllowOrigin = 'web-allow-origin';
   static const kWidgetPreviewScaffoldOutputDir = 'scaffold-output-dir';
   static const kDisableDtdServiceUuid = 'disable-dtd-service-uuid';
   static const kLegacyPreviewDetection = 'legacy-preview-detection';
@@ -625,6 +635,9 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     OperationResult? result;
     try {
       result = await app.restart(fullRestart: true);
+      if (result.isOk) {
+        _webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: true);
+      }
       return result;
     } finally {
       if (wasConnected &&
@@ -641,6 +654,9 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     if (app == null) {
       return (result: null, fullRestart: false, didChange: false);
     }
+    final WebDevFS? webDevFS = _webDevFS;
+    final int? revisionBefore = webDevFS?.webAssetServer.webMemoryFS.revision;
+    final bool assetChanged = _assetBundleNeedsBuild(app);
     final OperationResult result = await app.restart();
     if (result case OperationResult(
       isOk: false,
@@ -654,7 +670,16 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
         didChange: restartResult != null && restartResult.isOk,
       );
     }
-    return (result: result, fullRestart: false, didChange: result.isOk);
+    final int? revisionAfter = webDevFS?.webAssetServer.webMemoryFS.revision;
+    if (result.isOk) {
+      if (assetChanged && revisionBefore != null && revisionAfter == revisionBefore) {
+        webDevFS?.webAssetServer.webMemoryFS.incrementRevision();
+      }
+      webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: false);
+    }
+    final bool didChange =
+        result.isOk && (revisionBefore == null || revisionAfter != revisionBefore || assetChanged);
+    return (result: result, fullRestart: false, didChange: didChange);
   }
 
   /// Hot reloads the previewer, falling back to a hot restart if the reload is
@@ -1038,6 +1063,10 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
                   // TODO(bkonyi): consider removing if we stop placing the scaffold in $TMP.
                   // See https://github.com/flutter/flutter/issues/179036
                   projectRootPath: widgetPreviewScaffoldProject.directory.absolute.path,
+                  widgetPreviewLiveConfig: WidgetPreviewLiveConfig(
+                    dtdServices: _dtdService,
+                    allowedOrigins: stringsArg(kWebAllowOrigin),
+                  ),
                 );
           unawaited(
             _widgetPreviewApp!.run(
@@ -1046,6 +1075,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             ),
           );
           await appStarted.future;
+          _webDevFS?.webAssetServer.liveServer?.recordReloadCommitted(fullRestart: false);
           final Uri applicationUrl = flutterDevice.devFS!.baseUri!;
           webPreviewUri = applicationUrl;
           final bool legacyDetection = boolArg(kLegacyPreviewDetection);

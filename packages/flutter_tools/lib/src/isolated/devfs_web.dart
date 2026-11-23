@@ -33,6 +33,7 @@ import '../web/compile.dart';
 import '../web/devfs_config.dart';
 import '../web_template.dart';
 import 'web_asset_server.dart';
+import 'widget_preview_live_server.dart';
 
 const kLuciEnvName = 'LUCI_CONTEXT';
 
@@ -82,6 +83,7 @@ class WebDevFS implements DevFS {
     this.useDwdsWebSocketConnection = false,
     this.testMode = false,
     this._webDefines = const <String, String>{},
+    this.widgetPreviewLiveConfig,
   }) {
     final ToolContext(
       :Artifacts artifacts,
@@ -123,6 +125,7 @@ class WebDevFS implements DevFS {
   final bool webCrossOriginIsolation;
   final ToolContext _toolContext;
   final Map<String, String> _webDefines;
+  final WidgetPreviewLiveConfig? widgetPreviewLiveConfig;
 
   late WebAssetServer webAssetServer;
 
@@ -225,6 +228,7 @@ class WebDevFS implements DevFS {
       toolContext: _toolContext,
       crossOriginIsolation: webCrossOriginIsolation,
       webDefines: _webDefines,
+      widgetPreviewLiveConfig: widgetPreviewLiveConfig,
     );
     return baseUri;
   }

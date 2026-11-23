@@ -155,6 +155,7 @@ $_simpleLoaderScript
       window.\$dartStackTraceUtility.setSourceMapProvider(function(url) {
         const baseUrl = window.location.protocol + '//' + window.location.host;
         url = url.replace(baseUrl + '/', '');
+        url = url.split('?')[0];
         if (url == 'dart_sdk.js') {
           return dartDevEmbedder.debugger.getSourceMap('dart_sdk');
         }

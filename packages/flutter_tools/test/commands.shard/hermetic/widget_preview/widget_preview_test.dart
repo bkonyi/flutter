@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:dtd/dtd.dart';
 import 'package:file/memory.dart';
@@ -25,9 +26,13 @@ import 'package:flutter_tools/src/dart/analysis.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/isolated/build_targets.dart';
+import 'package:flutter_tools/src/isolated/devfs_web.dart';
+import 'package:flutter_tools/src/isolated/web_asset_server.dart';
+import 'package:flutter_tools/src/isolated/widget_preview_live_server.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/web/memory_fs.dart';
 import 'package:flutter_tools/src/widget_preview/analytics.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_services.dart';
 import 'package:flutter_tools/src/widget_preview/dtd_types.dart';
@@ -820,6 +825,64 @@ environment:
         posted.eventData,
         equals(const <String, Object?>{WidgetPreviewDtdServices.kFullRestart: false}),
       );
+    });
+
+    testWithoutContext('skips postPreviewReloaded on no-op syncPreviews and handleReload when WebMemoryFS revision is unchanged', () async {
+      final webMemoryFS = WebMemoryFS()
+        ..writeFileBytes('packages/my_app/main.dart.lib.js', Uint8List.fromList(<int>[1, 2, 3]));
+      final fakeLiveServer = _FakeCommitLiveServer();
+      final fakeDevice = _FakeFlutterDevice(
+        devFS: _FakeWebDevFS(
+          webAssetServer: _FakeWebAssetServer(liveServer: fakeLiveServer, webMemoryFS: webMemoryFS),
+        ),
+      );
+      var advanceRevisionOnRestart = false;
+      var rejectHotReload = false;
+      final fakeResidentRunner = FakeResidentRunner(
+        flutterDevices: <FlutterDevice>[fakeDevice],
+        onRestart: (bool fullRestart) {
+          if (!fullRestart && rejectHotReload) {
+            return _rejectedReloadResult();
+          }
+          if (advanceRevisionOnRestart) {
+            webMemoryFS.incrementRevision();
+          }
+          return OperationResult.ok;
+        },
+      );
+      final WidgetPreviewStartCommand startCommand = createStartCommand(fakeResidentRunner);
+
+      final SyncPreviewsResponse initialSync = await startCommand.syncPreviews();
+      expect(initialSync.reloaded, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false]);
+
+      final SyncPreviewsResponse noopSync = await startCommand.syncPreviews();
+      expect(noopSync.compileSuccess, isTrue);
+      expect(noopSync.reloaded, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false]);
+
+      final OperationResult? noopReload = await startCommand.handleReload();
+      expect(noopReload?.isOk, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false]);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false]);
+
+      advanceRevisionOnRestart = true;
+      final SyncPreviewsResponse changedSync = await startCommand.syncPreviews();
+      expect(changedSync.compileSuccess, isTrue);
+      expect(changedSync.reloaded, isTrue);
+      expect(changedSync.fullRestart, isFalse);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false]);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false, false]);
+
+      rejectHotReload = true;
+      final SyncPreviewsResponse restartSync = await startCommand.syncPreviews();
+      expect(restartSync.compileSuccess, isTrue);
+      expect(restartSync.reloaded, isTrue);
+      expect(restartSync.fullRestart, isTrue);
+      expect(fakeDtdServices.postedReloadedEvents, <bool>[false, false, true]);
+      expect(fakeLiveServer.committedFullRestarts, <bool>[false, false, false, false, true]);
     });
   });
 
@@ -2791,6 +2854,34 @@ class _FakeWatcher extends Fake implements Watcher {
 }
 
 class _FakeFlutterDevice extends Fake implements FlutterDevice {
+  _FakeFlutterDevice({this.devFS});
+
   @override
   DevFS? devFS;
+}
+
+class _FakeCommitLiveServer extends Fake implements WidgetPreviewLiveServer {
+  final committedFullRestarts = <bool>[];
+
+  @override
+  void recordReloadCommitted({required bool fullRestart}) {
+    committedFullRestarts.add(fullRestart);
+  }
+}
+
+class _FakeWebAssetServer extends Fake implements WebAssetServer {
+  _FakeWebAssetServer({required this.liveServer, required this.webMemoryFS});
+
+  @override
+  final WidgetPreviewLiveServer? liveServer;
+
+  @override
+  final WebMemoryFS webMemoryFS;
+}
+
+class _FakeWebDevFS extends Fake implements WebDevFS {
+  _FakeWebDevFS({required this.webAssetServer});
+
+  @override
+  late WebAssetServer webAssetServer;
 }
