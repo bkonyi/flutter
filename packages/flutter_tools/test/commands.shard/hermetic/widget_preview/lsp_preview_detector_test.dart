@@ -241,6 +241,130 @@ void main() {
       expect(fakeDtd.waitForAnalysisCallCount, 2);
       expect(fakeAnalysisServer.waitForAnalysisCallCount, 0);
     });
+
+    testWithoutContext(
+      'syncPreviews returns null without falling back to DTD when queued behind dispose',
+      () async {
+        final analysisGate = Completer<void>();
+        fakeAnalysisServer.waitForAnalysisGate = analysisGate;
+        fakeDtd.shouldThrow = true;
+
+        // Hold detector.mutex inside _onFileSystemEvent while analysis is in flight.
+        fakeWatcher.emitEvent(WatchEvent(ChangeType.MODIFY, _kDartFilePath));
+        await pumpEventQueue();
+
+        // Queue dispose() (which nulls _analysisServer) followed by syncPreviews().
+        final Future<void> disposeFuture = detector.dispose();
+        final Future<FlutterWidgetPreviews?> syncFuture = detector.syncPreviews();
+
+        analysisGate.complete();
+        await disposeFuture;
+
+        expect(await syncFuture, isNull);
+        expect(fakeDtd.waitForAnalysisCallCount, 0);
+      },
+    );
+
+    testWithoutContext(
+      'syncPreviews returns null when shutdown begins while waitForAnalysis is in flight',
+      () async {
+        final analysisGate = Completer<void>();
+        fakeAnalysisServer.waitForAnalysisGate = analysisGate;
+
+        final Future<FlutterWidgetPreviews?> syncFuture = detector.syncPreviews();
+        await pumpEventQueue();
+
+        shutdownHooks.addShutdownHook(() async {
+          fakeAnalysisServer.shouldThrow = true;
+          analysisGate.complete();
+        });
+        await shutdownHooks.runShutdownHooks(logger);
+
+        expect(await syncFuture, isNull);
+      },
+    );
+
+    testWithoutContext('awaits async onPubspecChangeDetected inside mutex', () async {
+      await detector.dispose();
+
+      final pubspecGate = Completer<void>();
+      var pubspecCompleted = false;
+      var queuedRanAfterPubspec = false;
+
+      detector = LspPreviewDetector(
+        dtd: fakeDtd,
+        onChangeDetected: detectedChanges.add,
+        onPubspecChangeDetected: (String path) async {
+          await pubspecGate.future;
+          pubspecCompleted = true;
+        },
+        previewAnalytics: previewAnalytics,
+        project: project,
+        suppressAnalytics: false,
+        toolContext: FakeToolContext(
+          artifacts: Artifacts.test(),
+          fs: fs,
+          logger: logger,
+          platform: platform,
+          processManager: FakeProcessManager.any(),
+          shutdownHooks: shutdownHooks,
+        ),
+        analysisServerFactory: () async => fakeAnalysisServer,
+        watcherBuilder: (_) => fakeWatcher,
+      );
+      await detector.initialize();
+
+      fakeWatcher.emitEvent(WatchEvent(ChangeType.MODIFY, '/project/pubspec.yaml'));
+      await pumpEventQueue();
+
+      final Future<void> guardedFuture = detector.mutex.runGuarded(() {
+        queuedRanAfterPubspec = pubspecCompleted;
+      });
+      await pumpEventQueue();
+      expect(queuedRanAfterPubspec, isFalse);
+
+      pubspecGate.complete();
+      await guardedFuture;
+      expect(queuedRanAfterPubspec, isTrue);
+    });
+
+    testWithoutContext(
+      'syncPreviews skips analysis debounce delay when Dart files are unchanged',
+      () async {
+        final File dartFile = fs.file(_kDartFilePath)..createSync(recursive: true);
+        dartFile
+          ..writeAsStringSync('void main() {}')
+          ..setLastModifiedSync(DateTime.now().subtract(const Duration(seconds: 5)));
+
+        // Initial sync has no prior snapshot, but records one after waiting.
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, Duration.zero);
+
+        // Subsequent no-op sync skips the 100ms debounce delay.
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, Duration.zero);
+
+        // Same-size edit with mtime = now (within the 1100ms coarse-mtime window)
+        // preserves the 100ms debounce delay.
+        dartFile
+          ..writeAsStringSync('void main() { }')
+          ..setLastModifiedSync(DateTime.now());
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+
+        // Modifying a Dart file with a size change also restores the 100ms debounce delay.
+        dartFile
+          ..writeAsStringSync('void main() { print(1); }')
+          ..setLastModifiedSync(DateTime.now().subtract(const Duration(seconds: 4)));
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+
+        // Deleting the Dart file also restores the 100ms debounce delay.
+        dartFile.deleteSync();
+        await detector.syncPreviews();
+        expect(fakeAnalysisServer.lastWaitForAnalysisDelay, const Duration(milliseconds: 100));
+      },
+    );
   });
 }
 
@@ -273,7 +397,9 @@ class FakeWatcher extends Fake implements Watcher {
 
 class FakeAnalysisServer extends Fake implements AnalysisServer {
   int waitForAnalysisCallCount = 0;
+  Duration? lastWaitForAnalysisDelay;
   bool shouldThrow = false;
+  Completer<void>? waitForAnalysisGate;
 
   @override
   Future<void> start() async {}
@@ -286,6 +412,10 @@ class FakeAnalysisServer extends Fake implements AnalysisServer {
 
   @override
   Future<void> waitForAnalysis({Duration delay = const Duration(milliseconds: 100)}) async {
+    lastWaitForAnalysisDelay = delay;
+    if (waitForAnalysisGate case final Completer<void> gate) {
+      await gate.future;
+    }
     if (shouldThrow) {
       throw StateError('Fake analysis server error');
     }

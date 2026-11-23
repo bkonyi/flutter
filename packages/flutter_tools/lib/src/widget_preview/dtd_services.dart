@@ -4,6 +4,9 @@
 
 import 'dart:async';
 
+import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:collection/collection.dart';
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -42,22 +45,34 @@ class WidgetPreviewDtdServices {
     required this.project,
     required this.shutdownHooks,
     @visibleForTesting this._dtd,
+    this.lspPreviewsProvider,
+    this.onHotReloadPreviewer,
+    this.onSyncPreviews,
+    this.projectRootPath,
+    this.webPreviewUriProvider,
   }) {
-    shutdownHooks.addShutdownHook(() async {
-      await _dtd?.close();
-      await dtdLauncher.dispose();
-    });
+    shutdownHooks.addShutdownHook(dispose);
+  }
+
+  /// Closes the DTD connection and terminates any launched DTD process.
+  Future<void> dispose() async {
+    await _dtd?.close();
+    await dtdLauncher.dispose();
   }
 
   /// The name of the widget preview service, without a UUID.
-  @visibleForTesting
   static const kWidgetPreviewServiceRoot = 'widget-preview';
 
   /// The actual name of the registered widget preview service.
   late final String widgetPreviewService = _withUuid(kWidgetPreviewServiceRoot);
 
+  /// The name of the widget preview scaffold service, without a UUID.
+  static const kWidgetPreviewScaffoldServiceRoot = 'PreviewScaffold';
+
+  /// The actual name of the registered widget preview scaffold service.
+  late final String widgetPreviewScaffoldService = _withUuid(kWidgetPreviewScaffoldServiceRoot);
+
   /// The name of the widget preview stream, without a UUID.
-  @visibleForTesting
   static const kWidgetPreviewScaffoldStreamRoot = 'WidgetPreviewScaffold';
 
   /// The actual name of the widget preview stream.
@@ -108,28 +123,58 @@ class WidgetPreviewDtdServices {
 
   static const kIsWindows = 'isWindows';
   static const kHotRestartPreviewer = 'hotRestartPreviewer';
+  static const kHotReloadPreviewer = 'hotReloadPreviewer';
   static const kResolveUri = 'resolveUri';
   static const kSetPreference = 'setPreference';
   static const kGetPreference = 'getPreference';
   static const kGetDevToolsUri = 'getDevToolsUri';
+  static const kGetWebPreviewUrl = 'getWebPreviewUrl';
+  static const kGetServiceInfo = 'getServiceInfo';
+  static const kSyncPreviews = 'syncPreviews';
+  static const kListPreviews = 'listPreviews';
+  static const kGetPreviews = 'getPreviews';
+  static const kCapturePreview = 'capturePreview';
 
   static const kWidgetPreviewConnectedEvent = 'Connected';
+  static const kPreviewReloadedEvent = 'PreviewReloaded';
+  static const kFullRestart = 'fullRestart';
+
+  /// Error code for [RpcException] thrown when a requested preview ID or name
+  /// does not match any registered preview.
+  static const kPreviewNotFoundErrorCode = 101;
+
+  /// Error code for [RpcException] thrown when a shorthand preview name
+  /// matches more than one registered preview.
+  static const kAmbiguousPreviewNameErrorCode = 102;
 
   /// Error code for RpcException thrown when attempting to load a key from
-  /// persistent preferences that doesn't have an entry.
+  /// persistent preferences that doesn't have an entry, or when a requested
+  /// resource (such as the web preview URL) is not available.
   static const kNoValueForKey = 200;
 
   /// The list of DTD service methods registered by the tool.
   late final services = <DtdService>[
     (kHotRestartPreviewer, _hotRestart),
+    (kHotReloadPreviewer, _hotReload),
     (kIsWindows, _isWindows),
     (kResolveUri, _resolveUri),
     (kSetPreference, _setPreference),
     (kGetPreference, _getPreference),
     (kGetDevToolsUri, _getDevToolsUri),
+    (kGetWebPreviewUrl, _getWebPreviewUrl),
+    (kGetServiceInfo, _getServiceInfo),
+    (kSyncPreviews, _syncPreviews),
+    (kListPreviews, _listPreviews),
   ];
 
   // END KEEP SYNCED
+
+  static const kFileUri = 'fileUri';
+  static const kSync = 'sync';
+  static const kTimeoutMs = 'timeoutMs';
+  static const kDefaultSyncTimeoutMs = 30_000;
+  static const _kDefaultPreviewGroup = 'Default';
+  static const _kInvalidPreviewsGroup = 'Invalid Previews';
 
   @visibleForTesting
   late final preferences = PersistentPreferences(fs: fs);
@@ -144,8 +189,78 @@ class WidgetPreviewDtdServices {
   /// scaffold.
   final VoidCallback onHotRestartPreviewerRequest;
 
+  /// Invoked when the [kHotReloadPreviewer] service method is invoked.
+  final Future<void> Function()? onHotReloadPreviewer;
+
+  /// Invoked when the [kSyncPreviews] service method is invoked.
+  final Future<SyncPreviewsResponse> Function({required Duration timeout})? onSyncPreviews;
+
+  /// Provides the most recently discovered LSP workspace previews for fallback
+  /// when the scaffold is disconnected or failed compilation.
+  final FutureOr<FlutterWidgetPreviews?> Function()? lspPreviewsProvider;
+
+  /// Returns the URI of the running web preview application, if available.
+  final Uri? Function()? webPreviewUriProvider;
+
+  /// Explicit path to the root directory of the previewed Flutter project.
+  ///
+  /// When omitted, defaults to [project]'s directory path.
+  final String? projectRootPath;
+
   /// The widget_preview_scaffold project.
   final FlutterProject project;
+
+  /// Whether the widget preview scaffold has connected to DTD.
+  bool get scaffoldConnected => _scaffoldConnected;
+  bool _scaffoldConnected = false;
+  Completer<void>? _scaffoldConnectedCompleter;
+
+  /// Resets [scaffoldConnected] to `false` before a full restart so callers
+  /// awaiting [waitForScaffoldConnected] wait for the fresh connection event.
+  void markScaffoldDisconnected() {
+    _scaffoldConnected = false;
+  }
+
+  /// Marks [scaffoldConnected] as `true` and completes any pending
+  /// [waitForScaffoldConnected] futures.
+  void markScaffoldConnected() {
+    _scaffoldConnected = true;
+    if (_scaffoldConnectedCompleter case final Completer<void> completer
+        when !completer.isCompleted) {
+      completer.complete();
+    }
+    _scaffoldConnectedCompleter = null;
+  }
+
+  /// Posts [kPreviewReloadedEvent] on [widgetPreviewScaffoldStream] once a
+  /// reload or hot restart succeeds.
+  Future<void> postPreviewReloaded({required bool fullRestart}) async {
+    final DartToolingDaemon? dtd = _dtd;
+    if (dtd == null) {
+      return;
+    }
+    try {
+      await dtd.postEvent(widgetPreviewScaffoldStream, kPreviewReloadedEvent, <String, Object?>{
+        kFullRestart: fullRestart,
+      });
+    } on RpcException catch (e) {
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+    } on StateError catch (e) {
+      logger.printTrace('Failed to post $kPreviewReloadedEvent event: $e');
+    }
+  }
+
+  /// Waits until the widget preview scaffold has posted
+  /// [kWidgetPreviewConnectedEvent] on [widgetPreviewScaffoldStream].
+  Future<void> waitForScaffoldConnected({
+    Duration timeout = const Duration(milliseconds: kDefaultSyncTimeoutMs),
+  }) async {
+    if (_scaffoldConnected) {
+      return;
+    }
+    final Completer<void> completer = _scaffoldConnectedCompleter ??= Completer<void>();
+    await completer.future.timeout(timeout);
+  }
 
   PackageConfig? _packageConfig;
 
@@ -176,8 +291,8 @@ class WidgetPreviewDtdServices {
 
   /// Connects to an existing DTD instance and registers any relevant services.
   Future<void> connect({required Uri dtdWsUri}) async {
+    _dtd ??= await DartToolingDaemon.connect(dtdWsUri);
     _dtdUri = dtdWsUri;
-    _dtd = await DartToolingDaemon.connect(dtdWsUri);
 
     _allLspServicesRegistered = false;
     final RegisteredServicesResponse registeredServices = await _dtd!.getRegisteredServices();
@@ -304,6 +419,7 @@ class WidgetPreviewDtdServices {
     final DartToolingDaemon dtd = _dtd!;
     dtd.onEvent(widgetPreviewScaffoldStream).listen((DTDEvent event) {
       if (event.kind == kWidgetPreviewConnectedEvent) {
+        markScaffoldConnected();
         previewAnalytics.reportPreviewerConnected();
       }
     });
@@ -354,6 +470,216 @@ class WidgetPreviewDtdServices {
   Future<Map<String, Object?>> _getDevToolsUri(Parameters _) async {
     return StringResponse((await _devToolsServerAddress.future).toString()).toJson();
   }
+
+  Future<Map<String, Object?>> _hotReload(Parameters _) async {
+    if (onHotReloadPreviewer != null) {
+      await onHotReloadPreviewer!();
+    }
+    return const Success().toJson();
+  }
+
+  Future<Map<String, Object?>> _getWebPreviewUrl(Parameters _) async {
+    final Uri? uri = webPreviewUriProvider?.call();
+    if (uri == null) {
+      throw RpcException(kNoValueForKey, 'Web preview server URL is not currently available.');
+    }
+    return WebPreviewUrlResult(host: uri.host, port: uri.port, url: uri.toString()).toJson();
+  }
+
+  String get _resolvedProjectRootPath {
+    if (projectRootPath case final String rootPath) {
+      return rootPath;
+    }
+    return project.directory.existsSync()
+        ? project.directory.resolveSymbolicLinksSync()
+        : project.directory.absolute.path;
+  }
+
+  Future<Map<String, Object?>> _getServiceInfo(Parameters _) async {
+    final Uri? uri = webPreviewUriProvider?.call();
+    return PreviewServiceInfo(
+      // Empty only when invoked in unit tests before connect() has been called.
+      dtdUri: _dtdUri?.toString() ?? '',
+      previewService: widgetPreviewService,
+      projectRoot: _resolvedProjectRootPath,
+      scaffoldConnected: scaffoldConnected,
+      scaffoldService: widgetPreviewScaffoldService,
+      scaffoldStream: widgetPreviewScaffoldStream,
+      webPreviewUri: uri?.toString(),
+    ).toJson();
+  }
+
+  static Parameter? _optionalParam(Parameters params, String key) =>
+      params.value == null || params[key].valueOr(null) == null ? null : params[key];
+
+  static int _parseTimeoutMs(Parameters params) {
+    final int timeoutMs = _optionalParam(params, kTimeoutMs)?.asInt ?? kDefaultSyncTimeoutMs;
+    if (timeoutMs < 0) {
+      throw RpcException.invalidParams('$kTimeoutMs must be non-negative, got: $timeoutMs');
+    }
+    return timeoutMs;
+  }
+
+  Future<Map<String, Object?>> _syncPreviews(Parameters params) async {
+    final int timeoutMs = _parseTimeoutMs(params);
+    final Future<SyncPreviewsResponse> Function({required Duration timeout})? syncCallback =
+        onSyncPreviews;
+    if (syncCallback == null) {
+      throw RpcException(kNoValueForKey, 'Preview synchronization is not currently available.');
+    }
+    return (await syncCallback(timeout: Duration(milliseconds: timeoutMs))).toJson();
+  }
+
+  Future<Map<String, Object?>> _listPreviews(Parameters params) => listPreviewsJson(
+    fileUri: _optionalParam(params, kFileUri)?.asString,
+    sync: _optionalParam(params, kSync)?.asBool ?? true,
+    timeoutMs: _parseTimeoutMs(params),
+  );
+
+  /// Returns the current list of previews as a JSON-serializable map matching
+  /// [PreviewListResponse.toJson].
+  Future<Map<String, Object?>> listPreviewsJson({
+    String? fileUri,
+    bool sync = false,
+    int timeoutMs = kDefaultSyncTimeoutMs,
+  }) async {
+    SyncPreviewsResponse? syncResponse;
+    if (sync) {
+      if (onSyncPreviews
+          case final Future<SyncPreviewsResponse> Function({required Duration timeout})
+              syncCallback) {
+        syncResponse = await syncCallback(timeout: Duration(milliseconds: timeoutMs));
+      } else if (_dtd != null) {
+        await waitForAnalysis();
+      }
+    }
+
+    final bool canQueryScaffold =
+        (syncResponse == null || syncResponse.compileSuccess) && scaffoldConnected && _dtd != null;
+    if (canQueryScaffold) {
+      try {
+        final DTDResponse response = await _dtd!.call(
+          widgetPreviewScaffoldService,
+          kGetPreviews,
+          params: <String, Object?>{if (fileUri != null && fileUri.isNotEmpty) kFileUri: fileUri},
+        );
+        return PreviewListResponse.fromDTDResponse(response).toJson();
+      } on RpcException catch (e) {
+        if (e.code != RpcErrorCodes.kMethodNotFound &&
+            e.code != RpcErrorCodes.kServiceDisappeared) {
+          rethrow;
+        }
+      }
+    }
+
+    FlutterWidgetPreviews? lspPreviews = await lspPreviewsProvider?.call();
+    if (lspPreviews == null && _dtd != null) {
+      if (_allLspServicesRegistered ||
+          _areRequiredLspServicesRegistered(await _dtd!.getRegisteredServices())) {
+        _allLspServicesRegistered = true;
+        lspPreviews = await getFlutterWidgetPreviews();
+      }
+    }
+    if (lspPreviews == null) {
+      return PreviewListResponse(previews: const <PreviewEntry>[]).toJson();
+    }
+    return PreviewListResponse(
+      previews: _buildFallbackPreviewEntries(lspPreviews, fileUri: fileUri),
+    ).toJson();
+  }
+
+  List<PreviewEntry> _buildFallbackPreviewEntries(
+    FlutterWidgetPreviews lspPreviews, {
+    String? fileUri,
+  }) {
+    final List<FlutterWidgetPreviewDetails> sortedPreviews = lspPreviews.previews.toList()
+      ..sort(
+        (FlutterWidgetPreviewDetails a, FlutterWidgetPreviewDetails b) =>
+            a.scriptUri.toString().compareTo(b.scriptUri.toString()),
+      );
+    final entries = <PreviewEntry>[];
+    for (final details in sortedPreviews) {
+      final String? packageName = details.packageName;
+      if (packageName == null) {
+        continue;
+      }
+      final libraryUri = details.libraryUri.toString();
+      final scriptUri = details.scriptUri.toString();
+      if (fileUri != null &&
+          fileUri.isNotEmpty &&
+          !_matchesPreviewFileUri(fileUri: fileUri, libraryUri: libraryUri, scriptUri: scriptUri)) {
+        continue;
+      }
+      final bool hasError = details.hasError || details.dependencyHasErrors;
+      final String? errorMessage = hasError
+          ? (details.dependencyHasErrors
+                ? 'Dependency of $libraryUri has errors!'
+                : '$libraryUri has errors!')
+          : null;
+      final _PreviewAnnotationMetadata metadata = hasError
+          ? (
+              brightness: null,
+              group: _kInvalidPreviewsGroup,
+              height: null,
+              name: null,
+              textScaleFactor: null,
+              width: null,
+            )
+          : _extractPreviewAnnotationMetadata(details.previewAnnotation);
+      entries.add(
+        PreviewEntry(
+          brightness: metadata.brightness,
+          column: details.position.character,
+          errorMessage: errorMessage,
+          functionName: details.functionName,
+          group: metadata.group,
+          hasError: hasError,
+          height: metadata.height,
+          id: '$libraryUri::${details.functionName}',
+          libraryUri: libraryUri,
+          line: details.position.line,
+          name: metadata.name,
+          packageName: packageName,
+          scriptUri: scriptUri,
+          textScaleFactor: metadata.textScaleFactor,
+          width: metadata.width,
+        ),
+      );
+    }
+    return entries;
+  }
+
+  bool _matchesPreviewFileUri({
+    required String fileUri,
+    required String libraryUri,
+    required String scriptUri,
+  }) {
+    if (libraryUri == fileUri || scriptUri == fileUri) {
+      return true;
+    }
+    final Uri? parsedScript = Uri.tryParse(scriptUri);
+    if (parsedScript == null || !parsedScript.isScheme('file')) {
+      return false;
+    }
+    final String scriptPath = _resolvePathWithSymlinks(fs.path.fromUri(parsedScript));
+    final Uri? parsedFilter = Uri.tryParse(fileUri);
+    if (parsedFilter != null && parsedFilter.isScheme('file')) {
+      return fs.path.equals(scriptPath, _resolvePathWithSymlinks(fs.path.fromUri(parsedFilter)));
+    }
+    if (!fileUri.startsWith('package:') && !fileUri.startsWith('dart:')) {
+      return fs.path.equals(scriptPath, _resolvePathWithSymlinks(fileUri));
+    }
+    return false;
+  }
+
+  String _resolvePathWithSymlinks(String path) {
+    final String normalized = fs.path.normalize(path);
+    final File file = fs.file(normalized);
+    if (file.existsSync()) {
+      return fs.path.normalize(file.resolveSymbolicLinksSync());
+    }
+    return normalized;
+  }
 }
 
 /// Manages the lifecycle of a Dart Tooling Daemon (DTD) instance.
@@ -375,17 +701,45 @@ class DtdLauncher {
 
     // Wait for the DTD connection information.
     final dtdUri = Completer<Uri>();
-    late final StreamSubscription<String> sub;
-    sub = _dtdProcess!.stdout.transformWithCallSite(utf8.decoder).listen((String data) async {
-      await sub.cancel();
-      final jsonData = json.decode(data) as Map<String, Object?>;
-      if (jsonData case {'tooling_daemon_details': {'uri': final String dtdUriString}}) {
-        dtdUri.complete(Uri.parse(dtdUriString));
-      } else {
-        throwToolExit('Unable to start the Dart Tooling Daemon.');
+    _dtdProcess!.stderr.drain<void>().ignore();
+    late final StreamSubscription<String> stdoutSub;
+
+    void completeWithFailure(String message) {
+      if (!dtdUri.isCompleted) {
+        dtdUri.completeWithToolExit(message);
       }
-    });
-    return dtdUri.future;
+    }
+
+    stdoutSub = _dtdProcess!.stdout
+        .transformWithCallSite(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (String line) {
+            final String trimmed = line.trim();
+            if (trimmed.isEmpty || dtdUri.isCompleted) {
+              return;
+            }
+            try {
+              final Object? jsonData = json.decode(trimmed);
+              if (jsonData case {'tooling_daemon_details': {'uri': final String dtdUriString}}) {
+                dtdUri.complete(Uri.parse(dtdUriString));
+              } else {
+                completeWithFailure('Unable to start the Dart Tooling Daemon.');
+              }
+            } on FormatException catch (error) {
+              completeWithFailure('Unable to start the Dart Tooling Daemon: $error');
+            }
+          },
+          onError: (Object error) =>
+              completeWithFailure('Unable to start the Dart Tooling Daemon: $error'),
+          onDone: () => completeWithFailure('Unable to start the Dart Tooling Daemon.'),
+        );
+
+    try {
+      return await dtdUri.future;
+    } finally {
+      await stdoutSub.cancel();
+    }
   }
 
   /// Kills the spawned DTD instance.
@@ -412,4 +766,137 @@ extension on DartToolingDaemon {
       }
     }
   }
+}
+
+typedef _PreviewAnnotationMetadata = ({
+  String? brightness,
+  String group,
+  double? height,
+  String? name,
+  double? textScaleFactor,
+  double? width,
+});
+
+const _PreviewAnnotationMetadata _defaultPreviewMetadata = (
+  brightness: null,
+  group: WidgetPreviewDtdServices._kDefaultPreviewGroup,
+  height: null,
+  name: null,
+  textScaleFactor: null,
+  width: null,
+);
+
+_PreviewAnnotationMetadata _extractPreviewAnnotationMetadata(String annotationSource) {
+  final ParseStringResult parsed = parseString(
+    content: 'final _ = $annotationSource;',
+    throwIfDiagnostics: false,
+  );
+  final CompilationUnitMember? declaration = parsed.unit.declarations.firstOrNull;
+  if (declaration is! TopLevelVariableDeclaration) {
+    return _defaultPreviewMetadata;
+  }
+  final Expression? initializer = declaration.variables.variables.firstOrNull?.initializer;
+  final ArgumentList? argumentList = switch (initializer) {
+    InstanceCreationExpression(:final ArgumentList argumentList) => argumentList,
+    MethodInvocation(:final ArgumentList argumentList) => argumentList,
+    _ => null,
+  };
+  if (argumentList == null) {
+    return _defaultPreviewMetadata;
+  }
+
+  String group = WidgetPreviewDtdServices._kDefaultPreviewGroup;
+  String? name;
+  double? width;
+  double? height;
+  double? textScaleFactor;
+  String? brightness;
+
+  for (final Argument argument in argumentList.arguments) {
+    if (argument is! NamedArgument) {
+      continue;
+    }
+    final Expression expr = argument.argumentExpression;
+    switch (argument.name.lexeme) {
+      case 'group':
+        if (expr is SimpleStringLiteral) {
+          group = expr.value;
+        }
+      case 'name':
+        if (expr is SimpleStringLiteral) {
+          name = expr.value;
+        }
+      case 'textScaleFactor':
+        textScaleFactor = _extractFiniteDouble(expr);
+      case 'brightness':
+        final String? enumName = switch (expr) {
+          PrefixedIdentifier(:final SimpleIdentifier identifier) => identifier.name,
+          PropertyAccess(:final SimpleIdentifier propertyName) => propertyName.name,
+          DotShorthandPropertyAccess(:final SimpleIdentifier propertyName) => propertyName.name,
+          _ => null,
+        };
+        if (enumName == 'light' || enumName == 'dark') {
+          brightness = enumName;
+        }
+      case 'size':
+        (:width, :height) = _extractSizeDimensions(expr);
+    }
+  }
+
+  return (
+    brightness: brightness,
+    group: group,
+    height: height,
+    name: name,
+    textScaleFactor: textScaleFactor,
+    width: width,
+  );
+}
+
+({double? width, double? height}) _extractSizeDimensions(Expression expr) {
+  final (String? constructorName, NodeList<Argument>? args) = switch (expr) {
+    InstanceCreationExpression(
+      :final ConstructorName constructorName,
+      :final ArgumentList argumentList,
+    ) =>
+      (constructorName.name?.name, argumentList.arguments),
+    MethodInvocation(
+      :final Expression? target,
+      :final SimpleIdentifier methodName,
+      :final ArgumentList argumentList,
+    ) =>
+      (
+        target != null &&
+                (methodName.name == 'fromWidth' ||
+                    methodName.name == 'fromHeight' ||
+                    methodName.name == 'square')
+            ? methodName.name
+            : null,
+        argumentList.arguments,
+      ),
+    _ => (null, null),
+  };
+  if (args == null || args.isEmpty) {
+    return (width: null, height: null);
+  }
+  final double? first = _extractFiniteDouble(args[0].argumentExpression);
+  return switch (constructorName) {
+    null when args.length >= 2 => (
+      width: first,
+      height: _extractFiniteDouble(args[1].argumentExpression),
+    ),
+    'fromWidth' => (width: first, height: null),
+    'fromHeight' => (width: null, height: first),
+    'square' => (width: first, height: first),
+    _ => (width: null, height: null),
+  };
+}
+
+double? _extractFiniteDouble(Expression expr) {
+  final double? value = switch (expr) {
+    DoubleLiteral(:final double value) => value,
+    IntegerLiteral(:final int? value) => value?.toDouble(),
+    _ => null,
+  };
+  return value != null && value.isFinite ? value : null;
 }

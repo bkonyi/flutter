@@ -2,13 +2,44 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
+import 'package:json_rpc_2/json_rpc_2.dart';
 import 'package:path/path.dart' as path;
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'dtd/dtd_services.dart';
 import 'widget_preview.dart';
+
+/// Result of resolving a preview identifier or unique shorthand name against
+/// discovered widget previews.
+sealed class PreviewLookupResult {
+  const PreviewLookupResult();
+}
+
+/// Successful resolution of a single [WidgetPreview].
+final class PreviewLookupMatch extends PreviewLookupResult {
+  const PreviewLookupMatch(this.preview);
+
+  final WidgetPreview preview;
+}
+
+/// Resolution failure when no preview matched [previewId] (or none was given).
+final class PreviewLookupMissing extends PreviewLookupResult {
+  const PreviewLookupMissing({required this.availableIds, this.previewId});
+
+  final List<String> availableIds;
+  final String? previewId;
+}
+
+/// Resolution failure when a shorthand [previewId] matched multiple previews.
+final class PreviewLookupAmbiguous extends PreviewLookupResult {
+  const PreviewLookupAmbiguous({
+    required this.candidateIds,
+    required this.previewId,
+  });
+
+  final List<String> candidateIds;
+  final String previewId;
+}
 
 /// Define the Enum for Layout Types
 enum LayoutType { gridView, listView }
@@ -21,11 +52,15 @@ typedef PreviewsCallback = WidgetPreviews Function();
 /// displayed and how they should be displayed in the [WidgetPreviewScaffold].
 class WidgetPreviewScaffoldController {
   WidgetPreviewScaffoldController({
-    required PreviewsCallback previews,
+    required this._previews,
     @visibleForTesting WidgetPreviewScaffoldDtdServices? dtdServicesOverride,
-    // ignore: prefer_initializing_formals
-  }) : _previews = previews,
-       dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices();
+  }) : dtdServices = dtdServicesOverride ?? WidgetPreviewScaffoldDtdServices() {
+    _context = _createPathContext();
+    _refreshPreviewsSnapshot();
+    dtdServices.onGetPreviews = getPreviews;
+  }
+
+  static const _kCanonicalIdSeparator = '::';
 
   @visibleForTesting
   static const kFilterBySelectedFilePreference = 'filterBySelectedFile';
@@ -34,9 +69,7 @@ class WidgetPreviewScaffoldController {
   /// listening for events.
   Future<void> initialize() async {
     await dtdServices.connect();
-    context = path.Context(
-      style: dtdServices.isWindows ? path.Style.windows : path.Style.posix,
-    );
+    _context = _createPathContext();
     _registerListeners();
     await Future.wait<void>([
       dtdServices
@@ -55,20 +88,165 @@ class WidgetPreviewScaffoldController {
     _layoutType.dispose();
     _filterBySelectedFile.dispose();
     _searchQuery.dispose();
+    _previewsRevision.dispose();
     for (final searchField in _searchFields) {
       searchField.dispose();
     }
   }
 
   /// Update state after the project has been reassembled due to a hot reload.
-  void onHotReload() => _updateFilteredPreviewSet();
+  void onHotReload() {
+    _refreshPreviewsSnapshot();
+    _updateFilteredPreviewSet();
+    _previewsRevision.value++;
+  }
 
   /// The active DTD connection used to communicate with other developer tooling.
   final WidgetPreviewScaffoldDtdServices dtdServices;
 
   final PreviewsCallback _previews;
+  var _cachedPreviews = const <WidgetPreview>[];
+  var _cachedPreviewGroups = const <WidgetPreviewGroup>[];
 
-  late final path.Context context;
+  void _refreshPreviewsSnapshot() {
+    _cachedPreviews = List<WidgetPreview>.unmodifiable(_previews());
+    _cachedPreviewGroups = _groupPreviews(_cachedPreviews);
+  }
+
+  static List<WidgetPreviewGroup> _groupPreviews(
+    Iterable<WidgetPreview> previews,
+  ) {
+    final previewGroups = <String, List<WidgetPreview>>{};
+    for (final WidgetPreview preview in previews) {
+      previewGroups
+          .putIfAbsent(preview.previewData.group, () => <WidgetPreview>[])
+          .add(preview);
+    }
+    return List<WidgetPreviewGroup>.unmodifiable(<WidgetPreviewGroup>[
+      for (final MapEntry(:String key, :List<WidgetPreview> value)
+          in previewGroups.entries)
+        WidgetPreviewGroup(
+          name: key,
+          previews: List<WidgetPreview>.unmodifiable(value),
+        ),
+    ]);
+  }
+
+  /// All unfiltered [WidgetPreview] instances currently defined in the project.
+  WidgetPreviews get previews => _cachedPreviews;
+
+  /// All unfiltered [WidgetPreviewGroup]s currently defined in the project.
+  List<WidgetPreviewGroup> get allPreviewGroups => _cachedPreviewGroups;
+
+  late path.Context _context;
+  path.Context get context => _context;
+
+  path.Context _createPathContext() => path.Context(
+    style: dtdServices.isWindows ? path.Style.windows : path.Style.posix,
+  );
+
+  /// Builds a [PreviewListResponse] across unfiltered [previews], optionally
+  /// filtered by [fileUri] (`scriptUri` or `libraryUri`), ignoring UI-only
+  /// selected-file and search filters.
+  PreviewListResponse getPreviews({String? fileUri}) {
+    final entries = <PreviewEntry>[];
+    for (final WidgetPreview preview in _cachedPreviews) {
+      if (fileUri != null &&
+          fileUri.isNotEmpty &&
+          !_matchesFileUri(
+            fileUri: fileUri,
+            libraryUri: preview.libraryUri,
+            pathContext: _context,
+            scriptUri: preview.scriptUri,
+          )) {
+        continue;
+      }
+      entries.add(
+        PreviewEntry(
+          brightness: preview.brightness?.name,
+          column: preview.column,
+          errorMessage: preview.errorMessage,
+          functionName: preview.functionName,
+          group: preview.previewData.group,
+          hasError: preview.hasError,
+          height: preview.finiteHeight,
+          id: preview.id,
+          libraryUri: preview.libraryUri,
+          line: preview.line,
+          multiPreviewIndex: preview.multiPreviewIndex,
+          name: preview.name,
+          packageName: preview.packageName,
+          scriptUri: preview.scriptUri,
+          textScaleFactor: preview.finiteTextScaleFactor,
+          width: preview.finiteWidth,
+        ),
+      );
+    }
+    return PreviewListResponse(previews: entries);
+  }
+
+  /// Resolves [previewId] against all unfiltered [previews] without throwing.
+  PreviewLookupResult resolvePreviewMatch(String? previewId) {
+    if (previewId == null || previewId.isEmpty) {
+      return PreviewLookupMissing(
+        availableIds: <String>[
+          for (final WidgetPreview preview in _cachedPreviews) preview.id,
+        ],
+      );
+    }
+    for (final WidgetPreview preview in _cachedPreviews) {
+      if (preview.id == previewId) {
+        return PreviewLookupMatch(preview);
+      }
+    }
+    if (!previewId.contains(_kCanonicalIdSeparator)) {
+      final nameMatches = <WidgetPreview>[
+        for (final WidgetPreview preview in _cachedPreviews)
+          if (preview.previewData.name == previewId) preview,
+      ];
+      if (nameMatches.length == 1) {
+        return PreviewLookupMatch(nameMatches.single);
+      }
+      if (nameMatches.length > 1) {
+        return PreviewLookupAmbiguous(
+          candidateIds: <String>[
+            for (final WidgetPreview preview in nameMatches) preview.id,
+          ],
+          previewId: previewId,
+        );
+      }
+    }
+    return PreviewLookupMissing(
+      availableIds: <String>[
+        for (final WidgetPreview preview in _cachedPreviews) preview.id,
+      ],
+      previewId: previewId,
+    );
+  }
+
+  /// Resolves [previewId] against all unfiltered [previews].
+  ///
+  /// Matches canonical [WidgetPreview.id] first, falling back to a unique
+  /// `previewData.name` match when [previewId] does not contain `'::'`.
+  /// Throws an [RpcException] with code `101` when no preview matches or code
+  /// `102` listing candidate canonical IDs when a shorthand name is ambiguous.
+  WidgetPreview resolvePreview(String previewId) {
+    return switch (resolvePreviewMatch(previewId)) {
+      PreviewLookupMatch(:final WidgetPreview preview) => preview,
+      PreviewLookupAmbiguous(:final List<String> candidateIds) =>
+        throw RpcException(
+          WidgetPreviewScaffoldDtdServices.kAmbiguousPreviewNameErrorCode,
+          'Preview name "$previewId" is ambiguous; specify one of: '
+          '${candidateIds.join(', ')}',
+        ),
+      PreviewLookupMissing(:final List<String> availableIds) =>
+        throw RpcException(
+          WidgetPreviewScaffoldDtdServices.kPreviewNotFoundErrorCode,
+          'Preview "$previewId" not found. Available IDs: '
+          '${availableIds.join(', ')}',
+        ),
+    };
+  }
 
   /// Specifies how the previews should be laid out.
   ValueListenable<LayoutType> get layoutTypeListenable => _layoutType;
@@ -81,8 +259,12 @@ class WidgetPreviewScaffoldController {
   ValueListenable<bool> get editorServiceAvailable =>
       dtdServices.editorServiceAvailable;
 
+  /// Monotonically incremented whenever [onHotReload] refreshes [previews].
+  ValueListenable<int> get previewsRevisionListenable => _previewsRevision;
+  final _previewsRevision = ValueNotifier<int>(0);
+
   /// The DevTools instance that's used to display the widget inspector within the previewer.
-  late final Uri devToolsUri;
+  late Uri devToolsUri;
 
   /// Specifies if only previews from the currently selected source file should be rendered.
   ValueListenable<bool> get filterBySelectedFileListenable =>
@@ -231,8 +413,6 @@ class WidgetPreviewScaffoldController {
   void _updateFilteredPreviewSet({
     bool editorServiceAvailabilityUpdated = false,
   }) {
-    final previews = _previews();
-
     final normalizedSearchQuery = _searchQuery.value.trim().toLowerCase();
     String? selectedSourcePath;
 
@@ -258,8 +438,8 @@ class WidgetPreviewScaffoldController {
       selectedSourcePath = context.fromUri(selectedSourceFile.uriAsString);
     }
 
-    final previewGroups = <String, WidgetPreviewGroup>{};
-    for (final preview in previews) {
+    final filteredPreviews = <WidgetPreview>[];
+    for (final preview in _cachedPreviews) {
       if (selectedSourcePath != null &&
           !context.equals(
             // TODO(bkonyi): we can probably save some cycles by caching the file path
@@ -272,16 +452,32 @@ class WidgetPreviewScaffoldController {
       if (!_matchesSearchFilter(preview, normalizedSearchQuery)) {
         continue;
       }
-
-      final group = preview.previewData.group;
-      previewGroups
-          .putIfAbsent(
-            group,
-            () => WidgetPreviewGroup(name: group, previews: []),
-          )
-          .previews
-          .add(preview);
+      filteredPreviews.add(preview);
     }
-    _filteredPreviewSet.value = previewGroups.values.toList();
+    _filteredPreviewSet.value = _groupPreviews(filteredPreviews);
+  }
+
+  static bool _matchesFileUri({
+    required String fileUri,
+    required String libraryUri,
+    required path.Context pathContext,
+    required String scriptUri,
+  }) {
+    if (libraryUri == fileUri || scriptUri == fileUri) {
+      return true;
+    }
+    final Uri? parsedScript = Uri.tryParse(scriptUri);
+    if (parsedScript == null || !parsedScript.isScheme('file')) {
+      return false;
+    }
+    final String scriptPath = pathContext.fromUri(parsedScript);
+    final Uri? parsedFilter = Uri.tryParse(fileUri);
+    if (parsedFilter != null && parsedFilter.isScheme('file')) {
+      return pathContext.equals(scriptPath, pathContext.fromUri(parsedFilter));
+    }
+    if (!fileUri.startsWith('package:') && !fileUri.startsWith('dart:')) {
+      return pathContext.equals(scriptPath, pathContext.normalize(fileUri));
+    }
+    return false;
   }
 }

@@ -6,6 +6,7 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/flutter_manifest.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/widget_preview/preview_manifest.dart';
@@ -70,6 +71,35 @@ void main() {
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
         ProcessManager: () => processManager,
+      },
+    );
+
+    late _FakePub fakePub;
+    setUp(() {
+      fakePub = _FakePub();
+    });
+
+    testUsingContext(
+      'populatePreviewPubspec adds workspace and scaffold dependencies in a single pub add',
+      () async {
+        final File scaffoldPubspec = rootProject.widgetPreviewScaffoldProject.pubspecFile;
+        expect(scaffoldPubspec.existsSync(), isTrue);
+
+        await pubspecBuilder.populatePreviewPubspec(rootProject: rootProject);
+
+        expect(fakePub.interactivelyCallCount, 1);
+        expect(fakePub.getCallCount, 0);
+        expect(fakePub.lastProject, rootProject.widgetPreviewScaffoldProject);
+        expect(fakePub.lastInteractivelyArgs, contains('dtd'));
+        expect(
+          fakePub.lastInteractivelyArgs.any((String arg) => arg.startsWith('override:test:')),
+          isTrue,
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Pub: () => fakePub,
       },
     );
   });
@@ -159,4 +189,55 @@ flutter:
 
   @override
   final workspaceProjects = <FlutterProject>[];
+
+  @override
+  Directory get widgetPreviewScaffold => widgetPreviewScaffoldProject.directory;
+
+  @override
+  String computeManifestMD5Hash({required Logger logger, required FileSystem fs}) => 'fake-hash';
+
+  @override
+  void replacePubspec(FlutterManifest updated) {}
+
+  @override
+  void reloadManifest({required Logger logger, required FileSystem fs}) {}
+}
+
+class _FakePub extends Fake implements Pub {
+  int getCallCount = 0;
+  int interactivelyCallCount = 0;
+  List<String> lastInteractivelyArgs = const <String>[];
+  FlutterProject? lastProject;
+
+  @override
+  Future<void> get({
+    required PubContext context,
+    required FlutterProject project,
+    bool upgrade = false,
+    bool offline = false,
+    String? flutterRootOverride,
+    bool checkUpToDate = false,
+    bool shouldSkipThirdPartyGenerator = true,
+    bool enforceLockfile = false,
+    PubOutputMode outputMode = PubOutputMode.all,
+  }) async {
+    getCallCount++;
+  }
+
+  @override
+  Future<void> interactively(
+    List<String> arguments, {
+    FlutterProject? project,
+    required PubContext context,
+    required String command,
+    bool touchesPackageConfig = false,
+    bool generateSyntheticPackage = false,
+    bool printProgress = true,
+    PubOutputMode outputMode = PubOutputMode.all,
+    bool? checkUpToDate,
+  }) async {
+    interactivelyCallCount++;
+    lastInteractivelyArgs = arguments;
+    lastProject = project;
+  }
 }

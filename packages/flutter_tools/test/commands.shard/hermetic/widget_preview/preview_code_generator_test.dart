@@ -469,7 +469,7 @@ List<_i1.WidgetPreview> previews() => [];
       generatedPreviewFile.createSync(recursive: true);
 
       final update = FlutterWidgetPreviews(
-        namespaces: <String, String>{
+        namespaces: const <String, String>{
           'widget_preview.dart': '_i1',
           'utils.dart': '_i2',
           'package:foo_project/preview.dart': '_i3',
@@ -549,9 +549,10 @@ List<_i1.WidgetPreview> previews() => [
         final Uri dtdUri = Uri.parse('ws://localhost:1234');
         codeGenerator.populateDtdConnectionInfo(
           dtdUri: dtdUri,
-          widgetPreviewServiceName: 'widget-preview-service',
-          widgetPreviewScaffoldStreamName: 'widget-preview-stream',
           projectRootPath: project.directory.absolute.path,
+          widgetPreviewScaffoldServiceName: 'PreviewScaffold-service',
+          widgetPreviewScaffoldStreamName: 'widget-preview-stream',
+          widgetPreviewServiceName: 'widget-preview-service',
         );
 
         final String expectedDtdConnectionInfo = DartFormatter(languageVersion: Version.none)
@@ -560,6 +561,7 @@ List<_i1.WidgetPreview> previews() => [
 
 const String kWidgetPreviewDtdUri = '$dtdUri';
 const String kWidgetPreviewService = 'widget-preview-service';
+const String kWidgetPreviewScaffoldService = 'PreviewScaffold-service';
 const String kWidgetPreviewScaffoldStream = 'widget-preview-stream';
 const String kProjectRootPath = r'${project.directory.absolute.path}';
 ''');

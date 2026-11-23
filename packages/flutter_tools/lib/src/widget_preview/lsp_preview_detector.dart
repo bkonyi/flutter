@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 import 'package:watcher/watcher.dart';
 
@@ -39,7 +40,7 @@ class LspPreviewDetector {
     this.analysisServerFactory,
     this.onNonDartFileChangeDetected,
     @visibleForTesting this.onPackageConfigChangeDetected,
-    @visibleForTesting this.watcherBuilder = _defaultWatcherBuilder,
+    this.watcherBuilder = _defaultWatcherBuilder,
   }) : projectRoot = project.directory;
 
   final ToolContext toolContext;
@@ -47,7 +48,7 @@ class LspPreviewDetector {
   final FlutterProject project;
   final Directory projectRoot;
   final void Function(FlutterWidgetPreviews) onChangeDetected;
-  final void Function(String path) onPubspecChangeDetected;
+  final FutureOr<void> Function(String path) onPubspecChangeDetected;
   final void Function(String path)? onNonDartFileChangeDetected;
   @visibleForTesting
   final void Function(String path)? onPackageConfigChangeDetected;
@@ -171,19 +172,121 @@ class LspPreviewDetector {
     });
   }
 
+  static const _kDefaultAnalysisDelay = Duration(milliseconds: 100);
+  static const _kModifiedPrecisionWindow = Duration(milliseconds: 1100);
+  static const _kBuildDirectoryName = 'build';
+  static const _kDartSnapshotEquality = MapEquality<String, (DateTime, int)>();
+
+  Map<String, (DateTime, int)>? _lastSyncedDartSnapshot;
+
   /// Returns a [Future] that completes when the analysis server has completed
   /// any in-progress initialization or analysis.
-  Future<void> waitForAnalysis() async {
+  Future<void> waitForAnalysis({Duration delay = _kDefaultAnalysisDelay}) async {
     if (_analysisServer != null) {
-      await _analysisServer!.waitForAnalysis();
+      await _analysisServer!.waitForAnalysis(delay: delay);
     } else {
-      await dtd.waitForAnalysis();
+      await dtd.waitForAnalysis(delay: delay);
     }
+  }
+
+  Duration _computeSyncAnalysisDelay() {
+    if (!projectRoot.existsSync()) {
+      return Duration.zero;
+    }
+    final (:DateTime? latestModified, :Map<String, (DateTime, int)> snapshot) = _snapshotDartFiles(
+      projectRoot,
+    );
+    final Map<String, (DateTime, int)>? previous = _lastSyncedDartSnapshot;
+    _lastSyncedDartSnapshot = snapshot;
+    if (previous != null && !_kDartSnapshotEquality.equals(previous, snapshot)) {
+      return _kDefaultAnalysisDelay;
+    }
+    if (latestModified == null) {
+      return Duration.zero;
+    }
+    final Duration age = DateTime.now().difference(latestModified);
+    return age < _kModifiedPrecisionWindow ? _kDefaultAnalysisDelay : Duration.zero;
+  }
+
+  ({DateTime? latestModified, Map<String, (DateTime, int)> snapshot}) _snapshotDartFiles(
+    Directory root,
+  ) {
+    DateTime? latest;
+    final snapshot = <String, (DateTime, int)>{};
+    final stack = <Directory>[root];
+    final ephemeralPaths = <String>{
+      for (final Directory dir in project.ephemeralDirectories) dir.path,
+    };
+    while (stack.isNotEmpty) {
+      final Directory current = stack.removeLast();
+      final List<FileSystemEntity> entities;
+      try {
+        entities = current.listSync(followLinks: false);
+      } on FileSystemException {
+        continue;
+      }
+      for (final entity in entities) {
+        final String entityPath = entity.path;
+        final String baseName = fs.path.basename(entityPath);
+        if (baseName.startsWith('.')) {
+          continue;
+        }
+        if (entity is Directory) {
+          if (baseName == _kBuildDirectoryName || ephemeralPaths.contains(entityPath)) {
+            continue;
+          }
+          stack.add(entity);
+        } else if (entity is File && entityPath.isDartFile) {
+          try {
+            final FileStat stat = entity.statSync();
+            snapshot[entityPath] = (stat.modified, stat.size);
+            if (latest == null || stat.modified.isAfter(latest)) {
+              latest = stat.modified;
+            }
+          } on FileSystemException {
+            continue;
+          }
+        }
+      }
+    }
+    return (latestModified: latest, snapshot: snapshot);
+  }
+
+  /// Waits for any in-progress analysis to complete and retrieves the current
+  /// workspace widget previews under [mutex].
+  ///
+  /// Returns `null` if this detector has been disposed or the tool is shutting
+  /// down.
+  Future<FlutterWidgetPreviews?> syncPreviews() {
+    return mutex.runGuarded(() async {
+      if (_disposed || shutdownHooks.isShuttingDown) {
+        return null;
+      }
+      try {
+        await waitForAnalysis(delay: _computeSyncAnalysisDelay());
+        if (_disposed || shutdownHooks.isShuttingDown) {
+          return null;
+        }
+        return await dtd.getFlutterWidgetPreviews();
+      } on Exception catch (e) {
+        if (_disposed || shutdownHooks.isShuttingDown) {
+          logger.printTrace('Failed to sync widget previews during shutdown: $e');
+          return null;
+        }
+        rethrow;
+      } on StateError catch (e) {
+        if (_disposed || shutdownHooks.isShuttingDown) {
+          logger.printTrace('Failed to sync widget previews during shutdown: $e');
+          return null;
+        }
+        rethrow;
+      }
+    });
   }
 
   Future<void> _fileAddedOrUpdated({required String filePath}) async {
     if (filePath.isPubspec) {
-      onPubspecChangeDetected(filePath);
+      await onPubspecChangeDetected(filePath);
       return;
     }
     if (!filePath.isDartFile) {

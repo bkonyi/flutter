@@ -49,6 +49,7 @@ class PreviewPubspecBuilder {
   ///   - web, which is used to access query parameters provided by the IDE.
   ///   - webview_flutter, webview_flutter_web, which is used to embed DevTools in the previewer.
   static const _kWidgetPreviewScaffoldDeps = <String>[
+    'cupertino_ui',
     'dtd',
     'flutter_lints',
     'google_fonts',
@@ -116,8 +117,8 @@ class PreviewPubspecBuilder {
       ),
     );
 
-    // Adds a path dependency on the parent project so previews can be
-    // imported directly into the preview scaffold.
+    // Adds path dependencies on the workspace packages and scaffold dependencies
+    // in a single `pub add` invocation (which also writes package_config.json).
     const pubAdd = 'add';
     final workspacePackages = <String, String>{
       for (final FlutterProject project in <FlutterProject>[
@@ -141,37 +142,22 @@ class PreviewPubspecBuilder {
         '--directory',
         widgetPreviewScaffoldProject.directory.path,
         // Ensure the path using POSIX separators, otherwise the "path_not_posix" check will fail.
-        for (final MapEntry<String, String>(:String key, :String value)
-            in workspacePackages.entries) ...[
+        for (final MapEntry(:key, :value) in workspacePackages.entries) ...[
           '$key:$value',
           // Add dependency overrides to handle "hosted" dependencies on other projects within the
           // workspace. These dependencies take the form of "my_workspace_project: " in the
           // pubspec's dependency list. See https://github.com/flutter/flutter/issues/176018.
           'override:$key:$value',
         ],
-      ],
-      context: PubContext.pubAdd,
-      command: pubAdd,
-      touchesPackageConfig: true,
-      outputMode: _outputMode,
-    );
-
-    // Adds dependencies required by the widget preview scaffolding.
-    await pub.interactively(
-      <String>[
-        pubAdd,
-        if (offline) '--offline',
-        '--directory',
-        widgetPreviewScaffoldProject.directory.path,
         ..._kWidgetPreviewScaffoldDeps,
       ],
-      context: PubContext.pubAdd,
       command: pubAdd,
-      touchesPackageConfig: true,
+      context: PubContext.pubAdd,
       outputMode: _outputMode,
+      project: widgetPreviewScaffoldProject,
+      touchesPackageConfig: true,
     );
 
-    await generatePackageConfig(widgetPreviewScaffoldProject: widgetPreviewScaffoldProject);
     previewManifest.updatePubspecHash(updatedPubspecPath: updatedPubspecPath);
   }
 

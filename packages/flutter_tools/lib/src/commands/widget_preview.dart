@@ -9,6 +9,7 @@ import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
 import 'package:process/process.dart';
+import 'package:watcher/watcher.dart';
 
 import '../artifacts.dart';
 import '../base/common.dart';
@@ -27,10 +28,12 @@ import '../dart/analysis.dart';
 import '../devfs.dart';
 import '../device.dart';
 import '../features.dart';
+import '../isolated/devfs_web.dart';
 import '../isolated/resident_web_runner.dart';
 import '../migrations/widget_preview_gitignore_migration.dart';
 import '../project.dart';
 import '../resident_runner.dart';
+import '../run_hot.dart';
 import '../runner/flutter_command.dart';
 import '../web/web_device.dart';
 import '../widget_preview/analytics.dart';
@@ -39,7 +42,7 @@ import '../widget_preview/dtd_services.dart';
 import '../widget_preview/dtd_types.dart';
 import '../widget_preview/lsp_preview_detector.dart';
 import '../widget_preview/preview_code_generator.dart';
-import '../widget_preview/preview_detector.dart';
+import '../widget_preview/preview_detector.dart' hide WatcherBuilder;
 import '../widget_preview/preview_manifest.dart';
 import '../widget_preview/preview_pubspec_builder.dart';
 import '../widget_preview/utils.dart';
@@ -61,6 +64,7 @@ class WidgetPreviewCommand extends FlutterCommand {
     @visibleForTesting Future<AnalysisServer> Function()? analysisServerFactoryOverride,
     @visibleForTesting WidgetPreviewDtdServices? dtdServicesOverride,
     @visibleForTesting ResidentRunnerFactory? residentRunnerFactoryOverride,
+    @visibleForTesting WatcherBuilder? watcherBuilderOverride,
     bool verboseHelp = false,
   }) {
     addSubcommand(
@@ -71,6 +75,7 @@ class WidgetPreviewCommand extends FlutterCommand {
         analysisServerFactoryOverride: analysisServerFactoryOverride,
         dtdServicesOverride: dtdServicesOverride,
         residentRunnerFactoryOverride: residentRunnerFactoryOverride,
+        watcherBuilderOverride: watcherBuilderOverride,
         verbose: verboseHelp,
       ),
     );
@@ -99,14 +104,15 @@ abstract base class WidgetPreviewSubCommandBase extends FlutterCommand {
   FlutterProjectFactory get projectFactory => toolContext.projectFactory;
 
   FlutterProject getRootProject() {
-    final ArgResults results = argResults!;
+    final ArgResults? results = argResults;
+    final List<String> rest = results?.rest ?? const <String>[];
     final Directory projectDir;
-    if (results.rest case <String>[final String directory]) {
+    if (rest case <String>[final String directory]) {
       projectDir = fs.directory(directory);
       if (!projectDir.existsSync()) {
         throwToolExit('Could not find ${projectDir.path}.');
       }
-    } else if (results.rest.length > 1) {
+    } else if (rest.length > 1) {
       throwToolExit('Only one directory should be provided.');
     } else {
       projectDir = fs.currentDirectory;
@@ -149,12 +155,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     @visibleForTesting Future<AnalysisServer> Function()? analysisServerFactoryOverride,
     @visibleForTesting WidgetPreviewDtdServices? dtdServicesOverride,
     @visibleForTesting this._residentRunnerFactoryOverride,
+    @visibleForTesting WatcherBuilder? watcherBuilderOverride,
     this.verbose = false,
   }) {
     if (dtdServicesOverride != null) {
       _dtdService = dtdServicesOverride;
     }
     _analysisServerFactoryOverride = analysisServerFactoryOverride;
+    _watcherBuilderOverride = watcherBuilderOverride;
     addPubOptions();
     argParser.addDescriptors(const <OptionDescriptor<Object?>>[
       CommonOptions.machine,
@@ -272,23 +280,25 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     logger: logger,
     fs: fs,
     onChangeDetected: onLegacyChangeDetected,
-    onPubspecChangeDetected: _onPubspecChangeDetected,
+    onPubspecChangeDetected: onPubspecChangeDetected,
     onNonDartFileChangeDetected: _onNonDartFileChangeDetected,
   );
 
   late final _lspPreviewDetector = LspPreviewDetector(
     dtd: _dtdService,
     onChangeDetected: onChangeDetected,
-    onPubspecChangeDetected: _onPubspecChangeDetected,
+    onPubspecChangeDetected: onPubspecChangeDetected,
     previewAnalytics: previewAnalytics,
     project: rootProject,
     suppressAnalytics: !analytics.okToSend,
     toolContext: toolContext,
     analysisServerFactory: _analysisServerFactoryOverride,
     onNonDartFileChangeDetected: _onNonDartFileChangeDetected,
+    watcherBuilder: _watcherBuilderOverride ?? Watcher.new,
   );
 
   late final Future<AnalysisServer> Function()? _analysisServerFactoryOverride;
+  late final WatcherBuilder? _watcherBuilderOverride;
   final ResidentRunnerFactory? _residentRunnerFactoryOverride;
 
   late PreviewCodeGenerator _previewCodeGenerator;
@@ -306,16 +316,34 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     cache: cache,
   );
 
+  String get _resolvedProjectRootPath => rootProject.directory.existsSync()
+      ? rootProject.directory.resolveSymbolicLinksSync()
+      : rootProject.directory.absolute.path;
+
   late var _dtdService = WidgetPreviewDtdServices(
-    previewAnalytics: previewAnalytics,
+    addUuidToServiceName: !(argResults != null && boolArg(kDisableDtdServiceUuid)),
+    dtdLauncher: DtdLauncher(logger: logger, artifacts: artifacts, processManager: processManager),
     fs: fs,
     logger: logger,
-    shutdownHooks: shutdownHooks,
+    lspPreviewsProvider: () => _lastGeneratedPreviews,
+    onHotReloadPreviewer: onHotReloadRequest,
     onHotRestartPreviewerRequest: onHotRestartRequest,
-    dtdLauncher: DtdLauncher(logger: logger, artifacts: artifacts, processManager: processManager),
+    onSyncPreviews: syncPreviews,
+    previewAnalytics: previewAnalytics,
     project: rootProject.widgetPreviewScaffoldProject,
-    addUuidToServiceName: !boolArg(kDisableDtdServiceUuid),
+    projectRootPath: _resolvedProjectRootPath,
+    shutdownHooks: shutdownHooks,
+    webPreviewUriProvider: () => webPreviewUri,
   );
+
+  @visibleForTesting
+  WidgetPreviewDtdServices get dtdService => _dtdService;
+
+  /// The HTTP URI where the web preview scaffold is currently served.
+  @visibleForTesting
+  Uri? webPreviewUri;
+
+  FlutterWidgetPreviews? _lastGeneratedPreviews;
 
   /// The currently running instance of the widget preview scaffold.
   ResidentRunner? _widgetPreviewApp;
@@ -428,6 +456,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       // callbacks become no-ops during shutdown.
       final ResidentRunner? app = _widgetPreviewApp;
       _widgetPreviewApp = null;
+      webPreviewUri = null;
       await app?.exitApp();
       if (legacyDetection) {
         await _previewDetector.dispose();
@@ -452,9 +481,10 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
 
         _previewCodeGenerator.populateDtdConnectionInfo(
           dtdUri: _dtdService.dtdUri!,
-          widgetPreviewServiceName: _dtdService.widgetPreviewService,
+          projectRootPath: _resolvedProjectRootPath,
+          widgetPreviewScaffoldServiceName: _dtdService.widgetPreviewScaffoldService,
           widgetPreviewScaffoldStreamName: _dtdService.widgetPreviewScaffoldStream,
-          projectRootPath: rootProject.directory.absolute.path,
+          widgetPreviewServiceName: _dtdService.widgetPreviewService,
         );
 
         originalPreviews = await _dtdService.getFlutterWidgetPreviews();
@@ -469,6 +499,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
           'Ensure that the analysis server is running and reachable. Details: $e',
         );
       }
+      _lastGeneratedPreviews = originalPreviews;
       _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(originalPreviews);
     }
 
@@ -497,53 +528,270 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     }
   }
 
-  /// Hot reloads the previewer, falling back to a hot restart if the reload is
-  /// rejected due to unsupported changes.
-  @visibleForTesting
-  Future<OperationResult?> handleReload() async {
-    final OperationResult? result = await _widgetPreviewApp?.restart();
+  static const _kDefaultCompileErrorMessage = 'Failed to reload widget preview.';
+  static const _kSafeMtimeMargin = Duration(milliseconds: 1100);
+
+  WebDevFS? get _webDevFS {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app == null) {
+      return null;
+    }
+    for (final FlutterDevice? device in app.flutterDevices) {
+      if (device?.devFS case final WebDevFS webDevFS) {
+        return webDevFS;
+      }
+    }
+    return null;
+  }
+
+  bool _assetBundleNeedsBuild(ResidentRunner app) {
+    if (app is! ResidentWebRunner) {
+      return false;
+    }
+    return app.assetBundle.needsBuild(manifestPath: app.flutterProject.pubspecFile.path);
+  }
+
+  Future<bool> _hasNoInvalidatedInputs() async {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app is! ResidentWebRunner || !_dtdService.scaffoldConnected) {
+      return false;
+    }
+    final WebDevFS? webDevFS = _webDevFS;
+    final DateTime? lastCompiled = webDevFS?.lastCompiled;
+    if (webDevFS == null ||
+        lastCompiled == null ||
+        DateTime.now().difference(lastCompiled) < _kSafeMtimeMargin) {
+      return false;
+    }
+    if (_assetBundleNeedsBuild(app)) {
+      return false;
+    }
+    final PackageConfig packageConfig =
+        webDevFS.lastPackageConfig ?? app.debuggingOptions.buildInfo.packageConfig;
+    final invalidator = ProjectFileInvalidator(fileSystem: fs, platform: platform, logger: logger);
+    final InvalidationResult invalidation = await invalidator.findInvalidated(
+      lastCompiled: lastCompiled,
+      urisToMonitor: webDevFS.sources,
+      packagesPath: app.packagesFilePath,
+      packageConfig: packageConfig,
+    );
+    return invalidation.uris?.isEmpty ?? false;
+  }
+
+  Future<OperationResult?> _performFullRestart() async {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app == null || shutdownHooks.isShuttingDown) {
+      return null;
+    }
+    final bool wasConnected = _dtdService.scaffoldConnected;
+    _dtdService.markScaffoldDisconnected();
+    OperationResult? result;
+    try {
+      result = await app.restart(fullRestart: true);
+      return result;
+    } finally {
+      if (wasConnected &&
+          (result == null || !result.isOk) &&
+          _widgetPreviewApp != null &&
+          !shutdownHooks.isShuttingDown) {
+        _dtdService.markScaffoldConnected();
+      }
+    }
+  }
+
+  Future<({OperationResult? result, bool fullRestart, bool didChange})> _performReload() async {
+    final ResidentRunner? app = _widgetPreviewApp;
+    if (app == null) {
+      return (result: null, fullRestart: false, didChange: false);
+    }
+    final OperationResult result = await app.restart();
     if (result case OperationResult(
       isOk: false,
       updateFSReport: UpdateFSReport(hotReloadRejected: true),
     )) {
       logger.printStatus(kHotReloadRejectedMessage);
-      return _widgetPreviewApp?.restart(fullRestart: true);
+      final OperationResult? restartResult = await _performFullRestart();
+      return (
+        result: restartResult,
+        fullRestart: restartResult != null,
+        didChange: restartResult != null && restartResult.isOk,
+      );
+    }
+    return (result: result, fullRestart: false, didChange: result.isOk);
+  }
+
+  /// Hot reloads the previewer, falling back to a hot restart if the reload is
+  /// rejected due to unsupported changes.
+  @visibleForTesting
+  Future<OperationResult?> handleReload() async {
+    final (:OperationResult? result, :bool fullRestart, :bool didChange) = await _performReload();
+    if (result != null && result.isOk && didChange && !shutdownHooks.isShuttingDown) {
+      await _dtdService.postPreviewReloaded(fullRestart: fullRestart);
     }
     return result;
   }
 
+  Completer<void>? _pendingReloadCompleter;
+
   Future<void> _triggerReload(_PendingReload requested) async {
     // Record the requested reload type. If a task is already queued waiting for
-    // [_reloadMutex], coalesce this request into the pending one (upgrading a
+    // [_reloadMutex], merge this request into the pending one (upgrading a
     // queued hot reload to a full hot restart if needed, and never downgrading
-    // a queued hot restart) and return immediately rather than queueing
+    // a queued hot restart) and await its completion rather than queueing
     // duplicate reload tasks on the mutex.
     final _PendingReload? queued = _pendingReload;
     _pendingReload = queued == .hotRestart ? .hotRestart : requested;
     if (queued != null) {
+      await _pendingReloadCompleter?.future;
       return;
     }
-    await _reloadMutex.runGuarded(() async {
-      // Consume the coalesced request now that we hold [_reloadMutex]. Any new
-      // requests that arrive while `ResidentRunner.restart` is in flight will
-      // see `_pendingReload == null` and queue a single follow-up task on the
-      // mutex.
+    final reloadCompleter = Completer<void>();
+    _pendingReloadCompleter = reloadCompleter;
+    try {
+      await _reloadMutex.runGuarded(() async {
+        final _PendingReload? pending = _pendingReload;
+        _pendingReload = null;
+        if (pending == null || shutdownHooks.isShuttingDown) {
+          return;
+        }
+        try {
+          switch (pending) {
+            case .hotReload:
+              await handleReload();
+            case .hotRestart:
+              final OperationResult? result = await _performFullRestart();
+              if (result != null && result.isOk && !shutdownHooks.isShuttingDown) {
+                await _dtdService.postPreviewReloaded(fullRestart: true);
+              }
+          }
+        } on Object catch (e, st) {
+          logger.printTrace('Error during widget preview reload: $e\n$st');
+        }
+      });
+    } finally {
+      if (identical(_pendingReloadCompleter, reloadCompleter)) {
+        _pendingReloadCompleter = null;
+      }
+      reloadCompleter.complete();
+    }
+  }
+
+  /// Synchronizes workspace preview declarations from LSP, triggers an
+  /// incremental reload (or fallback hot restart), and waits for the scaffold
+  /// to connect if a full restart occurred or the scaffold is not yet live.
+  @visibleForTesting
+  Future<SyncPreviewsResponse> syncPreviews({
+    Duration timeout = const Duration(milliseconds: WidgetPreviewDtdServices.kDefaultSyncTimeoutMs),
+  }) async {
+    if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+      return const SyncPreviewsResponse(
+        compileSuccess: true,
+        errorPreviewCount: 0,
+        fullRestart: false,
+        reloaded: false,
+      );
+    }
+
+    var errorPreviewCount = 0;
+    var didUpdateGeneratedPreviews = false;
+    final bool legacyDetection = argResults != null && boolArg(kLegacyPreviewDetection);
+    if (!legacyDetection) {
+      final FlutterWidgetPreviews? latestPreviews = await _lspPreviewDetector.syncPreviews();
+      if (latestPreviews == null || shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return const SyncPreviewsResponse(
+          compileSuccess: true,
+          errorPreviewCount: 0,
+          fullRestart: false,
+          reloaded: false,
+        );
+      }
+      errorPreviewCount = latestPreviews.previews
+          .where(
+            (FlutterWidgetPreviewDetails p) =>
+                p.packageName != null && (p.hasError || p.dependencyHasErrors),
+          )
+          .length;
+      if (latestPreviews != _lastGeneratedPreviews) {
+        didUpdateGeneratedPreviews = true;
+        _lastGeneratedPreviews = latestPreviews;
+        _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(latestPreviews);
+      }
+    }
+
+    final (
+      :OperationResult? reloadResult,
+      :bool fullRestart,
+      :bool didChange,
+    ) = await _reloadMutex.runGuarded(() async {
       final _PendingReload? pending = _pendingReload;
       _pendingReload = null;
-      if (pending == null || shutdownHooks.isShuttingDown) {
-        return;
+      if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return (reloadResult: null, fullRestart: false, didChange: false);
       }
-      try {
-        switch (pending) {
-          case .hotReload:
-            await handleReload();
-          case .hotRestart:
-            await _widgetPreviewApp?.restart(fullRestart: true);
-        }
-      } on Object catch (e, st) {
-        logger.printTrace('Error during widget preview reload: $e\n$st');
+      if (pending == .hotRestart) {
+        final OperationResult? restartResult = await _performFullRestart();
+        return (
+          reloadResult: restartResult,
+          fullRestart: restartResult != null,
+          didChange: restartResult != null && restartResult.isOk,
+        );
       }
+      if (pending == null && !didUpdateGeneratedPreviews && await _hasNoInvalidatedInputs()) {
+        return (reloadResult: OperationResult.ok, fullRestart: false, didChange: false);
+      }
+      final (:OperationResult? result, :bool fullRestart, :bool didChange) = await _performReload();
+      return (
+        reloadResult: result,
+        fullRestart: fullRestart,
+        didChange: didChange || (result != null && result.isOk && didUpdateGeneratedPreviews),
+      );
     });
+
+    if (reloadResult == null) {
+      return SyncPreviewsResponse(
+        compileSuccess: true,
+        errorPreviewCount: errorPreviewCount,
+        fullRestart: fullRestart,
+        reloaded: false,
+      );
+    }
+
+    final bool compileSuccess = reloadResult.isOk;
+    final String? compileError = compileSuccess
+        ? null
+        : (reloadResult.message.isNotEmpty ? reloadResult.message : _kDefaultCompileErrorMessage);
+
+    if (compileSuccess && (fullRestart || !_dtdService.scaffoldConnected)) {
+      if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return SyncPreviewsResponse(
+          compileSuccess: true,
+          errorPreviewCount: errorPreviewCount,
+          fullRestart: fullRestart,
+          reloaded: false,
+        );
+      }
+      await _dtdService.waitForScaffoldConnected(timeout: timeout);
+    }
+
+    if (compileSuccess && didChange) {
+      if (shutdownHooks.isShuttingDown || _widgetPreviewApp == null) {
+        return SyncPreviewsResponse(
+          compileSuccess: true,
+          errorPreviewCount: errorPreviewCount,
+          fullRestart: fullRestart,
+          reloaded: false,
+        );
+      }
+      await _dtdService.postPreviewReloaded(fullRestart: fullRestart);
+    }
+
+    return SyncPreviewsResponse(
+      compileError: compileError,
+      compileSuccess: compileSuccess,
+      errorPreviewCount: errorPreviewCount,
+      fullRestart: fullRestart,
+      reloaded: compileSuccess && didChange,
+    );
   }
 
   void onLegacyChangeDetected(PreviewDependencyGraph previews) {
@@ -552,21 +800,29 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     unawaited(_triggerReload(.hotReload));
   }
 
+  @visibleForTesting
+  Future<void> onHotReloadRequest() async {
+    logger.printStatus('Triggering reload based on request from preview environment.');
+    await _triggerReload(.hotReload);
+  }
+
   void onHotRestartRequest() {
     logger.printStatus('Triggering restart based on request from preview environment.');
     unawaited(_triggerReload(.hotRestart));
   }
 
-  Future<void> _onPubspecChangeDetected(String path) async {
+  @visibleForTesting
+  Future<void> onPubspecChangeDetected(String path) async {
     logger.printStatus('Triggering restart based on update to pubspec.yaml: $path');
     await _previewPubspecBuilder.populatePreviewPubspec(
-      rootProject: project,
+      rootProject: rootProject,
       updatedPubspecPath: path,
     );
     await _triggerReload(.hotRestart);
   }
 
   void onChangeDetected(FlutterWidgetPreviews update) {
+    _lastGeneratedPreviews = update;
     _previewCodeGenerator.populatePreviewsInGeneratedPreviewScaffoldLsp(update);
     logger.printStatus('Triggering reload based on update to script: ${update.scriptUris}');
     unawaited(_triggerReload(.hotReload));
@@ -597,7 +853,14 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     }
     if (existingDtdUri != null) {
       logger.printTrace('Connecting to existing DTD instance at: $existingDtdUri...');
-      await _dtdService.connect(dtdWsUri: existingDtdUri);
+      try {
+        await _dtdService.connect(dtdWsUri: existingDtdUri);
+      } on Exception catch (error) {
+        logger.printWarning(
+          'Failed to connect to existing DTD instance at $existingDtdUri: $error. '
+          'Starting a new DTD instance instead.',
+        );
+      }
     }
   }
 
@@ -731,7 +994,16 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
             ),
           );
           await appStarted.future;
-          logger.sendStartedEvent(applicationUrl: flutterDevice.devFS!.baseUri!);
+          final Uri applicationUrl = flutterDevice.devFS!.baseUri!;
+          webPreviewUri = applicationUrl;
+          final bool legacyDetection = boolArg(kLegacyPreviewDetection);
+          logger.sendStartedEvent(
+            applicationUrl: applicationUrl,
+            dtdUri: legacyDetection ? null : _dtdService.dtdUri,
+            previewService: legacyDetection ? null : _dtdService.widgetPreviewService,
+            projectRoot: _resolvedProjectRootPath,
+            scaffoldService: legacyDetection ? null : _dtdService.widgetPreviewScaffoldService,
+          );
           final DebugConnectionInfo debugConnection = await connectionInfo.future;
           final Uri? devToolsUri = devToolsServerAddress ?? debugConnection.devToolsUri;
           if (devToolsUri == null) {
@@ -749,6 +1021,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
       // no longer see it.
       final ResidentRunner? app = _widgetPreviewApp;
       _widgetPreviewApp = null;
+      webPreviewUri = null;
       await app?.exitApp();
       throwToolExit(error.toString());
     }
@@ -767,6 +1040,7 @@ final class WidgetPreviewStartCommand extends WidgetPreviewSubCommandBase with C
     // Clear the runner reference so any reload callbacks triggered after the
     // previewer exits become no-ops.
     _widgetPreviewApp = null;
+    webPreviewUri = null;
     return exitCode;
   }
 }
@@ -914,8 +1188,20 @@ final class WidgetPreviewMachineAwareLogger extends DelegatingLogger {
 
   /// Notifies tooling that the widget previewer has started and is being
   /// served at [applicationUrl].
-  void sendStartedEvent({required Uri applicationUrl}) {
-    sendEvent('started', {'url': applicationUrl.toString()});
+  void sendStartedEvent({
+    required Uri applicationUrl,
+    Uri? dtdUri,
+    String? previewService,
+    String? projectRoot,
+    String? scaffoldService,
+  }) {
+    sendEvent('started', <String, Object?>{
+      'url': applicationUrl.toString(),
+      'dtdUri': ?dtdUri?.toString(),
+      'previewService': ?previewService,
+      'projectRoot': ?projectRoot,
+      'scaffoldService': ?scaffoldService,
+    });
   }
 
   @override
