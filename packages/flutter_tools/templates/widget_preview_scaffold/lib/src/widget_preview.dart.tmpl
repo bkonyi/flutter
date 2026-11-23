@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert' show json;
+
 import 'package:dtd/dtd.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widget_previews.dart';
@@ -10,21 +12,30 @@ import 'package:json_rpc_2/json_rpc_2.dart';
 
 const _kBrightnessKey = 'brightness';
 const _kColumnKey = 'column';
+const _kDiagnosticsKey = 'diagnostics';
 const _kErrorMessageKey = 'errorMessage';
 const _kFunctionNameKey = 'functionName';
 const _kGroupKey = 'group';
 const _kHasErrorKey = 'hasError';
+const _kHasErrorsKey = 'hasErrors';
 const _kHeightKey = 'height';
+const _kHorizontalAxis = 'horizontal';
 const _kIdKey = 'id';
+const _kImageBase64Key = 'imageBase64';
 const _kLibraryUriKey = 'libraryUri';
 const _kLineKey = 'line';
 const _kMultiPreviewIndexKey = 'multiPreviewIndex';
 const _kNameKey = 'name';
 const _kPackageNameKey = 'packageName';
+const _kPixelRatioKey = 'pixelRatio';
+const _kPreviewIdKey = 'previewId';
 const _kPreviewsKey = 'previews';
+const _kRenderedHeightKey = 'renderedHeight';
+const _kRenderedWidthKey = 'renderedWidth';
 const _kScriptUriKey = 'scriptUri';
 const _kTextScaleFactorKey = 'textScaleFactor';
 const _kTypeKey = 'type';
+const _kVerticalAxis = 'vertical';
 const _kWidthKey = 'width';
 
 void _expectDtdResponseType(DTDResponse response, String expectedType) {
@@ -60,14 +71,15 @@ class WidgetPreview {
   const WidgetPreview({
     required this.builder,
     required this.column,
+    required this.functionName,
+    required this.libraryUri,
     required this.line,
     required this.packageName,
     required this.previewData,
     required this.scriptUri,
+    this.defaultLocalizations,
     this.errorMessage,
-    this.functionName = '',
     this.hasError = false,
-    this.libraryUri = '',
     this.multiPreviewIndex,
   });
 
@@ -76,6 +88,7 @@ class WidgetPreview {
     required this.builder,
     required this.previewData,
     this.column = -1,
+    this.defaultLocalizations,
     this.errorMessage,
     this.functionName = '',
     this.hasError = false,
@@ -191,10 +204,19 @@ class WidgetPreview {
   /// A callback to return a localization configuration to be applied to the
   /// previewed [Widget].
   ///
+  /// Generated previews fall back to an `en_US` default localization
+  /// configuration rather than inheriting the host `WidgetsApp` locale, so this
+  /// getter is non-null for those previews and [debugFillProperties] will
+  /// report those synthesized defaults.
+  ///
   /// Note: this must be a reference to a static, public function defined as
   /// either a top-level function or static member in a class.
   PreviewLocalizationsData? get localizations =>
-      previewData.localizations?.call();
+      (previewData.localizations ?? defaultLocalizations)?.call();
+
+  /// Fallback localization callback used when [previewData.localizations] is
+  /// `null`.
+  final PreviewLocalizationsData Function()? defaultLocalizations;
 
   final Preview previewData;
 
@@ -214,6 +236,226 @@ class WidgetPreview {
         ),
       );
   }
+}
+
+/// Lifecycle phase in which a [PreviewDiagnostic] was captured.
+enum PreviewDiagnosticPhase {
+  /// Static analysis or incremental compilation error.
+  compile,
+
+  /// Exception thrown during widget build.
+  build,
+
+  /// Exception or layout audit warning during render-object layout.
+  layout,
+
+  /// Overflow or exception raised during painting.
+  paint;
+
+  /// Parses [value] into a [PreviewDiagnosticPhase], throwing a
+  /// [FormatException] for unrecognized wire values.
+  static PreviewDiagnosticPhase fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticPhase phase) => phase.name == value,
+    orElse: () =>
+        throw FormatException('Unknown PreviewDiagnosticPhase: $value'),
+  );
+}
+
+/// Classification of a [PreviewDiagnostic].
+enum PreviewDiagnosticKind {
+  /// Analyzer or compiler error preventing preview rendering.
+  compileError('compile_error'),
+
+  /// Unhandled Dart or Flutter framework exception.
+  exception('exception'),
+
+  /// Preview widget attempted to expand infinitely under unbounded constraints.
+  unconstrained('unconstrained'),
+
+  /// `RenderFlex` or render-box paint overflow.
+  overflow('overflow'),
+
+  /// Preview rendered with zero width or zero height.
+  zeroSize('zero_size'),
+
+  /// `RenderParagraph` exceeded `maxLines` and truncated text.
+  textTruncated('text_truncated'),
+
+  /// Interactive touch target smaller than 48x48dp on mobile platforms.
+  smallTapTarget('small_tap_target'),
+
+  /// Additional layout/paint frame remained scheduled when capture settled.
+  pendingFrame('pending_frame');
+
+  const PreviewDiagnosticKind(this.wireValue);
+
+  /// Snake-case wire representation serialized in JSON responses.
+  final String wireValue;
+
+  /// Parses [value] from its [wireValue], throwing a [FormatException] for
+  /// unrecognized values.
+  static PreviewDiagnosticKind fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticKind kind) => kind.wireValue == value,
+    orElse: () =>
+        throw FormatException('Unknown PreviewDiagnosticKind: $value'),
+  );
+}
+
+/// Severity level of a [PreviewDiagnostic].
+enum PreviewDiagnosticSeverity {
+  /// Fatal or blocking diagnostic that marks a snapshot as failed.
+  error('error'),
+
+  /// Non-blocking layout or accessibility advisory warning.
+  warning('warning');
+
+  const PreviewDiagnosticSeverity(this.wireValue);
+
+  /// Wire string serialized in JSON responses.
+  final String wireValue;
+
+  /// Parses [value] from its [wireValue], throwing a [FormatException] for
+  /// unrecognized values.
+  static PreviewDiagnosticSeverity fromJson(String value) => values.firstWhere(
+    (PreviewDiagnosticSeverity s) => s.wireValue == value,
+    orElse: () =>
+        throw FormatException('Unknown PreviewDiagnosticSeverity: $value'),
+  );
+}
+
+/// Structured diagnostic captured while compiling, building, laying out, or
+/// painting a widget preview.
+@immutable
+class PreviewDiagnostic {
+  const PreviewDiagnostic({
+    required this.kind,
+    required this.phase,
+    required this.summary,
+    this.overflowAxis,
+    this.overflowPixels,
+    this.overflowSide,
+    this.severity = .error,
+    this.targetType,
+  });
+
+  static const kKind = 'kind';
+  static const kOverflowAxis = 'overflowAxis';
+  static const kOverflowPixels = 'overflowPixels';
+  static const kOverflowSide = 'overflowSide';
+  static const kPhase = 'phase';
+  static const kSeverity = 'severity';
+  static const kSummary = 'summary';
+  static const kTargetType = 'targetType';
+
+  static final _kOverflowHeaderPattern = RegExp(
+    r'([A-Za-z0-9_]+) overflowed by ',
+    caseSensitive: false,
+  );
+  static final _kOverflowSidePattern = RegExp(
+    r'([0-9.]+(?:e[+-]?[0-9]+)?) pixels on the (right|left|bottom|top|start|end)',
+    caseSensitive: false,
+  );
+
+  /// Classification of the diagnostic.
+  final PreviewDiagnosticKind kind;
+
+  /// Overflow axis (`horizontal` or `vertical`) when [kind] is `.overflow`.
+  final String? overflowAxis;
+
+  /// Number of overflowing logical pixels when [kind] is `.overflow`.
+  final double? overflowPixels;
+
+  /// Overflowing edge (e.g. `right` or `bottom`) when [kind] is `.overflow`.
+  final String? overflowSide;
+
+  /// Lifecycle phase in which the diagnostic occurred.
+  final PreviewDiagnosticPhase phase;
+
+  /// Severity of the diagnostic (defaults to `.error`).
+  final PreviewDiagnosticSeverity severity;
+
+  /// Concise human-readable description of the diagnostic.
+  final String summary;
+
+  /// Runtime type name of the offending render object, if known.
+  final String? targetType;
+
+  /// Extracts structured [PreviewDiagnostic]s from a `RenderFlex` (or other
+  /// `DebugOverflowIndicatorMixin`) overflow error message, or returns an empty
+  /// list if [message] is not an overflow report.
+  static List<PreviewDiagnostic> parseOverflows(
+    String message, {
+    String? summary,
+  }) {
+    final Match? headerMatch = _kOverflowHeaderPattern.firstMatch(message);
+    if (headerMatch == null) {
+      return const <PreviewDiagnostic>[];
+    }
+    final String targetType = headerMatch.group(1)!;
+    final String resolvedSummary = summary ?? message;
+    return <PreviewDiagnostic>[
+      for (final RegExpMatch match in _kOverflowSidePattern.allMatches(message))
+        PreviewDiagnostic(
+          kind: .overflow,
+          overflowAxis: switch (match.group(2)!.toLowerCase()) {
+            'top' || 'bottom' => _kVerticalAxis,
+            _ => _kHorizontalAxis,
+          },
+          overflowPixels: double.tryParse(match.group(1)!),
+          overflowSide: match.group(2)!.toLowerCase(),
+          phase: .paint,
+          summary: resolvedSummary,
+          targetType: targetType,
+        ),
+    ];
+  }
+
+  Object get _equalityKey => (
+    kind,
+    overflowAxis,
+    overflowPixels,
+    overflowSide,
+    phase,
+    severity,
+    summary,
+    targetType,
+  );
+
+  @override
+  int get hashCode => _equalityKey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PreviewDiagnostic && _equalityKey == other._equalityKey;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    kPhase: phase.name,
+    kKind: kind.wireValue,
+    kSeverity: severity.wireValue,
+    kSummary: summary,
+    kOverflowPixels: ?overflowPixels,
+    kOverflowSide: ?overflowSide,
+    kOverflowAxis: ?overflowAxis,
+    kTargetType: ?targetType,
+  };
+
+  @override
+  String toString() => json.encode(toJson());
+
+  static PreviewDiagnostic fromJson(Map<String, Object?> json) =>
+      PreviewDiagnostic(
+        kind: PreviewDiagnosticKind.fromJson(json[kKind]! as String),
+        overflowAxis: json[kOverflowAxis] as String?,
+        overflowPixels: (json[kOverflowPixels] as num?)?.toDouble(),
+        overflowSide: json[kOverflowSide] as String?,
+        phase: PreviewDiagnosticPhase.fromJson(json[kPhase]! as String),
+        severity: switch (json[kSeverity]) {
+          final String value => PreviewDiagnosticSeverity.fromJson(value),
+          _ => .error,
+        },
+        summary: json[kSummary]! as String,
+        targetType: json[kTargetType] as String?,
+      );
 }
 
 /// Metadata and error summary for a single discovered widget preview instance.
@@ -337,6 +579,116 @@ extension type const PreviewListResponse.fromJson(Map<String, Object?> _json) {
     for (final Object? item in _json[_kPreviewsKey]! as List<Object?>)
       PreviewEntry.fromJson(item! as Map<String, Object?>),
   ];
+
+  /// Returns the underlying JSON-serializable map representation.
+  Map<String, Object?> toJson() => _json;
+}
+
+/// Parameters for capturing an off-screen snapshot and diagnostics of a single
+/// widget preview.
+@immutable
+class PreviewCaptureRequest {
+  const PreviewCaptureRequest({
+    required this.previewId,
+    this.brightness,
+    this.height,
+    this.includeImage = true,
+    this.pixelRatio,
+    this.pumpMs,
+    this.textScaleFactor,
+    this.width,
+  });
+
+  /// Optional theme brightness override applied during capture.
+  final Brightness? brightness;
+
+  /// Optional viewport height override in logical pixels.
+  final double? height;
+
+  /// Whether to rasterize and return a base64-encoded PNG image.
+  final bool includeImage;
+
+  /// Optional device pixel ratio override used during rasterization.
+  final double? pixelRatio;
+
+  /// Canonical preview ID or unique shorthand preview name to capture.
+  final String previewId;
+
+  /// Optional settle delay in milliseconds before capturing the final frame.
+  final int? pumpMs;
+
+  /// Optional text scale factor override applied during capture.
+  final double? textScaleFactor;
+
+  /// Optional viewport width override in logical pixels.
+  final double? width;
+}
+
+/// DTD response returned by `PreviewScaffold.capturePreview` containing the
+/// rendered dimensions, optional base64-encoded PNG snapshot, and structured
+/// diagnostics for a single widget preview.
+extension type const CapturePreviewResponse.fromJson(
+  Map<String, Object?> _json
+) {
+  factory CapturePreviewResponse({
+    required List<PreviewDiagnostic> diagnostics,
+    required bool hasErrors,
+    required double pixelRatio,
+    required String previewId,
+    required double renderedHeight,
+    required double renderedWidth,
+    String? imageBase64,
+    String? name,
+  }) => CapturePreviewResponse.fromJson(<String, Object?>{
+    _kTypeKey: kTypeName,
+    _kPreviewIdKey: previewId,
+    _kNameKey: name,
+    _kRenderedWidthKey: renderedWidth,
+    _kRenderedHeightKey: renderedHeight,
+    _kPixelRatioKey: pixelRatio,
+    _kImageBase64Key: imageBase64,
+    _kHasErrorsKey: hasErrors,
+    _kDiagnosticsKey: <Map<String, Object?>>[
+      for (final PreviewDiagnostic diagnostic in diagnostics)
+        diagnostic.toJson(),
+    ],
+  });
+
+  factory CapturePreviewResponse.fromDTDResponse(DTDResponse response) {
+    _expectDtdResponseType(response, kTypeName);
+    return CapturePreviewResponse.fromJson(response.result);
+  }
+
+  /// DTD response type discriminator for [CapturePreviewResponse].
+  static const kTypeName = 'CapturePreviewResponse';
+
+  /// Structured compile, build, layout, and paint diagnostics recorded while
+  /// capturing this preview.
+  List<PreviewDiagnostic> get diagnostics => <PreviewDiagnostic>[
+    for (final Object? item in _json[_kDiagnosticsKey]! as List<Object?>)
+      PreviewDiagnostic.fromJson(item! as Map<String, Object?>),
+  ];
+
+  /// Whether any error-severity diagnostic was recorded during capture.
+  bool get hasErrors => _json[_kHasErrorsKey]! as bool;
+
+  /// Base64-encoded PNG image bytes, or `null` when image capture was omitted.
+  String? get imageBase64 => _json[_kImageBase64Key] as String?;
+
+  /// Display name of the captured preview, if configured.
+  String? get name => _json[_kNameKey] as String?;
+
+  /// Device pixel ratio used to rasterize the captured snapshot.
+  double get pixelRatio => (_json[_kPixelRatioKey]! as num).toDouble();
+
+  /// Canonical identifier of the captured preview.
+  String get previewId => _json[_kPreviewIdKey]! as String;
+
+  /// Rendered logical height of the captured preview surface.
+  double get renderedHeight => (_json[_kRenderedHeightKey]! as num).toDouble();
+
+  /// Rendered logical width of the captured preview surface.
+  double get renderedWidth => (_json[_kRenderedWidthKey]! as num).toDouble();
 
   /// Returns the underlying JSON-serializable map representation.
   Map<String, Object?> toJson() => _json;

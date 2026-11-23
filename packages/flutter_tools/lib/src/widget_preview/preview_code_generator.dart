@@ -34,14 +34,35 @@ class PreviewCodeGenerator {
   static const _kBuildWidgetPreview = 'buildWidgetPreview';
   static const _kBuildWidgetPreviewError = 'buildWidgetPreviewError';
   static const _kColumn = 'column';
+  static const _kCupertinoLibraryUri = 'package:flutter/cupertino.dart';
+  static const _kCupertinoUiLibraryUri = 'package:cupertino_ui/cupertino_ui.dart';
+  static const _kDartUiUri = 'dart:ui';
+  static const _kDefaultCupertinoLocalizations = 'DefaultCupertinoLocalizations';
+  static const _kDefaultLocalizations = 'defaultLocalizations';
+  static const _kDefaultMaterialLocalizations = 'DefaultMaterialLocalizations';
+  static const _kDefaultPreviewLocalizations = '_defaultPreviewLocalizations';
+  static const _kDefaultWidgetsLocalizations = 'DefaultWidgetsLocalizations';
+  static const _kDelegate = 'delegate';
   static const _kDependencyHasErrors = 'dependencyHasErrors';
+  static const _kDeprecatedMemberUseLint = 'deprecated_member_use';
+  static const _kEnglishCountryCode = 'US';
+  static const _kEnglishLanguageCode = 'en';
+  static const _kImplementationImportsLint = 'implementation_imports';
+  static const _kLibraryUri = 'libraryUri';
   static const _kLine = 'line';
   static const _kListType = 'List';
+  static const _kLocale = 'locale';
+  static const _kLocaleType = 'Locale';
+  static const _kLocalizationsDelegateType = 'LocalizationsDelegate';
+  static const _kLocalizationsDelegates = 'localizationsDelegates';
+  static const _kMaterialLibraryUri = 'package:flutter/material.dart';
+  static const _kMaterialUiLibraryUri = 'package:material_ui/material_ui.dart';
+  static const _kObjectType = 'Object';
   static const _kPackageName = 'packageName';
-  static const _kPackageUri = 'packageUri';
   static const _kPreview = 'preview';
   static const _kPreviewFunction = 'previewFunction';
   static const _kPreviewFunctionName = 'functionName';
+  static const _kPreviewLocalizationsDataType = 'PreviewLocalizationsData';
   static const _kPreviewsFunctionName = 'previews';
   static const _kScriptUri = 'scriptUri';
   static const _kTransform = 'transform';
@@ -49,6 +70,8 @@ class PreviewCodeGenerator {
   static const _kUtilsUri = 'utils.dart';
   static const _kWidgetPreviewClass = 'WidgetPreview';
   static const _kWidgetPreviewLibraryUri = 'widget_preview.dart';
+  static const _kWidgetPreviewsLibraryUri = 'package:flutter/widget_previews.dart';
+  static const _kWidgetsLibraryUri = 'package:flutter/widgets.dart';
 
   static String getGeneratedPreviewFilePath(FileSystem fs) =>
       fs.path.join('lib', 'src', 'generated_preview.dart');
@@ -116,58 +139,65 @@ class PreviewCodeGenerator {
     );
   }
 
-  // TODO(bkonyi): update generated example now that we're computing constants
   /// Generates code used by the widget preview scaffold based on the preview instances listed in
   /// [previews].
   ///
   /// The generated file will contain a single top level function named `previews()` which returns
-  /// a `List<WidgetPreview>` that contains each widget preview defined in [previews].
+  /// a `List<WidgetPreview>` that contains each widget preview defined in [previews], along with
+  /// `_defaultPreviewLocalizations()` when valid previews are present.
   ///
-  /// An example of a formatted generated file containing previews from two files could be:
+  /// An example of a formatted generated file containing a preview could be:
   ///
   /// ```dart
   /// import 'widget_preview.dart' as _i1;
-  /// import 'package:splash/foo.dart' as _i2;
-  /// import 'package:splash/main.dart' as _i3;
-  /// import 'package:flutter/widgets.dart' as _i4;
+  /// import 'utils.dart' as _i2;
+  /// import 'package:splash/foo.dart' as _i3;
+  /// import 'package:flutter/src/widget_previews/widget_previews.dart' as _i4;
+  /// import 'package:flutter/widget_previews.dart' as _i5;
+  /// import 'dart:ui' as _i6;
+  /// import 'package:flutter/widgets.dart' as _i7;
+  /// import 'package:material_ui/material_ui.dart' as _i8;
+  /// import 'package:cupertino_ui/cupertino_ui.dart' as _i9;
+  /// import 'package:flutter/material.dart' as _i10;
+  /// import 'package:flutter/cupertino.dart' as _i11;
   ///
   /// List<_i1.WidgetPreview> previews() => [
-  ///   _i1.WidgetPreview(height: 100.0, width: 10000.0, child: _i2.preview()),
-  ///   _i1.WidgetPreview(
-  ///     name: 'Foo',
-  ///     height: 50 + 20,
-  ///     width: 200.0,
-  ///     textScaleFactor: 2.0,
-  ///     child: _i3.preview(),
-  ///   ),
-  ///   _i1.WidgetPreview(
-  ///     name: 'Baz',
-  ///     height: 50.0,
-  ///     width: 200.0,
-  ///     textScaleFactor: 3.0,
-  ///     child: _i2.stateInjector(_i3.preview()),
-  ///   ),
-  ///   _i1.WidgetPreview(name: 'Bar', child: _i4.Builder(builder: _i3.preview2())),
-  ///   _i1.WidgetPreview(name: 'Constructor preview', height: 50.0, width: 100.0, child: _i3.MyWidget()),
-  ///   _i1.WidgetPreview(
-  ///     name: 'Named constructor preview',
-  ///     height: 50.0,
-  ///     width: 100.0,
-  ///     child: _i3.MyWidget.preview(),
-  ///   ),
-  ///   _i1.WidgetPreview(
-  ///     name: 'Static preview',
-  ///     height: 50.0,
-  ///     width: 100.0,
-  ///     child: _i3.MyWidget.staticPreview(),
+  ///   _i2.buildWidgetPreview(
+  ///     packageName: 'splash',
+  ///     scriptUri: 'file:///.../lib/foo.dart',
+  ///     libraryUri: 'package:splash/foo.dart',
+  ///     functionName: 'preview',
+  ///     line: 4,
+  ///     column: 1,
+  ///     defaultLocalizations: _defaultPreviewLocalizations,
+  ///     previewFunction: () => _i3.preview(),
+  ///     transformedPreview: const _i4.Preview(name: 'Foo').transform(),
   ///   ),
   /// ];
+  /// _i5.PreviewLocalizationsData _defaultPreviewLocalizations() =>
+  ///     const _i5.PreviewLocalizationsData(
+  ///       locale: _i6.Locale('en', 'US'),
+  ///       localizationsDelegates: <_i7.LocalizationsDelegate<Object?>>[
+  ///         _i8.DefaultMaterialLocalizations.delegate,
+  ///         _i9.DefaultCupertinoLocalizations.delegate,
+  ///         _i7.DefaultWidgetsLocalizations.delegate,
+  ///         _i10.DefaultMaterialLocalizations.delegate,
+  ///         _i11.DefaultCupertinoLocalizations.delegate,
+  ///       ],
+  ///     );
   /// ```
   void populatePreviewsInGeneratedPreviewScaffold(PreviewDependencyGraph previews) {
+    final bool hasValidPreviews = previews.values.any(
+      (LibraryPreviewNode node) =>
+          !node.hasErrors && !node.dependencyHasErrors && node.previews.isNotEmpty,
+    );
     final emitter = cb.DartEmitter.scoped(useNullSafetySyntax: true);
     final lib = cb.Library(
       (cb.LibraryBuilder b) => b
-        ..ignoreForFile.add('implementation_imports')
+        ..ignoreForFile.addAll(<String>[
+          if (hasValidPreviews) _kDeprecatedMemberUseLint,
+          _kImplementationImportsLint,
+        ])
         ..body.addAll(<cb.Spec>[
           cb.Method(
             (cb.MethodBuilder b) => _buildGeneratedPreviewMethod(
@@ -176,24 +206,73 @@ class PreviewCodeGenerator {
               builder: b,
             ),
           ),
+          if (hasValidPreviews) cb.Method(_buildDefaultPreviewLocalizationsMethod),
         ]),
     );
     _writeGeneratedPreviewFile(lib: lib, emitter: emitter);
   }
 
   void populatePreviewsInGeneratedPreviewScaffoldLsp(FlutterWidgetPreviews update) {
+    final bool hasValidPreviews = update.previews.any(
+      (FlutterWidgetPreviewDetails preview) =>
+          preview.packageName != null && !preview.hasError && !preview.dependencyHasErrors,
+    );
     final allocator = PreviewPrefixedAllocator()..populateKnownImportPrefixes(update.namespaces);
     final emitter = cb.DartEmitter(useNullSafetySyntax: true, allocator: allocator);
     final lib = cb.Library(
       (cb.LibraryBuilder b) => b
-        ..ignoreForFile.add('implementation_imports')
+        ..ignoreForFile.addAll(<String>[
+          if (hasValidPreviews) _kDeprecatedMemberUseLint,
+          _kImplementationImportsLint,
+        ])
         ..body.addAll(<cb.Spec>[
           cb.Method(
             (cb.MethodBuilder b) => _buildGeneratedPreviewMethodLsp(previews: update, builder: b),
           ),
+          if (hasValidPreviews) cb.Method(_buildDefaultPreviewLocalizationsMethod),
         ]),
     );
     _writeGeneratedPreviewFile(lib: lib, emitter: emitter);
+  }
+
+  void _buildDefaultPreviewLocalizationsMethod(cb.MethodBuilder builder) {
+    final cb.Reference previewLocalizationsDataRef = cb.refer(
+      _kPreviewLocalizationsDataType,
+      _kWidgetPreviewsLibraryUri,
+    );
+    builder
+      ..name = _kDefaultPreviewLocalizations
+      ..returns = previewLocalizationsDataRef
+      ..body = cb.InvokeExpression.constOf(previewLocalizationsDataRef, const <cb.Expression>[], <
+        String,
+        cb.Expression
+      >{
+        _kLocale: cb.refer(_kLocaleType, _kDartUiUri).call(<cb.Expression>[
+          cb.literalString(_kEnglishLanguageCode),
+          cb.literalString(_kEnglishCountryCode),
+        ]),
+        _kLocalizationsDelegates: cb.literalList(
+          <cb.Expression>[
+            cb.refer(_kDefaultMaterialLocalizations, _kMaterialUiLibraryUri).property(_kDelegate),
+            cb.refer(_kDefaultCupertinoLocalizations, _kCupertinoUiLibraryUri).property(_kDelegate),
+            cb.refer(_kDefaultWidgetsLocalizations, _kWidgetsLibraryUri).property(_kDelegate),
+            // TODO(bkonyi): Remove deprecated package:flutter/material.dart and
+            // package:flutter/cupertino.dart delegates once those libraries are removed.
+            cb.refer(_kDefaultMaterialLocalizations, _kMaterialLibraryUri).property(_kDelegate),
+            cb.refer(_kDefaultCupertinoLocalizations, _kCupertinoLibraryUri).property(_kDelegate),
+          ],
+          (cb.TypeReferenceBuilder()
+                ..symbol = _kLocalizationsDelegateType
+                ..url = _kWidgetsLibraryUri
+                ..types = ListBuilder<cb.Reference>(<cb.Reference>[
+                  (cb.TypeReferenceBuilder()
+                        ..symbol = _kObjectType
+                        ..isNullable = true)
+                      .build(),
+                ]))
+              .build(),
+        ),
+      }).code;
   }
 
   void _writeGeneratedPreviewFile({required cb.Library lib, required cb.DartEmitter emitter}) {
@@ -277,6 +356,8 @@ class PreviewCodeGenerator {
     final args = <String, cb.Expression>{
       _kPackageName: cb.literalString(preview.packageName!),
       _kScriptUri: cb.literalString(preview.scriptUri.toString()),
+      _kLibraryUri: cb.literalString(uri.toString()),
+      _kPreviewFunctionName: cb.literalString(preview.functionName),
       _kLine: cb.literalNum(preview.line),
       _kColumn: cb.literalNum(preview.column),
     };
@@ -284,8 +365,6 @@ class PreviewCodeGenerator {
     if (libraryDetails.hasErrors || libraryDetails.dependencyHasErrors) {
       return cb.refer(_kBuildWidgetPreviewError, _kUtilsUri).call([], {
         ...args,
-        _kPackageUri: cb.literalString(uri.toString()),
-        _kPreviewFunctionName: cb.literalString(preview.functionName),
         _kDependencyHasErrors: cb.literalBool(libraryDetails.dependencyHasErrors),
       });
     }
@@ -295,6 +374,7 @@ class PreviewCodeGenerator {
         .call(<cb.Expression>[]);
 
     args.addAll({
+      _kDefaultLocalizations: cb.refer(_kDefaultPreviewLocalizations),
       _kPreviewFunction: cb.Method((builder) => builder.body = previewWidget.code).closure,
     });
 
@@ -318,6 +398,8 @@ class PreviewCodeGenerator {
     final args = <String, cb.Expression>{
       _kPackageName: cb.literalString(preview.packageName!),
       _kScriptUri: cb.literalString(preview.scriptUri.toString()),
+      _kLibraryUri: cb.literalString(uri.toString()),
+      _kPreviewFunctionName: cb.literalString(preview.functionName),
       _kLine: cb.literalNum(preview.position.line),
       _kColumn: cb.literalNum(preview.position.character),
     };
@@ -325,8 +407,6 @@ class PreviewCodeGenerator {
     if (preview.hasError || preview.dependencyHasErrors) {
       return cb.refer(_kBuildWidgetPreviewError, _kUtilsUri).call([], {
         ...args,
-        _kPackageUri: cb.literalString(uri.toString()),
-        _kPreviewFunctionName: cb.literalString(preview.functionName),
         _kDependencyHasErrors: cb.literalBool(preview.dependencyHasErrors),
       });
     }
@@ -336,6 +416,7 @@ class PreviewCodeGenerator {
         .call(<cb.Expression>[]);
 
     args.addAll({
+      _kDefaultLocalizations: cb.refer(_kDefaultPreviewLocalizations),
       _kPreviewFunction: cb.Method((builder) => builder.body = previewWidget.code).closure,
     });
 

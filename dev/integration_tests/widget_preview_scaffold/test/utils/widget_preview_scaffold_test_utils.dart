@@ -2,13 +2,170 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widget_previews.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
+import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
+import 'package:widget_preview_scaffold/src/utils.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_rendering.dart';
 import 'package:widget_preview_scaffold/src/widget_preview_scaffold_controller.dart';
+
+WidgetPreview makeTestPreview({
+  required String functionName,
+  required Object? Function() previewFunction,
+  Brightness? brightness,
+  int column = 1,
+  PreviewLocalizationsData Function()? defaultLocalizations,
+  String? fileStem,
+  String group = 'Default',
+  String? libraryUri,
+  int line = 10,
+  PreviewLocalizationsData Function()? localizations,
+  String? name,
+  String packageName = 'my_app',
+  Preview? rawPreview,
+  String? scriptUri,
+  Size? size,
+  double? textScaleFactor,
+  PreviewThemeData Function()? theme,
+  Widget Function(Widget)? wrapper,
+}) {
+  final String stem = fileStem ?? functionName;
+  final Preview preview =
+      rawPreview ??
+      Preview(
+        brightness: brightness,
+        group: group,
+        localizations: localizations,
+        name: name,
+        size: size,
+        textScaleFactor: textScaleFactor,
+        theme: theme,
+        wrapper: wrapper,
+      );
+  return buildWidgetPreview(
+    column: column,
+    defaultLocalizations: defaultLocalizations,
+    functionName: functionName,
+    libraryUri: libraryUri ?? 'package:$packageName/$stem.dart',
+    line: line,
+    packageName: packageName,
+    previewFunction: previewFunction,
+    scriptUri: scriptUri ?? 'file:///project/lib/$stem.dart',
+    transformedPreview: preview.transform(),
+  );
+}
+
+WidgetPreview makeTestErrorPreview({
+  required String functionName,
+  int column = 1,
+  bool dependencyHasErrors = false,
+  String? errorMessage,
+  String? fileStem,
+  String? libraryUri,
+  int line = 10,
+  String packageName = 'my_app',
+  String? scriptUri,
+}) {
+  final String stem = fileStem ?? functionName;
+  return buildWidgetPreviewError(
+    column: column,
+    dependencyHasErrors: dependencyHasErrors,
+    errorMessage: errorMessage,
+    functionName: functionName,
+    libraryUri: libraryUri ?? 'package:$packageName/$stem.dart',
+    line: line,
+    packageName: packageName,
+    scriptUri: scriptUri ?? 'file:///project/lib/$stem.dart',
+  );
+}
+
+Future<WidgetPreviewScaffoldController> pumpTestScaffold(
+  WidgetTester tester, {
+  required PreviewsCallback previews,
+  bool disableSelectedFileFilter = false,
+  FakeWidgetPreviewScaffoldDtdServices? dtdServices,
+  IdeTheme? ideTheme,
+  bool settle = false,
+  Size? viewSize,
+}) async {
+  if (viewSize != null) {
+    tester.view.physicalSize = viewSize;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
+  final controller = WidgetPreviewScaffoldController(
+    dtdServicesOverride: dtdServices ?? FakeWidgetPreviewScaffoldDtdServices(),
+    previews: previews,
+  );
+  addTearDown(controller.dispose);
+  if (disableSelectedFileFilter &&
+      controller.filterBySelectedFileListenable.value) {
+    await controller.toggleFilterBySelectedFile();
+  }
+  await controller.initialize();
+  await tester.pumpWidget(
+    ideTheme == null
+        ? TestWidgetPreviewScaffold(controller: controller)
+        : WidgetPreviewScaffold(
+            controller: controller,
+            enableWebView: false,
+            ideTheme: ideTheme,
+          ),
+  );
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
+  return controller;
+}
+
+ValueGetter<String?> mockClipboardCapture(WidgetTester tester) {
+  String? copied;
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async {
+      if (call.method == 'Clipboard.setData') {
+        final args = call.arguments! as Map<Object?, Object?>;
+        copied = args['text'] as String?;
+      }
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return () => copied;
+}
+
+Future<void> dragBetweenGlobal(
+  WidgetTester tester, {
+  required Offset end,
+  required Offset start,
+  int pointerId = 1,
+}) async {
+  final TestGesture gesture = await tester.startGesture(
+    start,
+    pointer: pointerId,
+    kind: PointerDeviceKind.mouse,
+  );
+  await tester.pump();
+  await gesture.moveBy((end - start) / 2.0);
+  await tester.pump();
+  await gesture.moveTo(end);
+  await tester.pump();
+  await gesture.up();
+  await tester.pump();
+}
 
 class WidgetPreviewerWidgetScaffolding extends StatelessWidget {
   WidgetPreviewerWidgetScaffolding({
@@ -16,13 +173,10 @@ class WidgetPreviewerWidgetScaffolding extends StatelessWidget {
     this.platformBrightness = Brightness.light,
     required this.child,
   }) {
-    // This is set unconditionally by the preview scaffolding.
     WidgetsBinding.instance.debugExcludeRootWidgetInspector = true;
   }
 
-  /// Sets the root platform brightness. Defaults to light.
   final Brightness platformBrightness;
-
   final Widget child;
 
   @override
@@ -57,7 +211,6 @@ class WidgetPreviewerWidgetScaffolding extends StatelessWidget {
 }
 
 class FakeWidgetPreviewScaffoldDtdServices extends Fake
-    with DtdEditorService
     implements WidgetPreviewScaffoldDtdServices {
   FakeWidgetPreviewScaffoldDtdServices({this.isWindows = false});
 
@@ -65,11 +218,20 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
   final preferences = <String, Object?>{};
 
   @override
-  Future<void> connect({Uri? dtdUri}) async {}
+  PreviewListResponse Function({String? fileUri})? onGetPreviews;
+
+  Uri? lastConnectDtdUri;
+
+  @override
+  Future<void> connect({Uri? dtdUri}) async {
+    lastConnectDtdUri = dtdUri;
+  }
 
   @override
   Future<void> dispose() async {
-    super.dispose();
+    selectedSourceFile.dispose();
+    editorServiceAvailable.dispose();
+    editorTheme.dispose();
   }
 
   bool hotRestartInvoked = false;
@@ -79,43 +241,33 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
     hotRestartInvoked = true;
   }
 
-  /// Resolves a package:// URI to a file:// URI using the package_config.
-  ///
-  /// Returns null if [uri] can not be resolved.
   @override
-  Future<Uri?> resolveUri(Uri uri) async {
-    return uri;
-  }
+  Future<Uri?> resolveUri(Uri uri) async => uri;
 
   @override
   final bool isWindows;
 
-  /// The currently selected source file in the IDE.
   @override
   final ValueNotifier<TextDocument?> selectedSourceFile =
       ValueNotifier<TextDocument?>(null);
 
-  /// Whether or not the Editor service is available.
   @override
   final ValueNotifier<bool> editorServiceAvailable = ValueNotifier<bool>(true);
 
-  /// Tells the editor to navigate to a given code [location].
-  ///
-  /// Only locations with `file://` URIs are valid.
+  @override
+  final ValueNotifier<EditorTheme?> editorTheme = ValueNotifier<EditorTheme?>(
+    null,
+  );
+
   @override
   Future<void> navigateToCode(CodeLocation location) async {
     navigationEvents.add(location);
   }
 
-  /// Retrieves the state of flag [key] from the persistent preferences map.
-  ///
-  /// If [key] is not set, [defaultValue] is returned.
   @override
-  Future<bool> getFlag(String flag, {bool defaultValue = true}) async {
-    return preferences[flag] as bool? ?? defaultValue;
-  }
+  Future<bool> getFlag(String flag, {bool defaultValue = true}) async =>
+      preferences[flag] as bool? ?? defaultValue;
 
-  /// Sets [key] to [value] in the persistent preferences map.
   @override
   Future<void> setPreference(String key, Object? value) async {
     if (value == null) {
@@ -125,11 +277,8 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
     preferences[key] = value;
   }
 
-  /// Retrieves the DevTools URI for the previewer instance.
   @override
-  Future<Uri> getDevToolsUri() async {
-    return Uri();
-  }
+  Future<Uri> getDevToolsUri() async => Uri();
 }
 
 class TestWidgetPreviewScaffold extends WidgetPreviewScaffold {
@@ -143,7 +292,7 @@ class FakeWidgetPreviewScaffoldController
     WidgetPreviewScaffoldDtdServices? dtdServicesOverride,
     List<WidgetPreview>? previews,
   }) : super(
-         previews: () => previews ?? [],
+         previews: () => previews ?? <WidgetPreview>[],
          dtdServicesOverride:
              dtdServicesOverride ?? FakeWidgetPreviewScaffoldDtdServices(),
        );

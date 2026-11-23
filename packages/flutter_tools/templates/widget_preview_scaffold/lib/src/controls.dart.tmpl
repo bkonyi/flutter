@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'theme/theme.dart';
@@ -600,5 +603,163 @@ class BrightnessToggleButton extends StatelessWidget {
 
   void _toggleBrightness() {
     brightnessListenable.value = brightnessListenable.value.invert;
+  }
+}
+
+/// Compact pill badge displaying [label] on `surfaceContainerHighest`.
+class PreviewInfoBadge extends StatelessWidget {
+  const PreviewInfoBadge({required this.label, super.key});
+
+  static const _kBorderRadius = 4.0;
+  static const _kHorizontalPadding = 6.0;
+  static const _kVerticalPadding = 2.0;
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(_kBorderRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: _kHorizontalPadding,
+          vertical: _kVerticalPadding,
+        ),
+        child: Text(label, style: theme.textTheme.labelSmall),
+      ),
+    );
+  }
+}
+
+/// A button that copies [textToCopy] to the clipboard and temporarily displays
+/// [copiedLabel] as feedback.
+class CopyFeedbackButton extends StatefulWidget {
+  const CopyFeedbackButton({
+    required this.copiedLabel,
+    required this.label,
+    required this.textToCopy,
+    this.icon,
+    this.style,
+    super.key,
+  });
+
+  /// Temporary label displayed after copying [textToCopy].
+  final String copiedLabel;
+
+  /// Optional leading icon displayed before [label].
+  final IconData? icon;
+
+  /// Default button label shown before copying.
+  final String label;
+
+  /// Optional [ButtonStyle] override for the underlying [OutlinedButton].
+  final ButtonStyle? style;
+
+  /// Text written to the system clipboard on tap.
+  final String textToCopy;
+
+  @override
+  State<CopyFeedbackButton> createState() => _CopyFeedbackButtonState();
+}
+
+class _CopyFeedbackButtonState extends State<CopyFeedbackButton> {
+  static const _kResetDelay = Duration(seconds: 2);
+
+  var _copied = false;
+  Timer? _resetTimer;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.textToCopy));
+    if (!mounted) {
+      return;
+    }
+    _resetTimer?.cancel();
+    setState(() => _copied = true);
+    _resetTimer = Timer(_kResetDelay, () {
+      if (mounted) {
+        setState(() => _copied = false);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String text = _copied ? widget.copiedLabel : widget.label;
+    final Widget child = widget.icon != null
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(_copied ? Icons.check : widget.icon, size: 14),
+              const SizedBox(width: 6),
+              Flexible(child: Text(text, overflow: TextOverflow.ellipsis)),
+            ],
+          )
+        : Text(text);
+    return OutlinedButton(onPressed: _copy, style: widget.style, child: child);
+  }
+}
+
+/// Starter `@Preview` snippet shown in empty-state views.
+const kStarterPreviewSnippet = '''
+@Preview(name: 'My Widget')
+Widget myWidgetPreview() => const Text('Hello Preview');''';
+
+/// Compact copyable starter `@Preview` card for empty-state views.
+class StarterPreviewSnippetCard extends StatelessWidget {
+  const StarterPreviewSnippetCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 440),
+      child: Container(
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: theme.dividerColor),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Add a top-level public @Preview function:',
+              style: theme.textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                kStarterPreviewSnippet,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const CopyFeedbackButton(
+              key: Key('copy-starter-preview-snippet'),
+              copiedLabel: 'Copied!',
+              icon: Icons.copy,
+              label: 'Copy @Preview Snippet',
+              textToCopy: kStarterPreviewSnippet,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
