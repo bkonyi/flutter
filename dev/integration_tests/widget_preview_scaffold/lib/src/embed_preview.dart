@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/embed_live_controls.dart';
+import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
@@ -78,6 +79,9 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   static const _kStatusCardPadding = 16.0;
   static const _kStatusSectionSpacing = 8.0;
 
+  late final _selectionController = EmbedSelectionController(
+    initialParams: widget.params,
+  );
   var _isSplitBrightness = false;
   var _isSyncing = false;
   var _showBounds = false;
@@ -86,6 +90,14 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
   EmbedPreviewParams get _params => widget.params;
 
   double get _zoom => _params.zoom ?? EmbedPreviewParams.kDefaultZoom;
+
+  @override
+  void didUpdateWidget(EmbedPreviewScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.params != widget.params) {
+      _selectionController.syncFromParams(widget.params);
+    }
+  }
 
   void _handleParamsChanged(EmbedPreviewParams nextParams) {
     if (nextParams != _params) {
@@ -108,6 +120,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         return;
       }
       if (compileSuccess) {
+        _selectionController.clearSelections();
         await widget.controller.dtdServices.syncViewerReload();
         if (!mounted) {
           return;
@@ -127,6 +140,12 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _selectionController.dispose();
+    super.dispose();
   }
 
   bool _isEditableTextFocused() {
@@ -159,6 +178,16 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
     final LogicalKeyboardKey key = event.logicalKey;
+    if (event is KeyDownEvent &&
+        key == LogicalKeyboardKey.escape &&
+        !isAltPressed &&
+        !isCtrlOrMeta &&
+        (_selectionController.selectMode ||
+            (!_isEditableTextFocused() &&
+                _selectionController.selections.isNotEmpty)) &&
+        _selectionController.handleEscapeKey()) {
+      return KeyEventResult.handled;
+    }
     if (isAltPressed || _isEditableTextFocused()) {
       return KeyEventResult.ignored;
     }
@@ -331,10 +360,15 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
                                       lookup is PreviewLookupMatch
                                       ? lookup.preview.id
                                       : null,
+                                  selectionController: _selectionController,
                                   showBounds: _showBounds,
                                   syncErrorMessage: _syncErrorMessage,
                                 ),
                                 Expanded(child: previewStage),
+                                EmbedLiveSelectionBar(
+                                  params: params,
+                                  selectionController: _selectionController,
+                                ),
                               ],
                             )
                           : previewStage,
@@ -552,6 +586,7 @@ class _EmbedPreviewScaffoldState extends State<EmbedPreviewScaffold> {
         previewerConstraints: windowConstraints,
         resolvedHeight: resolvedHeight,
         resolvedWidth: resolvedWidth,
+        selectionController: _selectionController,
         showBounds: _showBounds,
         textScale:
             resolvedTextScale ?? MediaQuery.textScalerOf(context).scale(1.0),
@@ -828,6 +863,7 @@ class _EmbedPreviewContent extends StatefulWidget {
     required this.controller,
     required this.preview,
     required this.previewerConstraints,
+    required this.selectionController,
     required this.textScale,
     required this.viewportConstraints,
     required this.zoom,
@@ -847,6 +883,7 @@ class _EmbedPreviewContent extends StatefulWidget {
   final BoxConstraints previewerConstraints;
   final double? resolvedHeight;
   final double? resolvedWidth;
+  final EmbedSelectionController selectionController;
   final bool showBounds;
   final double textScale;
   final BoxConstraints viewportConstraints;
@@ -858,6 +895,7 @@ class _EmbedPreviewContent extends StatefulWidget {
 
 class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
   final _frameBoxKey = GlobalKey();
+  final _previewContentKey = GlobalKey();
   ({Object error, StackTrace stackTrace})? _layoutError;
 
   @override
@@ -893,11 +931,15 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
 
   Widget _buildSizedPreviewFrame(Widget child) {
     final _EmbedPreviewContent(
+      :Brightness brightness,
       :ValueChanged<EmbedPreviewParams>? onParamsChanged,
       :EmbedPreviewParams? params,
+      :WidgetPreview preview,
       :BoxConstraints previewerConstraints,
       :double? resolvedHeight,
       :double? resolvedWidth,
+      :EmbedSelectionController selectionController,
+      :double textScale,
       :BoxConstraints viewportConstraints,
       :double zoom,
     ) = widget;
@@ -924,12 +966,21 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
         ),
       ),
     );
-    final Widget framed = KeyedSubtree(
-      key: _frameBoxKey,
-      child: _PreviewBoundsOverlay(
-        key: const Key('embed-bounds-overlay'),
-        enabled: widget.showBounds,
-        child: constrained,
+    final selectable = EmbedSelectablePreviewSurface(
+      brightness: brightness,
+      previewContentKey: _previewContentKey,
+      previewId: preview.id,
+      previewName: preview.name,
+      selectionController: selectionController,
+      textScale: textScale,
+      zoom: zoom,
+      child: KeyedSubtree(
+        key: _frameBoxKey,
+        child: _PreviewBoundsOverlay(
+          key: const Key('embed-bounds-overlay'),
+          enabled: widget.showBounds,
+          child: constrained,
+        ),
       ),
     );
     final double minWidth = viewportConstraints.hasBoundedWidth
@@ -944,7 +995,7 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
         includeVerticalScroll: viewportConstraints.hasBoundedHeight,
         minWidth: minWidth,
         minHeight: minHeight,
-        child: framed,
+        child: selectable,
       );
     }
     return EmbedLiveResizableFrame(
@@ -958,7 +1009,7 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
       resolvedHeight: resolvedHeight,
       resolvedWidth: resolvedWidth,
       zoom: zoom,
-      child: ScaledPreviewLayout(scale: zoom, child: framed),
+      child: ScaledPreviewLayout(scale: zoom, child: selectable),
     );
   }
 
@@ -982,7 +1033,13 @@ class _EmbedPreviewContentState extends State<_EmbedPreviewContent> {
     }
     try {
       final previewWidget = EnableWidgetInspectorScope(
-        child: PreviewWidget(preview: preview, child: preview.previewBuilder()),
+        child: PreviewWidget(
+          preview: preview,
+          child: KeyedSubtree(
+            key: _previewContentKey,
+            child: preview.previewBuilder(),
+          ),
+        ),
       );
       return WidgetPreviewTheming(
         theme: preview.theme,

@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async' show unawaited;
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
+import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
 
 const _kBarBackgroundColor = Color(0xFF1E1E1E);
 const _kBarBorderColor = Color(0xFF333333);
+const _kChipFontSize = 11.0;
+const _kChipRemoveIconSize = 14.0;
 const _kCompactFontSize = 12.0;
 const _kCompactLabelFontSize = 11.0;
 const _kDesktopPresetWidth = 1280.0;
@@ -72,6 +76,7 @@ class EmbedLiveTopBar extends StatelessWidget {
     required this.params,
     required this.previews,
     required this.resolvedPreviewId,
+    required this.selectionController,
     required this.showBounds,
     this.onDismissSyncError,
     this.syncErrorMessage,
@@ -112,6 +117,7 @@ class EmbedLiveTopBar extends StatelessWidget {
   final String? resolvedPreviewId;
 
   /// Controller tracking select mode and active selections.
+  final EmbedSelectionController selectionController;
 
   /// Whether the render-box bounds overlay is currently enabled.
   final bool showBounds;
@@ -214,6 +220,18 @@ class EmbedLiveTopBar extends StatelessWidget {
                     label: 'Bounds',
                     selected: showBounds,
                     onPressed: onBoundsToggled,
+                  ),
+                  ListenableBuilder(
+                    listenable: selectionController,
+                    builder: (BuildContext context, Widget? _) =>
+                        _buildToggleButton(
+                          key: const Key('embed-live-select-toggle'),
+                          label: 'Select',
+                          selected: selectionController.selectMode,
+                          onPressed: () => selectionController.setSelectMode(
+                            !selectionController.selectMode,
+                          ),
+                        ),
                   ),
                   if (resolvedPreviewId case final String previewId)
                     CopyFeedbackButton(
@@ -408,6 +426,210 @@ class EmbedLiveTopBar extends StatelessWidget {
     style: _compactButtonStyle(selected: selected),
     child: Text(label),
   );
+}
+
+/// Bottom selection tray for `/live` and `#live=1`, rendered only when at least
+/// one selection is active.
+class EmbedLiveSelectionBar extends StatefulWidget {
+  const EmbedLiveSelectionBar({
+    required this.params,
+    required this.selectionController,
+    super.key,
+  });
+
+  /// Current embed parameters forwarded in selection payloads.
+  final EmbedPreviewParams params;
+
+  /// Controller supplying active selection chips and mutations.
+  final EmbedSelectionController selectionController;
+
+  @override
+  State<EmbedLiveSelectionBar> createState() => _EmbedLiveSelectionBarState();
+}
+
+class _EmbedLiveSelectionBarState extends State<EmbedLiveSelectionBar> {
+  final _noteController = TextEditingController();
+  var _isSending = false;
+  String? _sendError;
+
+  @override
+  void initState() {
+    super.initState();
+    _noteController.addListener(_onNoteChanged);
+  }
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  void _onNoteChanged() {
+    setState(() => _sendError = null);
+  }
+
+  Future<void> _sendToChat(List<EmbedSelectionEntry> selections) async {
+    final String message = _noteController.text.trim();
+    if (message.isEmpty || _isSending) {
+      return;
+    }
+    setState(() {
+      _isSending = true;
+      _sendError = null;
+    });
+    try {
+      final EmbedPreviewParams params = widget.params;
+      final String? viewport = params.width != null || params.height != null
+          ? '${params.width?.round() ?? 'auto'}'
+                'x${params.height?.round() ?? 'auto'}'
+          : null;
+      await sendLiveSelectionToHost(
+        message: message,
+        selections: widget.selectionController.selectionsJson,
+        brightness: params.brightness?.name,
+        previewId: params.previewId,
+        previewName: selections.firstOrNull?.previewName,
+        textScale: params.textScale != null
+            ? formatEmbedZoom(params.textScale!)
+            : null,
+        viewport: viewport,
+        zoom: params.zoom != null ? formatEmbedZoom(params.zoom!) : null,
+      );
+      if (!mounted) {
+        return;
+      }
+      _noteController.clear();
+      widget.selectionController.clearSelections();
+      setState(() => _isSending = false);
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendError = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.selectionController,
+      builder: (BuildContext context, Widget? _) {
+        final List<EmbedSelectionEntry> selections =
+            widget.selectionController.selections;
+        if (selections.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final bool canSubmit =
+            _noteController.text.trim().isNotEmpty && !_isSending;
+
+        return Theme(
+          data: ThemeData.dark(),
+          child: Material(
+            color: _kBarBackgroundColor,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _kBarBorderColor)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      for (final (int i, EmbedSelectionEntry entry)
+                          in selections.indexed)
+                        InputChip(
+                          key: Key('embed-live-chip-${entry.id}'),
+                          label: Text(
+                            '#${i + 1} ${entry.previewName ?? entry.previewId}',
+                            style: const TextStyle(fontSize: _kChipFontSize),
+                          ),
+                          deleteIcon: Icon(
+                            Icons.close,
+                            key: Key('embed-live-chip-remove-${entry.id}'),
+                            size: _kChipRemoveIconSize,
+                          ),
+                          onDeleted: () => widget.selectionController
+                              .removeSelectionById(entry.id),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      CopyFeedbackButton(
+                        key: const Key('embed-live-copy-button'),
+                        copiedLabel: 'Copied!',
+                        label: 'Copy Context',
+                        style: _compactButtonStyle(),
+                        textToCopy: formatEmbedSelectionContext(
+                          selections: selections,
+                        ),
+                      ),
+                      OutlinedButton(
+                        key: const Key('embed-live-clear-button'),
+                        onPressed: widget.selectionController.clearSelections,
+                        style: _compactButtonStyle(),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                  if (canSendLiveSelection) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            key: const Key('embed-live-note-input'),
+                            controller: _noteController,
+                            style: const TextStyle(fontSize: _kCompactFontSize),
+                            decoration: const InputDecoration(
+                              hintText: 'Ask about selected region(s)...',
+                              isDense: true,
+                              contentPadding: EdgeInsets.all(8),
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) {
+                              if (canSubmit) {
+                                unawaited(_sendToChat(selections));
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        FilledButton(
+                          key: const Key('embed-live-send-button'),
+                          onPressed: canSubmit
+                              ? () => _sendToChat(selections)
+                              : null,
+                          style: _compactButtonStyle(selected: true),
+                          child: Text(_isSending ? 'Sending...' : 'Send'),
+                        ),
+                      ],
+                    ),
+                    if (_sendError case final String error)
+                      Padding(
+                        padding: const EdgeInsets.only(top: _kInlineControlGap),
+                        child: Text(
+                          error,
+                          key: const Key('embed-live-send-error'),
+                          style: const TextStyle(
+                            fontSize: _kChipFontSize,
+                            color: _kErrorTextColor,
+                          ),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 ButtonStyle _compactButtonStyle({bool selected = false}) =>

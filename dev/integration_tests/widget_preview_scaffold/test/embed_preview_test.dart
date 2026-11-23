@@ -11,6 +11,8 @@ import 'package:json_rpc_2/json_rpc_2.dart' show RpcException;
 import 'package:material_ui/material_ui.dart';
 import 'package:widget_preview_scaffold/src/controls.dart';
 import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
+import 'package:widget_preview_scaffold/src/embed_live_controls.dart';
+import 'package:widget_preview_scaffold/src/embed_selection.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
 import 'package:widget_preview_scaffold/src/utils/url/url.dart';
 import 'package:widget_preview_scaffold/src/widget_preview.dart';
@@ -1105,6 +1107,150 @@ void main() {
       },
     );
 
+    testWidgets(
+      'chromeless #embed=1 hides live controls while /live renders top bar, reload error banner, and selection bar',
+      (WidgetTester tester) async {
+        await pumpTestScaffold(
+          tester,
+          baseUri: Uri.parse('http://localhost:8080/'),
+          fragment: 'embed=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+          previews: _buildTestPreviews,
+          viewSize: const Size(420, 800),
+        );
+        expect(find.byType(EmbedLiveTopBar), findsNothing);
+        expect(find.byType(EmbedLiveSelectionBar), findsNothing);
+
+        debugSetTriggerSyncHandler(
+          () async => (
+            compileSuccess: false,
+            errorMessage: 'Syntax error in main.dart',
+          ),
+        );
+        debugSetUrlFragment(
+          'previewId=${Uri.encodeQueryComponent(_kAlphaId)}',
+          baseUri: Uri.parse('http://localhost:8080/live'),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.byType(EmbedLiveTopBar), findsOneWidget);
+        expect(find.byType(EmbedLiveSelectionBar), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('brightness=dark'));
+        await tester.tap(find.byKey(const Key('embed-live-brightness-dark')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('brightness=')));
+
+        await tester.tap(find.byKey(const Key('embed-live-width-375')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('width=375'));
+        await tester.tap(find.byKey(const Key('embed-live-width-responsive')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('width=')));
+
+        await tester.tap(find.byKey(const Key('embed-live-zoom-in')));
+        await tester.pump();
+        expect(getUrlFragment(), contains('zoom=1.25'));
+        await tester.tap(find.byKey(const Key('embed-live-zoom-reset')));
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('zoom=')));
+
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('embed-live-error-banner')),
+          findsOneWidget,
+        );
+        expect(find.text('Syntax error in main.dart'), findsOneWidget);
+        await tester.tap(find.byKey(const Key('embed-live-error-dismiss')));
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-error-banner')), findsNothing);
+
+        await tester.tap(find.byKey(const Key('embed-live-select-toggle')));
+        await tester.pump();
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        await dragBetweenGlobal(
+          tester,
+          start: surfaceTopLeft + const Offset(10, 10),
+          end: surfaceTopLeft + const Offset(60, 40),
+        );
+
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+        expect(find.byKey(const Key('embed-live-copy-button')), findsOneWidget);
+        expect(find.byKey(const Key('embed-live-send-button')), findsNothing);
+
+        await tester.tap(find.byKey(const Key('embed-live-clear-button')));
+        await tester.pump();
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'canSendLiveSelection disables Send when note is empty, sends on submit, and ignores +-0 zoom keys in note TextField',
+      (WidgetTester tester) async {
+        String? sentMessage;
+        List<Map<String, Object?>>? sentSelections;
+        debugSetSendSelectionHandler(({
+          required String message,
+          required List<Map<String, Object?>> selections,
+          String? brightness,
+          String? previewId,
+          String? previewName,
+          String? textScale,
+          String? viewport,
+          String? zoom,
+        }) async {
+          sentMessage = message;
+          sentSelections = selections;
+        });
+
+        await pumpTestScaffold(
+          tester,
+          baseUri: Uri.parse('http://localhost:8080/'),
+          fragment:
+              'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&select=1',
+          previews: _buildTestPreviews,
+          settle: true,
+        );
+
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        await tester.dragFrom(
+          surfaceTopLeft + const Offset(10, 10),
+          const Offset(40, 25),
+        );
+        await tester.pump();
+
+        final Finder sendFinder = find.byKey(
+          const Key('embed-live-send-button'),
+        );
+        expect(tester.widget<FilledButton>(sendFinder).onPressed, isNull);
+
+        await tester.enterText(
+          find.byKey(const Key('embed-live-note-input')),
+          'Fix +-0 padding',
+        );
+        await tester.pump();
+        expect(tester.widget<FilledButton>(sendFinder).onPressed, isNotNull);
+        await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+        await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.pump();
+        expect(getUrlFragment(), isNot(contains('zoom=')));
+
+        await tester.tap(sendFinder);
+        await tester.pumpAndSettle();
+        expect(sentMessage, 'Fix +-0 padding');
+        expect(sentSelections, hasLength(1));
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+      },
+    );
+
     testWidgets('clears query-string overrides without snap-back', (
       WidgetTester tester,
     ) async {
@@ -1131,6 +1277,77 @@ void main() {
       expect(getBaseUri().queryParameters['token'], 'host123');
       expect(getUrlFragment(), isNot(contains('previewId=')));
     });
+
+    testWidgets(
+      'surfaces sendSelection errors and recovers from compile error on Reload',
+      (WidgetTester tester) async {
+        var shouldFailSync = true;
+        debugSetTriggerSyncHandler(
+          () async => shouldFailSync
+              ? (compileSuccess: false, errorMessage: 'Undefined name foo')
+              : (compileSuccess: true, errorMessage: null),
+        );
+        debugSetSendSelectionHandler(({
+          required String message,
+          required List<Map<String, Object?>> selections,
+          String? brightness,
+          String? previewId,
+          String? previewName,
+          String? textScale,
+          String? viewport,
+          String? zoom,
+        }) async {
+          throw StateError('Host bridge unavailable');
+        });
+
+        final fakeDtd = FakeWidgetPreviewScaffoldDtdServices();
+        await pumpTestScaffold(
+          tester,
+          baseUri: Uri.parse('http://localhost:8080/'),
+          dtdServices: fakeDtd,
+          fragment:
+              'live=1&previewId=${Uri.encodeQueryComponent(_kAlphaId)}&select=1',
+          previews: () => _buildTestPreviews().take(2).toList(),
+          settle: true,
+        );
+
+        final Offset surfaceTopLeft = tester.getTopLeft(
+          find.byType(EmbedSelectablePreviewSurface).first,
+        );
+        await dragBetweenGlobal(
+          tester,
+          start: surfaceTopLeft + const Offset(10, 10),
+          end: surfaceTopLeft + const Offset(50, 35),
+        );
+
+        await tester.enterText(
+          find.byKey(const Key('embed-live-note-input')),
+          'Check this',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('embed-live-send-button')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('embed-live-send-error')), findsOneWidget);
+        expect(find.textContaining('Host bridge unavailable'), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('embed-live-error-banner')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsOneWidget);
+        expect(fakeDtd.syncViewerReloadCount, 0);
+
+        shouldFailSync = false;
+        await tester.tap(find.byKey(const Key('embed-live-sync-button')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('embed-live-error-banner')), findsNothing);
+        expect(find.byKey(const Key('embed-live-chip-sel-1')), findsNothing);
+        expect(fakeDtd.syncViewerReloadCount, 1);
+      },
+    );
+
     testWidgets(
       'preview selector pill matches shorthand previewId, Bounds toggle, 1280px preset, and Copy ID button work',
       (WidgetTester tester) async {
