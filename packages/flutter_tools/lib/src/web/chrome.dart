@@ -60,6 +60,13 @@ const _kGlibcError = 'Inconsistency detected by ld.so';
 /// See: https://github.com/flutter/flutter/issues/192013
 const _kDevToolsServerFailure = 'Cannot start http server for devtools';
 
+/// Disables `/dev/shm` shared memory usage on Linux so headless Chromium
+/// allocates shared memory files in `/tmp` instead of exhausting small
+/// (commonly 64 MiB) container `/dev/shm` mounts.
+///
+/// See: https://pptr.dev/troubleshooting#tips
+const _kDisableDevShmUsageFlag = '--disable-dev-shm-usage';
+
 /// How long to wait for Chromium to print "DevTools listening" before giving
 /// up on the current launch attempt.
 ///
@@ -309,6 +316,7 @@ class ChromiumLauncher {
           '--use-angle=swiftshader',
           '--enable-unsafe-swiftshader',
           '--disable-gpu-sandbox',
+          _kDisableDevShmUsageFlag,
         ],
       ],
       ...webBrowserFlags,
