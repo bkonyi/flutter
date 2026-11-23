@@ -92,6 +92,8 @@ Future<WidgetPreviewScaffoldController> pumpTestScaffold(
   FakeWidgetPreviewScaffoldDtdServices? dtdServices,
   IdeTheme? ideTheme,
   bool settle = false,
+  Duration? stageFrameTimeout,
+  Duration? stageHostTimeout,
   Size? viewSize,
 }) async {
   if (viewSize != null) {
@@ -102,6 +104,8 @@ Future<WidgetPreviewScaffoldController> pumpTestScaffold(
   final controller = WidgetPreviewScaffoldController(
     dtdServicesOverride: dtdServices ?? FakeWidgetPreviewScaffoldDtdServices(),
     previews: previews,
+    stageFrameTimeout: stageFrameTimeout ?? const Duration(seconds: 5),
+    stageHostTimeout: stageHostTimeout ?? const Duration(seconds: 10),
   );
   addTearDown(controller.dispose);
   if (disableSelectedFileFilter &&
@@ -219,6 +223,10 @@ class FakeWidgetPreviewScaffoldDtdServices extends Fake
 
   @override
   PreviewListResponse Function({String? fileUri})? onGetPreviews;
+
+  @override
+  Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
+  onCapturePreview;
 
   Uri? lastConnectDtdUri;
 

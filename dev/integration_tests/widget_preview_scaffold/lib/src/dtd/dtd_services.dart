@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:ui' show Brightness;
 
 import 'package:dtd/dtd.dart';
 import 'package:json_rpc_2/json_rpc_2.dart';
@@ -14,6 +15,7 @@ import 'package:widget_preview_scaffold/src/widget_preview.dart';
 /// Provides services, streams, and RPC invocations to interact with Flutter developer tooling.
 class WidgetPreviewScaffoldDtdServices with DtdEditorService {
   WidgetPreviewScaffoldDtdServices({
+    this.onCapturePreview,
     this.onGetPreviews,
     this.scaffoldServiceName = kWidgetPreviewScaffoldService,
   });
@@ -56,14 +58,26 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
 
   // END KEEP SYNCED
 
+  static const kBrightness = 'brightness';
   static const kFileUri = 'fileUri';
+  static const kHeight = 'height';
+  static const kIncludeImage = 'includeImage';
+  static const kPixelRatio = 'pixelRatio';
+  static const kPreviewId = 'previewId';
+  static const kPumpMs = 'pumpMs';
+  static const kTextScaleFactor = 'textScaleFactor';
   static const kUrl = 'url';
+  static const kWidth = 'width';
 
   /// The DTD service name under which scaffold RPC methods are registered.
   final String scaffoldServiceName;
 
   /// Callback invoked when [kGetPreviews] is requested over DTD.
   PreviewListResponse Function({String? fileUri})? onGetPreviews;
+
+  /// Callback invoked when [kCapturePreview] is requested over DTD.
+  Future<CapturePreviewResponse> Function(PreviewCaptureRequest request)?
+  onCapturePreview;
 
   var _disposed = false;
   var _editorServiceInitialized = false;
@@ -88,6 +102,11 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
       kGetPreviews,
       _getPreviews,
     );
+    await connectedDtd.registerService(
+      scaffoldServiceName,
+      kCapturePreview,
+      _capturePreview,
+    );
     unawaited(
       connectedDtd.postEvent(
         kWidgetPreviewScaffoldStream,
@@ -109,6 +128,58 @@ class WidgetPreviewScaffoldDtdServices with DtdEditorService {
     final PreviewListResponse response =
         onGetPreviews?.call(fileUri: fileUri) ?? PreviewListResponse.empty;
     return response.toJson();
+  }
+
+  Future<Map<String, Object?>> _capturePreview(Parameters params) async {
+    if (!_hasParam(params, kPreviewId)) {
+      throw RpcException.invalidParams(
+        'Missing required parameter "$kPreviewId".',
+      );
+    }
+    final Brightness? brightness = !_hasParam(params, kBrightness)
+        ? null
+        : switch (params[kBrightness].asString) {
+            'light' => Brightness.light,
+            'dark' => Brightness.dark,
+            final String other => throw RpcException.invalidParams(
+              'Parameter "$kBrightness" must be "light" or "dark", got: "$other".',
+            ),
+          };
+    final Future<CapturePreviewResponse> Function(PreviewCaptureRequest)?
+    captureCallback = onCapturePreview;
+    if (captureCallback == null) {
+      throw RpcException(
+        kNoValueForKey,
+        'Preview capture is not currently available.',
+      );
+    }
+    final CapturePreviewResponse response = await captureCallback(
+      PreviewCaptureRequest(
+        brightness: brightness,
+        height: _optionalPositiveDouble(params, kHeight),
+        includeImage:
+            !_hasParam(params, kIncludeImage) || params[kIncludeImage].asBool,
+        pixelRatio: _optionalPositiveDouble(params, kPixelRatio),
+        previewId: params[kPreviewId].asString,
+        pumpMs: _hasParam(params, kPumpMs) ? params[kPumpMs].asInt : null,
+        textScaleFactor: _optionalPositiveDouble(params, kTextScaleFactor),
+        width: _optionalPositiveDouble(params, kWidth),
+      ),
+    );
+    return response.toJson();
+  }
+
+  static double? _optionalPositiveDouble(Parameters params, String key) {
+    if (!_hasParam(params, key)) {
+      return null;
+    }
+    final double value = params[key].asNum.toDouble();
+    if (!value.isFinite || value <= 0) {
+      throw RpcException.invalidParams(
+        'Parameter "$key" must be a positive finite number, got: $value.',
+      );
+    }
+    return value;
   }
 
   /// Disposes the DTD connection.

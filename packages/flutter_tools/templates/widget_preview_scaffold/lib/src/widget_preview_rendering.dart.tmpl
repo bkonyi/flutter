@@ -2,21 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert'
     show base64Decode, base64Encode, jsonDecode, jsonEncode, utf8;
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widget_previews.dart';
+import 'package:json_rpc_2/json_rpc_2.dart';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:stack_trace/stack_trace.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'package:widget_preview_scaffold/src/dtd/dtd_services.dart';
 import 'package:widget_preview_scaffold/src/dtd/editor_service.dart';
 import 'package:widget_preview_scaffold/src/split.dart';
 import 'package:widget_preview_scaffold/src/theme/ide_theme.dart';
@@ -1598,14 +1603,21 @@ class WidgetPreviewScaffold extends StatefulWidget {
 }
 
 class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
+  static const _kOffscreenStageOffset = -100000.0;
+  static const _kMaxCaptureRasterDimension = 4096.0;
+
   WebViewController? _webViewController;
   FlutterExceptionHandler? _originalOnError;
+  final _activeStageSession = ValueNotifier<_StageCaptureSession?>(null);
+  late final StagePreviewCaptureCallback _stageCaptureHost =
+      _captureStagedPreview;
 
   @override
   void initState() {
     super.initState();
     _originalOnError = FlutterError.onError;
     FlutterError.onError = _handleFlutterError;
+    widget.controller.attachStageCaptureHost(_stageCaptureHost);
     if (widget.enableWebView) {
       _webViewController = WebViewController()
         ..loadRequest(widget.controller.devToolsUri);
@@ -1613,11 +1625,206 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
   }
 
   @override
+  void didUpdateWidget(WidgetPreviewScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller.detachStageCaptureHost(_stageCaptureHost);
+      widget.controller.attachStageCaptureHost(_stageCaptureHost);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.controller.detachStageCaptureHost(_stageCaptureHost);
+    _activeStageSession.dispose();
     if (FlutterError.onError == _handleFlutterError) {
       FlutterError.onError = _originalOnError;
     }
     super.dispose();
+  }
+
+  void _checkMountedForCapture() {
+    if (!mounted) {
+      throw RpcException(
+        WidgetPreviewScaffoldDtdServices.kNoValueForKey,
+        'WidgetPreviewScaffold is not currently mounted.',
+      );
+    }
+  }
+
+  Future<void> _pumpStageFrame() async {
+    final SchedulerBinding scheduler = SchedulerBinding.instance;
+    final Duration timeout = widget.controller.stageFrameTimeout;
+    try {
+      if (scheduler.schedulerPhase == SchedulerPhase.postFrameCallbacks) {
+        await Future<void>.value();
+      }
+      if (scheduler.schedulerPhase != SchedulerPhase.idle) {
+        await scheduler.endOfFrame.timeout(timeout);
+      }
+      final Future<void> frameCompleted = scheduler.endOfFrame;
+      scheduler.scheduleWarmUpFrame();
+      await frameCompleted.timeout(timeout);
+    } on TimeoutException {
+      throw RpcException(
+        WidgetPreviewScaffoldDtdServices.kNoValueForKey,
+        'Timed out waiting for widget preview frame to render.',
+      );
+    }
+  }
+
+  Future<CapturePreviewResponse> _captureStagedPreview({
+    required WidgetPreview preview,
+    required PreviewCaptureRequest request,
+    required double resolvedPixelRatio,
+  }) async {
+    _checkMountedForCapture();
+    final session = _StageCaptureSession(
+      preview: preview,
+      request: request,
+      resolvedPixelRatio: resolvedPixelRatio,
+    );
+    _activeStageSession.value = session;
+    var skipUnmountPump = false;
+    try {
+      await _pumpStageFrame();
+      _checkMountedForCapture();
+      RenderRepaintBoundary? boundary =
+          session.boundaryKey.currentContext?.findRenderObject()
+              as RenderRepaintBoundary?;
+      if (session.consumePendingFrameRebuild() ||
+          (boundary != null &&
+              (boundary.debugNeedsLayout || boundary.debugNeedsPaint))) {
+        await _pumpStageFrame();
+        _checkMountedForCapture();
+        boundary =
+            session.boundaryKey.currentContext?.findRenderObject()
+                as RenderRepaintBoundary?;
+      }
+      if (request.pumpMs case final int rawPumpMs when rawPumpMs > 0) {
+        final int clampedPumpMs = rawPumpMs.clamp(0, kMaxCapturePumpMs);
+        await Future<void>.delayed(Duration(milliseconds: clampedPumpMs));
+        _checkMountedForCapture();
+        await _pumpStageFrame();
+        _checkMountedForCapture();
+        boundary =
+            session.boundaryKey.currentContext?.findRenderObject()
+                as RenderRepaintBoundary?;
+      }
+      final bool hasErrorBox =
+          boundary == null || _hasDescendantRenderErrorBox(boundary);
+      if (hasErrorBox && !session.hasBuildError && !session.hasLayoutError) {
+        session.recordDiagnostic(
+          const PreviewDiagnostic(
+            kind: .exception,
+            phase: .build,
+            summary:
+                'An unexpected error occurred while building the widget preview.',
+          ),
+        );
+      }
+      final bool layoutAndBuildSucceeded =
+          !hasErrorBox && !session.hasBuildError && !session.hasLayoutError;
+      final double renderedWidth = layoutAndBuildSucceeded && boundary.hasSize
+          ? boundary.size.width
+          : 0.0;
+      final double renderedHeight = layoutAndBuildSucceeded && boundary.hasSize
+          ? boundary.size.height
+          : 0.0;
+
+      if (layoutAndBuildSucceeded) {
+        if (renderedWidth <= 0 || renderedHeight <= 0) {
+          session.recordDiagnostic(
+            PreviewDiagnostic(
+              kind: .zeroSize,
+              phase: .layout,
+              summary:
+                  'Preview rendered with zero size (${renderedWidth}x$renderedHeight).',
+            ),
+          );
+        } else {
+          _auditRenderedSubtree(boundary, session);
+        }
+        if (SchedulerBinding.instance.transientCallbackCount > 0) {
+          session.recordDiagnostic(
+            const PreviewDiagnostic(
+              kind: .pendingFrame,
+              phase: .paint,
+              severity: .warning,
+              summary:
+                  'Preview still has an active animation/frame callback after pump; pass pumpMs to settle.',
+            ),
+          );
+        }
+      }
+
+      String? imageBase64;
+      double reportedPixelRatio = resolvedPixelRatio;
+      if (request.includeImage &&
+          layoutAndBuildSucceeded &&
+          !session.hasPaintException &&
+          boundary.hasSize &&
+          !boundary.debugNeedsPaint &&
+          renderedWidth > 0 &&
+          renderedHeight > 0) {
+        final double maxDimension = math.max(renderedWidth, renderedHeight);
+        final double rasterPixelRatio =
+            maxDimension * resolvedPixelRatio > _kMaxCaptureRasterDimension
+            ? _kMaxCaptureRasterDimension / maxDimension
+            : resolvedPixelRatio;
+        try {
+          final ui.Image image = await boundary.toImage(
+            pixelRatio: rasterPixelRatio,
+          );
+          try {
+            final ByteData? byteData = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            if (byteData != null) {
+              imageBase64 = base64Encode(Uint8List.sublistView(byteData));
+              reportedPixelRatio = rasterPixelRatio;
+            }
+          } finally {
+            image.dispose();
+          }
+        } on Object catch (error) {
+          session.recordDiagnostic(
+            PreviewDiagnostic(
+              kind: .exception,
+              phase: .paint,
+              summary: error.toString(),
+            ),
+          );
+        }
+        _checkMountedForCapture();
+      }
+
+      final List<PreviewDiagnostic> diagnostics =
+          List<PreviewDiagnostic>.unmodifiable(session.diagnostics);
+      final bool hasErrors = diagnostics.any(
+        (PreviewDiagnostic d) => d.severity == .error,
+      );
+      return CapturePreviewResponse(
+        diagnostics: diagnostics,
+        hasErrors: hasErrors,
+        imageBase64: imageBase64,
+        name: preview.name,
+        pixelRatio: reportedPixelRatio,
+        previewId: preview.id,
+        renderedHeight: renderedHeight,
+        renderedWidth: renderedWidth,
+      );
+    } on RpcException {
+      skipUnmountPump = true;
+      rethrow;
+    } finally {
+      if (mounted && identical(_activeStageSession.value, session)) {
+        _activeStageSession.value = null;
+        if (!skipUnmountPump) {
+          await _pumpStageFrame();
+        }
+      }
+    }
   }
 
   void _handleFlutterError(FlutterErrorDetails details) {
@@ -1730,39 +1937,62 @@ class _WidgetPreviewScaffoldState extends State<WidgetPreviewScaffold> {
       ),
       themeMode: widget.ideTheme.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       home: Material(
-        child: OutlineDecoration.onlyTop(
-          child: ValueListenableBuilder(
-            valueListenable: widget.controller.widgetInspectorVisible,
-            builder: (context, widgetInspectorVisible, previewView) {
-              if (!widgetInspectorVisible) {
-                return previewView!;
-              }
-              return SplitPane(
-                axis: Axis.horizontal,
-                initialFractions: const [0.7, 0.3],
-                children: [
-                  OutlineDecoration.onlyRight(child: previewView!),
-                  OutlineDecoration.onlyLeft(
-                    child: widget.enableWebView && _webViewController != null
-                        ? WebViewWidget(controller: _webViewController!)
-                        : Container(),
-                  ),
-                ],
-              );
-            },
-            // Display the previewer
-            child: Column(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8.0),
-                    child: WidgetPreviews(controller: widget.controller),
-                  ),
+        child: Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            OutlineDecoration.onlyTop(
+              child: ValueListenableBuilder(
+                valueListenable: widget.controller.widgetInspectorVisible,
+                builder: (context, widgetInspectorVisible, previewView) {
+                  if (!widgetInspectorVisible) {
+                    return previewView!;
+                  }
+                  return SplitPane(
+                    axis: Axis.horizontal,
+                    initialFractions: const [0.7, 0.3],
+                    children: [
+                      OutlineDecoration.onlyRight(child: previewView!),
+                      OutlineDecoration.onlyLeft(
+                        child:
+                            widget.enableWebView && _webViewController != null
+                            ? WebViewWidget(controller: _webViewController!)
+                            : Container(),
+                      ),
+                    ],
+                  );
+                },
+                // Display the previewer
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(8.0),
+                        child: WidgetPreviews(controller: widget.controller),
+                      ),
+                    ),
+                    WidgetPreviewControls(controller: widget.controller),
+                  ],
                 ),
-                WidgetPreviewControls(controller: widget.controller),
-              ],
+              ),
             ),
-          ),
+            Positioned(
+              left: _kOffscreenStageOffset,
+              top: _kOffscreenStageOffset,
+              child: ValueListenableBuilder<_StageCaptureSession?>(
+                valueListenable: _activeStageSession,
+                builder: (context, session, _) {
+                  if (session == null) {
+                    return const SizedBox.shrink();
+                  }
+                  return _StagedPreviewHost(
+                    key: ObjectKey(session),
+                    session: session,
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1901,6 +2131,82 @@ class WidgetPreviews extends StatelessWidget {
 const kOverflowingRenderFlexSuffix = ' OVERFLOWING';
 const _kBuildingContextPrefix = 'building ';
 
+/// Maximum allowed `pumpMs` delay for off-screen preview capture.
+const kMaxCapturePumpMs = 2000;
+const _kMaxSubtreeWarnings = 5;
+const _kMaxTruncatedTextChars = 40;
+const _kMinTapTargetSize = 48.0;
+
+void _auditRenderedSubtree(
+  RenderRepaintBoundary root,
+  _StageCaptureSession session,
+) {
+  var truncatedCount = 0;
+  var smallTapCount = 0;
+  final seenTapBoxes = <Rect>{};
+  final bool checkSmallTapTargets =
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  void visit(RenderObject node) {
+    if (truncatedCount >= _kMaxSubtreeWarnings &&
+        (!checkSmallTapTargets || smallTapCount >= _kMaxSubtreeWarnings)) {
+      return;
+    }
+    if (node is RenderParagraph &&
+        node.didExceedMaxLines &&
+        truncatedCount < _kMaxSubtreeWarnings) {
+      truncatedCount++;
+      final String plainText = node.text.toPlainText();
+      final String snippet = plainText.length > _kMaxTruncatedTextChars
+          ? '${plainText.substring(0, _kMaxTruncatedTextChars)}...'
+          : plainText;
+      session.recordDiagnostic(
+        PreviewDiagnostic(
+          kind: .textTruncated,
+          phase: .layout,
+          severity: .warning,
+          targetType: 'RenderParagraph',
+          summary: 'Text truncated ("$snippet").',
+        ),
+      );
+    } else if (checkSmallTapTargets &&
+        node is RenderSemanticsAnnotations &&
+        node.hasSize &&
+        smallTapCount < _kMaxSubtreeWarnings &&
+        (node.properties.onTap != null ||
+            node.properties.onLongPress != null)) {
+      final Size s = node.size;
+      if (s.width.isFinite &&
+          s.height.isFinite &&
+          s.width > 0 &&
+          s.height > 0 &&
+          (s.width < _kMinTapTargetSize || s.height < _kMinTapTargetSize)) {
+        final Rect rect = MatrixUtils.transformRect(
+          node.getTransformTo(root),
+          Offset.zero & s,
+        );
+        if (seenTapBoxes.add(rect)) {
+          smallTapCount++;
+          session.recordDiagnostic(
+            PreviewDiagnostic(
+              kind: .smallTapTarget,
+              phase: .layout,
+              severity: .warning,
+              targetType: node.runtimeType.toString(),
+              summary:
+                  'Tap target ${s.width.round()}x${s.height.round()} is smaller than 48x48dp.',
+            ),
+          );
+        }
+      }
+    }
+    node.visitChildren(visit);
+  }
+
+  root.visitChildren(visit);
+}
+
 bool _anyRenderObject(RenderObject root, bool Function(RenderObject) test) {
   if (test(root)) {
     return true;
@@ -1960,6 +2266,66 @@ PreviewWidgetElement? _findEnclosingPreviewElement(
     }
   }
   return null;
+}
+
+const _kDefaultStageWindowSize = Size(800.0, 600.0);
+
+class _StageCaptureSession {
+  _StageCaptureSession({
+    required this.preview,
+    required this.request,
+    required this.resolvedPixelRatio,
+  });
+
+  final boundaryKey = GlobalKey();
+  final diagnostics = <PreviewDiagnostic>[];
+  final WidgetPreview preview;
+  final PreviewCaptureRequest request;
+  final double resolvedPixelRatio;
+
+  bool hasBuildError = false;
+  bool hasLayoutError = false;
+  bool hasPaintException = false;
+  bool _needsFollowUpFrame = false;
+
+  bool consumePendingFrameRebuild() {
+    final bool pending = _needsFollowUpFrame;
+    _needsFollowUpFrame = false;
+    return pending;
+  }
+
+  void recordDiagnostic(PreviewDiagnostic diagnostic) {
+    if (hasBuildError &&
+        diagnostic.phase == .paint &&
+        diagnostic.kind == .overflow) {
+      return;
+    }
+    switch (diagnostic.phase) {
+      case .build:
+        hasBuildError = true;
+      case .layout:
+        hasLayoutError = true;
+      case .paint when diagnostic.kind == .exception:
+        hasPaintException = true;
+      case .compile || .paint:
+        break;
+    }
+    if (!diagnostics.contains(diagnostic)) {
+      diagnostics.add(diagnostic);
+    }
+  }
+
+  void recordLayoutError(Object error, StackTrace _) {
+    final PreviewDiagnosticKind kind =
+        error is UnconstrainedWidgetPreviewException ||
+            _isUnconstrainedError(error)
+        ? .unconstrained
+        : .exception;
+    recordDiagnostic(
+      PreviewDiagnostic(kind: kind, phase: .layout, summary: error.toString()),
+    );
+    _needsFollowUpFrame = true;
+  }
 }
 
 /// Wraps [child] with the [DefaultAssetBundle], [MediaQuery], [Theme], and
@@ -2024,5 +2390,118 @@ class WidgetPreviewEnvironment extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _StagedPreviewHost extends StatelessWidget {
+  const _StagedPreviewHost({required this.session, super.key});
+
+  final _StageCaptureSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final _StageCaptureSession(
+      :GlobalKey boundaryKey,
+      :WidgetPreview preview,
+      :PreviewCaptureRequest request,
+      :double resolvedPixelRatio,
+    ) = session;
+    final Brightness resolvedBrightness =
+        request.brightness ??
+        preview.brightness ??
+        MediaQuery.platformBrightnessOf(context);
+    final double? constrainedWidth = request.width ?? preview.finiteWidth;
+    final double? constrainedHeight = request.height ?? preview.finiteHeight;
+    final double? resolvedTextScaleFactor = switch (request.textScaleFactor ??
+        preview.finiteTextScaleFactor) {
+      final double scale when scale.isFinite => scale,
+      _ => null,
+    };
+
+    final Size windowSize = MediaQuery.sizeOf(context);
+    final double fallbackWindowWidth =
+        windowSize.width.isFinite && windowSize.width > 0
+        ? windowSize.width
+        : _kDefaultStageWindowSize.width;
+    final double fallbackWindowHeight =
+        windowSize.height.isFinite && windowSize.height > 0
+        ? windowSize.height
+        : _kDefaultStageWindowSize.height;
+    final rootWindowConstraints = BoxConstraints.loose(
+      Size(
+        constrainedWidth ?? fallbackWindowWidth,
+        constrainedHeight ?? fallbackWindowHeight,
+      ),
+    );
+
+    return WidgetPreviewEnvironment(
+      brightness: resolvedBrightness,
+      height: constrainedHeight,
+      pixelRatio: resolvedPixelRatio,
+      preview: preview,
+      textScaleFactor: resolvedTextScaleFactor,
+      width: constrainedWidth,
+      windowConstraints: rootWindowConstraints,
+      child: ScaffoldMessenger(
+        child: ScrollNotificationObserver(
+          child: RepaintBoundary(
+            key: boundaryKey,
+            child: Material(
+              type: MaterialType.transparency,
+              child: SizedBox(
+                width: constrainedWidth,
+                height: constrainedHeight,
+                child: WidgetPreviewWrapper(
+                  onLayoutError: session.recordLayoutError,
+                  onPaintDiagnostic: session.recordDiagnostic,
+                  previewerConstraints: const BoxConstraints(),
+                  suppressErrorForwarding: true,
+                  child: EnableWidgetInspectorScope(
+                    child: PreviewWidget(
+                      onDiagnostic: session.recordDiagnostic,
+                      preview: preview,
+                      suppressFrameworkErrorForwarding: true,
+                      child: _StagedPreviewBuilder(
+                        preview: preview,
+                        session: session,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StagedPreviewBuilder extends StatelessWidget {
+  const _StagedPreviewBuilder({required this.preview, required this.session});
+
+  final WidgetPreview preview;
+  final _StageCaptureSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      return WidgetPreviewLocalizations(
+        localizationsData: preview.localizations,
+        child: WidgetPreviewTheming(
+          theme: preview.theme,
+          child: preview.previewBuilder(),
+        ),
+      );
+    } on Object catch (error) {
+      session.recordDiagnostic(
+        PreviewDiagnostic(
+          kind: .exception,
+          phase: .build,
+          summary: error.toString(),
+        ),
+      );
+      return const SizedBox.shrink();
+    }
   }
 }
